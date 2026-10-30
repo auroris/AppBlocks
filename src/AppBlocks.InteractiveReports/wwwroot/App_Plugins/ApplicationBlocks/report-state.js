@@ -48,7 +48,7 @@ export default class ReportStateEditor extends AppEditor {
         return html`<p>Choose columns, sorting, filters and presentation in the preview, then use that view. The configuration is saved with this block.</p>
             <p>${this.value ? "This block has a saved starting view." : "Showing all columns with the default view."}</p>
             <button type="button" ?disabled=${this.readonly || this.loading || !this.dataSource || !this.catalogue?.canPreview} @click=${this.preview}>${this.loading ? "Loading preview…" : "Configure view"}</button>
-            <button type="button" ?disabled=${this.readonly || !this.catalogue?.canPreview} @click=${this.capture}>Use this view</button>
+            <button type="button" ?disabled=${this.readonly || this.loading || !this.catalogue?.canPreview} @click=${this.capture}>Use this view</button>
             <button type="button" ?disabled=${this.readonly} @click=${() => this.change("")}>Reset view</button>
             ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : ""}<div class="preview"></div>`;
     }

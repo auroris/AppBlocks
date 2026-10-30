@@ -1,12 +1,11 @@
 using System.Text.Json;
-using AppBlocks.Connections;
 
 namespace UmbracoAppHost.DataSources;
 
 /// <summary>A report's own row source. Only a connection name is stored in content.</summary>
 internal static class ReportBlockSource
 {
-    public static DataSourceDefinition? Read(Guid key, string selection, ConnectionCatalog? connections, ICollection<string> errors)
+    public static DataSourceDefinition? Read(Guid key, string selection, Func<string, bool> isConnection, ICollection<string> errors)
     {
         var start = errors.Count;
         try
@@ -21,7 +20,7 @@ internal static class ReportBlockSource
             if (root.EnumerateObject().Any(p => p.Name is not ("kind" or "connection" or "source"))
                 || root.EnumerateObject().GroupBy(p => p.Name).Any(g => g.Count() > 1))
                 errors.Add("The report source contains unsupported or repeated settings. Select its table or SQL query again.");
-            if (connections is null || !connections.List().Any(c => c.Name.Equals(connection, StringComparison.OrdinalIgnoreCase)))
+            if (!isConnection(connection))
                 errors.Add("Select a data source configured in Settings → AppBlocks → Connections.");
             if (source.Length is 0 or > DataSourceDefinition.MaxSourceLength)
                 errors.Add($"Enter a table or SQL query of at most {DataSourceDefinition.MaxSourceLength} characters.");

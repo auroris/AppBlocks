@@ -10,7 +10,7 @@
         "label": "Table or SQL query",
         "icon": "icon-database",
         "group": "Application",
-        "propertyEditorSchemaAlias": "Umbraco.TextBox"
+        "propertyEditorSchemaAlias": "Umbraco.TextArea"
       }
     },
     {

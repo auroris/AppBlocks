@@ -4,7 +4,6 @@ using AppBlocks.InteractiveReports.Reports;
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Core.Definitions;
 using InteractiveReport.Core.Model;
-using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Extensions;
 using UmbracoAppHost.DataSources;
@@ -70,7 +69,6 @@ public sealed class AppReportDefinitionStore(
         await bindings.BindAsync(result, authored.DataSource, ct);
         result.SourceName = name;
         result.Authorization = new ReportAuthorization { Policy = AppPagePolicyProvider.Name(instance.Page.Key, null) };
-        result.DocumentFiles = null; // Configured files belong to their original saved-view family.
         if (block.Value<string>("heading") is { Length: > 0 } title) result.Title = title;
         if (block.Value<string>("initialState") is { Length: > 0 } state) result.DefaultState = JsonSerializer.Deserialize<ReportState>(state, IrJson.Options);
         if (block.Value<int?>("pageSize") is > 0 and var size) {

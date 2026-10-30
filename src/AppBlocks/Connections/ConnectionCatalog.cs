@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using Npgsql;
-using Oracle.ManagedDataAccess.Client;
 
 namespace AppBlocks.Connections;
 
@@ -148,7 +147,7 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     {
         "sqlite" => new SqliteConnection(value), "sqlServer" => new SqlConnection(value),
         "postgres" => new NpgsqlConnection(value),
-        "oracle" or "oracle11g" => new OracleConnection(value),
+        "oracle" or "oracle11g" => OracleDriver.Create(value),
         _ => throw new ArgumentException("Unsupported database type."),
     };
 }

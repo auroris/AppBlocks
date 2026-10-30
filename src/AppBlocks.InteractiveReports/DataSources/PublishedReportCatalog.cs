@@ -40,7 +40,16 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
     public DataSourceDefinition? SourceForReport(string name) => ReportNodes.GetValueOrDefault(name)?.DataSource;
 
     public DataSourceDefinition? ResolveBlockSource(Guid key, string selection, ICollection<string> errors) =>
-        ReportBlockSource.Read(key, selection, managed, errors);
+        ReportBlockSource.Read(key, selection, IsConnection, errors);
+
+    /// <summary>A connection from Settings → AppBlocks → Connections, or one the site registered in code.</summary>
+    private bool IsConnection(string name)
+    {
+        if (name.Length == 0) return false;
+        if (managed?.List().Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) == true) return true;
+        try { compiler.Compile(name, new ReportDefinition { Connection = name, Sql = "SELECT 1" }); return true; }
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException) { return false; }
+    }
 
     /// <summary>Builds a report from a block-owned table or SQL query.</summary>
     public PublishedReport? ReadBlockReport(Guid key, Func<string, object?> value, ICollection<string> errors)
