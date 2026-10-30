@@ -35,23 +35,27 @@ public sealed class AppBlocksBuilder
 
 internal sealed class ApplicationConnections(IServiceProvider provider, AppBlocksBuilder builder, ConnectionCatalog catalog) : IApplicationConnectionFactory
 {
-    private readonly ConcurrentDictionary<string, DatabaseDialect> detected = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (DatabaseDialect Dialect, string Revision)> detected = new(StringComparer.OrdinalIgnoreCase);
 
     public DbConnection CreateConnection(string name) => catalog.Find(name) is { } material
-        ? ConnectionCatalog.Create(material.Provider, material.Value)
+        ? ConnectionCatalog.Create(material)
         : builder.Connections.TryGetValue(name, out var factory) ? factory(provider)
         : throw new InvalidOperationException($"The connection {name} is not registered with AppBlocks.");
 
     public DatabaseDialect Dialect(string name)
     {
         // Managed connections may change provider while the application is running.
-        if (catalog.Find(name) is { } material) return material.Provider switch
+        var material = catalog.Find(name);
+        var revision = material is null ? "" : ConnectionCatalog.Revision(material);
+        if (detected.TryGetValue(name, out var known) && known.Revision == revision) return known.Dialect;
+        if (material is not null) return material.Provider switch
         {
             "sqlite" => DatabaseDialect.Sqlite, "sqlServer" => DatabaseDialect.SqlServer,
             "postgres" => DatabaseDialect.Postgres, "oracle" => DatabaseDialect.Oracle,
+            "oracle11g" => DatabaseDialect.Oracle11g,
             _ => throw new InvalidOperationException("Unsupported database provider."),
         };
-        if (detected.TryGetValue(name, out var known) || builder.Dialects.TryGetValue(name, out known)) return known;
+        if (builder.Dialects.TryGetValue(name, out var declared)) return declared;
         using var connection = CreateConnection(name);
         return ApplicationDatabase.Dialect(connection) switch
         {
@@ -61,5 +65,5 @@ internal sealed class ApplicationConnections(IServiceProvider provider, AppBlock
         };
     }
 
-    public void SetDetectedDialect(string name, DatabaseDialect dialect) => detected[name] = dialect;
+    public void SetDetectedDialect(string name, DatabaseDialect dialect) => detected[name] = (dialect, catalog.Revision(name));
 }

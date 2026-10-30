@@ -64,7 +64,7 @@ public static class InteractiveReportsExtensions
         services.PostConfigure<InteractiveReportOptions>(options =>
         {
             if (string.IsNullOrWhiteSpace(options.SavedReports.Connection) && string.IsNullOrWhiteSpace(options.SavedReports.DataSource))
-                options.SavedReports.Connection = ConnectionCatalog.UmbracoConnection;
+                options.SavedReports.Connection = ConnectionCatalog.ApplicationConnection;
         });
         Decorate<IReportConnectionFactory>(services, (sp, inner) => new ManagedConnectionFactory(inner, sp.GetRequiredService<ConnectionCatalog>()));
         // Legacy report registrations remain available to forms without making the base depend on reporting.

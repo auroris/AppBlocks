@@ -33,7 +33,7 @@ public sealed class AppBlocksSettingsController(ConnectionCatalog connections, C
     }
 
     [HttpGet("tables")]
-    public async Task<IActionResult> Tables(string connection = "UmbracoDb", CancellationToken ct = default)
+    public async Task<IActionResult> Tables(string connection = ConnectionCatalog.ApplicationConnection, CancellationToken ct = default)
     {
         Response.Headers.CacheControl = "no-store";
         try { return Ok(await tables.ListAsync(connection, ct)); }

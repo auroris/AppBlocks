@@ -11,9 +11,11 @@ public sealed class AttachmentSettings
 {
     public const string Section = "Attachments";
 
-    /// <summary>The connection the base registers when the host names none: a SQLite file in the instance data folder, like the saved reports.</summary>
-    public const string DefaultConnection = "AttachmentsDb";
-    public const string DefaultDatabaseFile = "Attachments.sqlite.db";
+    /// <summary>Uploads share the application database unless the site selects a separate store.</summary>
+    public const string DefaultConnection = AppBlocks.Connections.ConnectionCatalog.ApplicationConnection;
+    public const string SeparateConnection = AppBlocks.Connections.ConnectionCatalog.AttachmentsConnection;
+    /// <summary>The filename used when the optional separate upload store is selected.</summary>
+    public const string DefaultDatabaseFile = AppBlocks.Connections.ConnectionCatalog.AttachmentsDatabaseFile;
 
     /// <summary>A registered connection (see the README's application databases). Its database receives the two attachment tables on first use.</summary>
     public string Connection { get; set; } = DefaultConnection;

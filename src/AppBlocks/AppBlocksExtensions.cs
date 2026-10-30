@@ -33,6 +33,7 @@ public static class AppBlocksExtensions
         }
         var connections = new AppBlocksBuilder();
         services.AddSingleton(connections);
+        connections.AddConnection(ConnectionCatalog.ApplicationConnection, provider => provider.GetRequiredService<ConnectionCatalog>().Openable(ConnectionCatalog.ApplicationConnection));
         connections.AddAttachmentsDatabase(builder.Config);
         configure?.Invoke(connections);
         services.AddSingleton<IApplicationConnectionFactory, ApplicationConnections>();

@@ -20,7 +20,7 @@ public sealed class ConnectionTables(ConnectionCatalog connections)
         {
             "sqlite" => "SELECT '' AS schema_name, name FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name",
             "sqlServer" or "postgres" => "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA NOT IN ('pg_catalog','information_schema') ORDER BY TABLE_SCHEMA, TABLE_NAME",
-            "oracle" => "SELECT OWNER, TABLE_NAME FROM ALL_TABLES WHERE OWNER = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') UNION SELECT OWNER, VIEW_NAME FROM ALL_VIEWS WHERE OWNER = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')",
+            "oracle" or "oracle11g" => "SELECT OWNER, TABLE_NAME FROM ALL_TABLES WHERE OWNER = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') UNION SELECT OWNER, VIEW_NAME FROM ALL_VIEWS WHERE OWNER = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')",
             _ => throw new ArgumentException("Unsupported database type."),
         };
         var tables = new List<DatabaseTable>();

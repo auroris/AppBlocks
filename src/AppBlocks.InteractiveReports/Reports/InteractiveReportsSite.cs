@@ -13,7 +13,7 @@ namespace UmbracoAppHost.Reports;
 /// <summary>Registers Interactive Reports with the site's databases and Umbraco-backed authorization.</summary>
 public static class InteractiveReportsSite
 {
-    /// <summary>Saved reports and authorization grants.</summary>
+    /// <summary>Optional separate store for saved reports and authorization grants; AppBlocks defaults to AppBlocksDb.</summary>
     public const string ReportsConnection = "ReportsDb";
 
     /// <summary>
@@ -57,7 +57,7 @@ public static class InteractiveReportsSite
     }
 
     /// <summary>
-    /// Registers the package: the SQLite store for saved reports under <c>App_Data</c>, the
+    /// Registers the package: an optional separate report store under <c>App_Data</c>, the
     /// <see cref="UmbracoConnection"/>, the built-in audit reports, the JSON and download clients,
     /// the authorization bridge, and the virtual-path link fix. <paramref name="configure"/> adds a
     /// site's own connections through the same builder.

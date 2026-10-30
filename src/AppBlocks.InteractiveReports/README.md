@@ -33,7 +33,15 @@ node --test tests/ui/report-print.browser.test.mjs
 
 Browser tests use the sibling Interactive-Reports checkout's Playwright dependency and built client. Set `INTERACTIVE_REPORTS_ROOT` for another checkout and `BROWSER_PATH` for an installed Chromium browser when Playwright's browser is unavailable.
 
-Register shared business connections through AppBlocks:
+The companion uses the same business connections as AppBlocks.
+
+**Oracle 11.2** and **Oracle 12+** select Interactive Reports' Oracle SQL compatibility modes. AppBlocks shares this selection across forms and report blocks: Oracle 11.2 mode maps to the `Oracle11g` dialect (including legacy paging), and Oracle 12+ mode maps to the `Oracle` dialect with automatic detection of pre-12 servers. Both modes use the Oracle driver bundled by AppBlocks; see the [base guide](../../README.md#connections) for configuration and driver compatibility.
+
+The built-in `AppBlocksDb` connection is the default for application data and saved report views. It opens `AppBlocks.sqlite.db` beside Umbraco's SQLite database and also stores uploads by default. Prefer it for application forms and reports, so their writes do not compete with CMS saves in Umbraco's SQLite file. Business tables are supplied by the site; the report store creates its own tables on first use. `UmbracoDb` remains available for reports that specifically need CMS data.
+
+To store saved views elsewhere, set `InteractiveReport:SavedReports:Connection` to a registered connection, or `InteractiveReport:SavedReports:DataSource` to a configured connection-string name. These explicit settings take precedence over `AppBlocksDb`. To override the shared default database itself, configure `ConnectionStrings:AppBlocksDb` and `ConnectionStrings:AppBlocksDb_ProviderName`. See the [base guide](../../README.md#connections) for file locations and separate upload storage.
+
+For an additional business connection:
 
 ```csharp
 using AppBlocks;

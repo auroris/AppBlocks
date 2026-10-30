@@ -77,7 +77,7 @@ public static class ApplicationDatabase
     public static string Dialect(DbConnection connection) => connection switch {
         SqliteConnection => "sqlite",
         SqlConnection => "sqlserver",
-        // The PostgreSQL and Oracle providers are the host's to reference, so they are known by name.
+        // Also recognize host-supplied PostgreSQL and Oracle connections by name.
         _ => connection.GetType().Name switch {
             "NpgsqlConnection" => "postgresql",
             "OracleConnection" => "oracle",

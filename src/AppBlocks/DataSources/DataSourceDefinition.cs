@@ -100,7 +100,7 @@ public sealed record DataSourceDefinition
         if (alias.Length == 0) errors.Add("Enter the data source's alias, the name a Form interface selects.");
         else if (!IsAlias(alias)) errors.Add($"The alias '{alias}' may use letters, digits, '.', '-' and '_', start with a letter and have at most 64 characters.");
         var connection = Text("connection");
-        if (connection.Length == 0) connection = AppBlocks.Connections.ConnectionCatalog.UmbracoConnection;
+        if (connection.Length == 0) connection = AppBlocks.Connections.ConnectionCatalog.ApplicationConnection;
         var source = Text("source");
         if (source.Length == 0) errors.Add("Enter the row source: a table name or a SELECT statement.");
         else if (source.Length > MaxSourceLength) errors.Add($"The row source is longer than {MaxSourceLength} characters.");

@@ -38,7 +38,7 @@ public sealed class DemoSeed(IConfiguration configuration, IServiceProvider serv
             return;
         }
         await ActivatorUtilities.CreateInstance<SchemaInstaller>(services).EnsureAsync(ct);
-        await using (var connection = connections.Openable("UmbracoDb"))
+        await using (var connection = connections.Openable(ConnectionCatalog.ApplicationConnection))
         {
             await connection.OpenAsync(ct);
             using var command = connection.CreateCommand();
@@ -73,6 +73,7 @@ public sealed class DemoSeed(IConfiguration configuration, IServiceProvider serv
         root.Key = Key("sources"); Save(root);
         var source = contents.GetById(Key("source")) ?? contents.Create("Tasks", root.Id, "sqlDataSource");
         source.Key = Key("source"); source.SetValue("alias", "demo.tasks"); source.SetValue("source", "AppBlocksDemoTasks");
+        source.SetValue("connection", ConnectionCatalog.ApplicationConnection);
         source.SetValue("keyColumns", "id"); source.SetValue("allowInsert", true); source.SetValue("allowUpdate", true); Save(source);
         var page = contents.GetById(Key("page")) ?? contents.Create("A normal content page", -1, "demoArticle"); page.Key = Key("page"); page.TemplateId = template.Id;
         page.SetValue("mainContent", PageBlocks("Umbraco.BlockList", source.Key, richText.Key, "main").ToJsonString());

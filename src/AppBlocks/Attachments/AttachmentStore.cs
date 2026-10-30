@@ -217,7 +217,7 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
         try { connection = connections.CreateConnection(name); }
         catch (InvalidOperationException error)
         {
-            throw new AttachmentStoreException($"The attachments connection {name} is not registered. Register it through the reports callback of AddUmbracoAppHost, or leave Attachments:Connection empty for the default store.", error);
+            throw new AttachmentStoreException($"The attachments connection {name} is not registered. Register it through AddAppBlocks, or leave Attachments:Connection empty to use AppBlocksDb.", error);
         }
         try
         {

@@ -1,7 +1,6 @@
 using AppBlocks.Connections;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using UmbracoAppHost.Blocks;
-using UmbracoAppHost.Databases;
 
 namespace UmbracoAppHost.Attachments;
 
@@ -19,15 +18,13 @@ public static class AttachmentsExtensions
     }
 
     /// <summary>
-    /// The default store: the <c>AttachmentsDb</c> connection, a SQLite file in the instance data folder, with the
-    /// two attachment tables created on first use. When <c>Attachments:Connection</c> names a connection of the host's
-    /// own, nothing is registered here and the tables are created in that database when the store first opens it.
+    /// Registers the optional <c>AttachmentsDb</c> store. Uploads use <c>AppBlocksDb</c> by default;
+    /// <c>Attachments:Connection</c> can select this separate file or another named connection.
+    /// The attachment tables are created in the selected database on first use.
     /// </summary>
     public static AppBlocksBuilder AddAttachmentsDatabase(this AppBlocksBuilder connections, IConfiguration configuration)
     {
-        var name = configuration[$"{AttachmentSettings.Section}:Connection"];
-        if (string.IsNullOrWhiteSpace(name) || name.Trim() == AttachmentSettings.DefaultConnection)
-            connections.AddApplicationDatabase(AttachmentSettings.DefaultConnection, AttachmentStore.Schema, AttachmentSettings.DefaultDatabaseFile);
-        return connections;
+        return connections.AddConnection(AttachmentSettings.SeparateConnection,
+            provider => provider.GetRequiredService<ConnectionCatalog>().Openable(AttachmentSettings.SeparateConnection));
     }
 }

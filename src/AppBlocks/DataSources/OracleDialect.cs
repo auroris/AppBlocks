@@ -19,7 +19,7 @@ public sealed class OracleDialect : SqlDialect
     public override string CompileOnly(string statement) => "EXPLAIN PLAN FOR " + statement;
     public override void ConfigureCompilation(DbCommand command) => command.Parameters.Clear();
 
-    // The provider is supplied by the host. Avoid introducing a mandatory Oracle dependency for SQLite sites.
+    // Also support host-supplied command wrappers exposing Oracle's named-binding option.
     public override void ConfigureCommand(DbCommand command)
     {
         var property = command.GetType().GetProperty("BindByName");

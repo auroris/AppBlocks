@@ -28,7 +28,7 @@ public sealed class PackageTests
     }
 
     [Fact]
-    public async Task Connections_default_to_Umbraco_and_round_trip_encrypted_changes_without_a_restart()
+    public async Task Connections_default_to_AppBlocks_and_round_trip_encrypted_changes_without_a_restart()
     {
         var root = Directory.CreateTempSubdirectory("appblocks-connections-").FullName;
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -38,7 +38,8 @@ public sealed class PackageTests
         }).Build();
         var protection = new EphemeralDataProtectionProvider();
         var catalog = new ConnectionCatalog(config, new Environment(root), protection);
-        var defaults = Assert.Single(catalog.List());
+        var defaults = Assert.Single(catalog.List(), c => c.IsDefault);
+        Assert.Equal(ConnectionCatalog.ApplicationConnection, defaults.Name);
         Assert.True(defaults.IsDefault); Assert.True(defaults.ReadOnly); Assert.Equal("sqlite", defaults.Provider);
         using (var connection = catalog.Openable("UmbracoDb")) Assert.Contains("cms.db", connection.ConnectionString);
         const string secret = "A-connection-secret-that-must-not-be-exported";
@@ -52,6 +53,7 @@ public sealed class PackageTests
         Assert.NotEqual(before, reopened.Revision("Business"));
         using (var connection = reopened.Openable("Business")) Assert.Contains("another-server", connection.ConnectionString);
         await Assert.ThrowsAsync<ArgumentException>(() => catalog.SaveAsync(new("UmbracoDb", "sqlite", "Data Source=other.db"), default));
+        await Assert.ThrowsAsync<ArgumentException>(() => catalog.SaveAsync(new("AppBlocksDb", "sqlite", "Data Source=other.db"), default));
         await Assert.ThrowsAsync<ArgumentException>(() => catalog.SaveAsync(new("../escape", "sqlite", "Data Source=other.db"), default));
     }
 
@@ -63,6 +65,8 @@ public sealed class PackageTests
         var catalog = new ConnectionCatalog(new ConfigurationBuilder().Build(), new Environment(root), new EphemeralDataProtectionProvider());
         await Assert.ThrowsAsync<SqliteException>(() => catalog.TestAsync(new("Example", "sqlite", "Data Source=" + file), default));
         Assert.False(File.Exists(file));
+        await Assert.ThrowsAsync<SqliteException>(() => catalog.TestAsync(new(ConnectionCatalog.ApplicationConnection, "sqlite", null), default));
+        Assert.False(Directory.Exists(Path.Combine(root, "App_Data")));
     }
 
     [Fact]
