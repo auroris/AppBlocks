@@ -45,6 +45,7 @@ public static class InteractiveReportsExtensions
         services.AddScoped<IAppBlockPlugin, InteractiveReportBlock>();
         services.AddScoped<IAppBlocksCatalogueContributor, ReportCatalogueContributor>();
         services.AddSingleton<ReportPrintPreviews>();
+        services.AddSingleton<ReportSourcePreviews>();
 
         builder.AddInteractiveReportsSite(builder.Config, reports =>
         {

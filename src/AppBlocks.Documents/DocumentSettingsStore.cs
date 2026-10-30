@@ -20,7 +20,7 @@ internal sealed record PressroomSettings(string? Url, string? ApiKey, double Tim
 }
 
 /// <summary>
-/// Installation settings, outside content and uSync. A saved blank URL deliberately disables configured
+/// Installation settings, outside content and schema definitions. A saved blank URL deliberately disables configured
 /// Pressroom. Secrets are protected with the site's Data Protection keys and never returned by the API.
 /// </summary>
 public sealed class DocumentSettingsStore(IConfiguration configuration, IWebHostEnvironment environment,

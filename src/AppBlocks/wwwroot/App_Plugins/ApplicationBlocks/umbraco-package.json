@@ -3,6 +3,18 @@
   "extensions": [
     {
       "type": "propertyEditorUi",
+      "alias": "AppBlocks.FormClassPicker",
+      "name": "Application form class",
+      "element": "/App_Plugins/ApplicationBlocks/form-class-picker.js",
+      "meta": {
+        "label": "Form class",
+        "icon": "icon-code",
+        "group": "Application",
+        "propertyEditorSchemaAlias": "Umbraco.TextBox"
+      }
+    },
+    {
+      "type": "propertyEditorUi",
       "alias": "AppHost.ResourcePicker",
       "name": "Application form resource",
       "element": "/App_Plugins/ApplicationBlocks/resource-picker.js",

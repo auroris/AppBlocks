@@ -7,9 +7,8 @@ namespace UmbracoAppHost.PaperReports;
 
 /// <summary>
 /// Keeps the paper report type's allowed templates equal to the installed templates, so a host adds a paper report
-/// template by registering it rather than by editing the type the library ships. Runs at startup, after uSync's first
-/// boot import, whenever a template is saved or deleted, and whenever the type itself is saved, which a uSync import
-/// of the library's definition does with the shorter list the export carries.
+/// template by registering it rather than by editing the type the library ships. Runs at startup, whenever a template
+/// is saved or deleted, and whenever the type itself is saved, including its initial schema installation.
 /// </summary>
 public sealed class PaperReportTemplates(IRuntimeState runtime, IContentTypeService contentTypes, ITemplateService templates,
     ILogger<PaperReportTemplates> logger)
@@ -29,7 +28,7 @@ public sealed class PaperReportTemplates(IRuntimeState runtime, IContentTypeServ
         if (runtime.Level != RuntimeLevel.Run) return;
         try
         {
-            // Before the first boot's import has created the type there is nothing to keep.
+            // Before the first boot's schema installation has created the type there is nothing to keep.
             if (contentTypes.Get(PaperReportDefinition.Alias) is not { } type) return;
             var installed = (await templates.GetAllAsync(Array.Empty<string>())).ToList();
             if (installed.Select(t => t.Id).ToHashSet().SetEquals(type.AllowedTemplates?.Select(t => t.Id) ?? [])) return;

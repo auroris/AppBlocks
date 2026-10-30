@@ -117,8 +117,8 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
         if (interfaces.Length != 1 || Alias(interfaces[0]) != "appFormInterface" || interfaceLayout.Length != 1
             || interfaceLayout[0].GetProperty("contentKey").GetGuid() != interfaces[0].GetProperty("key").GetGuid()) { errors.Add("Each form needs exactly one Form Interface."); return; }
         var configuration = interfaces[0];
-        var resource = resources.Find(Text(configuration, "resource"));
-        if (resource is null) { errors.Add("Select a registered form resource or a published data source."); return; }
+        var resource = resources.RegisteredResources.GetValueOrDefault(Text(configuration, "resource"));
+        if (resource is null) { errors.Add("Select a registered C# form class."); return; }
         // A data source's fields come from its database; without them every binding would look wrong.
         if (resource is SqlDataSource { Problem: { } problem }) { errors.Add($"The data source {resource.Alias} is not available: {problem}"); return; }
         var fields = new Dictionary<string, JsonElement>(StringComparer.Ordinal); var actions = 0;

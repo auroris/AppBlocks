@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using AppBlocks.InteractiveReports.Reports;
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Core.Execution;
 using InteractiveReport.Core.Model;
@@ -70,12 +71,27 @@ public sealed class DataSourceContextParameters(OriginalContextParameters origin
     }
 }
 
-public sealed class DataSourceReportAccess(PublishedReportCatalog catalog, DataSourceQueries queries, IHttpContextAccessor http)
+public sealed class DataSourceReportAccess(PublishedReportCatalog catalog, DataSourceQueries queries, IHttpContextAccessor http,
+    AppBlockContent? content = null, ReportSourcePreviews? previews = null)
 {
     public async ValueTask<RowRestriction> RestrictAsync(InteractiveReportRowRestrictionRequest request, CancellationToken ct)
     {
         var alias = request.SourceReportName ?? request.ReportName;
-        if (catalog.SourceForReport(alias) is not { } source) return RowRestriction.NotApplicable;
+        DataSourceDefinition? source;
+        if (alias.StartsWith(ReportSourcePreviews.Prefix, StringComparison.Ordinal))
+        {
+            source = previews?.Find(alias, request.User)?.DataSource;
+            if (source is null) return RowRestriction.Deny;
+        }
+        else if (AppBlockContent.ParseReportName(alias, out _, out _))
+        {
+            if (content?.Report(alias) is not { } instance) return RowRestriction.Deny;
+            var selection = instance.Block.Content.Value<string>("dataSource", culture: instance.Culture) ?? "";
+            source = catalog.ResolveBlockSource(instance.Block.Content.Key, selection, new List<string>());
+            if (source is null) return RowRestriction.Deny;
+        }
+        else source = catalog.SourceForReport(alias);
+        if (source is null) return RowRestriction.NotApplicable;
         AppBlockContent.ParseReportName(request.ReportName, out var page, out var block);
         var parameters = DataSourceReportParameters.From(http.HttpContext);
         try

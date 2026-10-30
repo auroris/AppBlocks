@@ -64,7 +64,7 @@ public sealed class FormInventory(IContentService content, FormResourceRegistry 
                 if (first.ValueKind == JsonValueKind.Object) resourceAlias = Text(first, "resource");
             }
             IReadOnlyList<FormField> contract;
-            try { contract = resources?.Find(resourceAlias)?.Fields ?? []; }
+            try { contract = resources?.RegisteredResources.GetValueOrDefault(resourceAlias)?.Fields ?? []; }
             catch (Exception error) when (error is not OperationCanceledException) { contract = []; }
             var fieldKeys = FindChildren(layouts, formKey);
             var fields = new List<FormField>();

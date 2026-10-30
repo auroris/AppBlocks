@@ -40,11 +40,12 @@ public sealed class StandaloneSiteTests
             ["Umbraco:CMS:Global:Id"] = Guid.NewGuid().ToString(), ["Umbraco:CMS:Global:UseHttps"] = "false",
             ["Umbraco:CMS:ModelsBuilder:ModelsMode"] = "Nothing",
             ["Umbraco:CMS:TypeFinder:AdditionalAssemblyExclusionEntries:0"] = "xunit.",
+            // The database SDK is not an Umbraco extension; scanning it loads optional Oracle cloud assemblies.
+            ["Umbraco:CMS:TypeFinder:AdditionalAssemblyExclusionEntries:1"] = "Oracle.",
             ["Umbraco:CMS:Unattended:InstallUnattended"] = "true", ["Umbraco:CMS:Unattended:UpgradeUnattended"] = "true",
             ["Umbraco:CMS:Unattended:UnattendedUserName"] = "Documents test",
             ["Umbraco:CMS:Unattended:UnattendedUserEmail"] = "documents@example.test",
             ["Umbraco:CMS:Unattended:UnattendedUserPassword"] = password,
-            ["uSync:Settings:ImportAtStartup"] = "None", ["uSync:Settings:ExportOnSave"] = "None",
             ["Pressroom:Url"] = "https://configured.example/",
         });
         builder.Services.Configure<InstallDefaultDataSettings>(Constants.Configuration.NamedOptions.InstallDefaultData.Languages,
@@ -71,6 +72,7 @@ public sealed class StandaloneSiteTests
             if (upgrade.ExecuteTask is { } task) await task.WaitAsync(TimeSpan.FromSeconds(90));
             var runtime = app.Services.GetRequiredService<IRuntimeState>();
             Assert.True(runtime.Level == RuntimeLevel.Run, runtime.BootFailedException?.ToString() ?? runtime.Level.ToString());
+            await SchemaInstallationChecks.VerifyAsync(app.Services);
             var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
             using var anonymous = new HttpClient { BaseAddress = address };
             using var admin = await Administrator(address, password);

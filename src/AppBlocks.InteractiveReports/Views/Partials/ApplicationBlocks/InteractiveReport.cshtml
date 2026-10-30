@@ -26,7 +26,7 @@ else
         @if (printUrl is not null) { <p class="app-report-actions"><a href="@(printUrl + Context.Request.QueryString)" target="_blank" rel="noopener">Print</a></p> }
         <template data-app-report data-state-key="@(Model.MemberId):@name:@culture" data-print-url="@printUrl"
             data-print-key-column="@Text("keyColumn")" data-print-key-parameter="@(Text("keyParameter") ?? "id")">
-            <interactive-report report="@name" report-title="@(heading ?? Text("reportName"))"
+            <interactive-report report="@name" report-title="@(heading ?? "Report")"
                 api-base="@(Context.Request.PathBase.ToString() + "/api/reports" + apiQuery)" download-base="@(Context.Request.PathBase.ToString() + "/api/download" + apiQuery)"
                 initial-page-size="@(block.Value<int?>("pageSize") is > 0 and var size ? size : (int?)null)"
                 controls="@(string.IsNullOrWhiteSpace(controls) ? null : controls)" empty-message="@(block.Value<string>("emptyMessage"))"></interactive-report>

@@ -25,14 +25,11 @@ export default class FieldPicker extends AppEditor {
             this.entriesContext?.getParentUnique?.());
     }
     render() {
-        const resource = this.catalogue?.resources.find(r => r.alias === this.resource);
-        const column = resource?.dataSource?.columns.find(column => column.field === this.value);
+        const resource = this.catalogue?.formClasses?.find(r => r.alias === this.resource);
         return html`${this.renderChoices((resource?.fields ?? []).map(field => ({
                 value: field.key, label: `${field.label} (${field.kind}) — ${field.key}`,
             })), "Field binding")}
-            ${column ? html`<p>Column: ${column.column}${column.key ? " · Key" : ""}${column.readOnly ? " · Read only" : ""}${column.required ? " · Required" : ""}</p>` : ""}
-            ${resource?.dataSource?.problem ? html`<p class="error" role="alert">${resource.dataSource.problem}</p>` : ""}
-            ${!resource ? html`<p>Select the form's resource in its Form interface first.</p>` : ""}`;
+            ${!resource ? html`<p>Select the form class in its Form interface first.</p>` : ""}`;
     }
 }
 customElements.define("app-field-picker", FieldPicker);

@@ -21,8 +21,6 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
     ILogger<PublishedReportCatalog> logger, AppBlocks.Connections.ConnectionCatalog? managed = null)
 {
     public const string ReportAlias = "reportDefinition";
-    public const string SourceReportPrefix = "appblocks-source-";
-    public static string SourceReportName(DataSourceDefinition source) => SourceReportPrefix + source.Key.ToString("N");
     private const string RowRestrictionMarker = "{{RowRestriction}}";
     private Dictionary<string, PublishedReport>? nodes;
     private Dictionary<string, ReportDefinition>? reports;
@@ -39,22 +37,33 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
     public DataSourceDefinition? ResolveSource(string selection) => sources.DataSources.FirstOrDefault(source =>
         source.Alias == selection || source.Definition.Key == PickedKey(selection))?.Definition;
 
-    public DataSourceDefinition? SourceForReport(string name) => name.StartsWith(SourceReportPrefix, StringComparison.Ordinal)
-        ? ResolveSource(name[SourceReportPrefix.Length..]) : ReportNodes.GetValueOrDefault(name)?.DataSource;
+    public DataSourceDefinition? SourceForReport(string name) => ReportNodes.GetValueOrDefault(name)?.DataSource;
 
-    /// <summary>Builds a report solely from the block's properties and its published data source.</summary>
-    public PublishedReport? ReadBlockReport(Guid key, Func<string, object?> value, ICollection<string> errors) =>
-        ReadReport(key, Text(value, "heading"), property => property switch {
+    public DataSourceDefinition? ResolveBlockSource(Guid key, string selection, ICollection<string> errors) =>
+        ReportBlockSource.Read(key, selection, managed, errors);
+
+    /// <summary>Builds a report from a block-owned table or SQL query.</summary>
+    public PublishedReport? ReadBlockReport(Guid key, Func<string, object?> value, ICollection<string> errors)
+    {
+        var selection = Text(value, "dataSource");
+        var source = ResolveBlockSource(key, selection, errors);
+        if (source is null) { if (errors.Count == 0) errors.Add("Select a report table or SQL query."); return null; }
+        return ReadReport(key, Text(value, "heading"), property => property switch {
             "alias" => "appblocks-block-" + key.ToString("N"),
             "title" => value("heading"), "defaultPageSize" => value("pageSize"),
             "dataSource" or "controls" => value(property), _ => null,
-        }, errors);
+        }, errors, source);
+    }
 
     /// <summary>A published report's columns when its data source's schema gives them; null for SQL that only a query would reveal.</summary>
     public IReadOnlyList<string>? ReportColumns(string alias) => ReportNodes.TryGetValue(alias, out var node) && node.DataSource is { } source
-        && PlanOf(source).Entry.Plan is { } plan ? plan.Columns.Select(column => column.Column).ToArray() : null;
+        ? SourceColumns(source) : null;
 
-    public PublishedReport? ReadReport(Guid key, string name, Func<string, object?> value, ICollection<string> errors)
+    public IReadOnlyList<string>? SourceColumns(DataSourceDefinition source) => PlanOf(source).Entry.Plan is { } plan
+        ? plan.Columns.Select(column => column.Column).ToArray() : null;
+
+    public PublishedReport? ReadReport(Guid key, string name, Func<string, object?> value, ICollection<string> errors,
+        DataSourceDefinition? blockSource = null)
     {
         var start = errors.Count;
         var alias = Text(value, "alias");
@@ -83,7 +92,7 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
         DataSourceDefinition? source = null;
         if (Text(value, "dataSource") is { Length: > 0 } selection)
         {
-            source = ResolveSource(selection);
+            source = blockSource ?? ResolveSource(selection);
             if (source is null) errors.Add("Select a published SQL data source.");
             else if (PlanOf(source).Entry.Plan is not { } plan) errors.Add("The selected data source cannot read its database schema.");
             else

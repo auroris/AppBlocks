@@ -1,7 +1,6 @@
 using System.Text.Json;
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Core.Model;
-using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core.Services;
 using UmbracoAppHost.Blocks;
 using UmbracoAppHost.DataSources;
@@ -9,7 +8,7 @@ using UmbracoAppHost.PaperReports;
 
 namespace AppBlocks.InteractiveReports;
 
-public sealed class InteractiveReportBlock(IOptionsMonitor<InteractiveReportOptions> reports, ReportDefinitionCompiler compiler,
+public sealed class InteractiveReportBlock(ReportDefinitionCompiler compiler,
     PublishedReportCatalog definitions, IContentService contents, Connections.ConnectionCatalog managed) : IAppBlockPlugin
 {
     public string Alias => "appReport";
@@ -17,13 +16,10 @@ public sealed class InteractiveReportBlock(IOptionsMonitor<InteractiveReportOpti
     public bool RequiresUser => true;
     public void Validate(JsonElement block, List<string> errors)
     {
-        var sourceName = Text(block, "reportName");
-        ReportDefinition source;
-        if (Text(block, "dataSource") is { Length: > 0 }) {
-            var authored = definitions?.ReadBlockReport(block.GetProperty("key").GetGuid(), property => Text(block, property), errors);
-            if (authored is null) { if (errors.Count == 0) errors.Add("Select a published data source."); return; }
-            source = authored.Definition; sourceName = authored.Alias;
-        } else if (!(definitions?.Reports ?? reports.CurrentValue.Reports).TryGetValue(sourceName, out source!)) { errors.Add("Select an available report source."); return; }
+        var authored = definitions.ReadBlockReport(block.GetProperty("key").GetGuid(), property => Text(block, property), errors);
+        if (authored is null) return;
+        var source = authored.Definition;
+        var sourceName = authored.Alias;
         var definition = JsonSerializer.Deserialize<ReportDefinition>(JsonSerializer.Serialize(source, IrJson.Options), IrJson.Options)!;
         if (Text(block, "pageSize") is { Length: > 0 } pageSize && pageSize != "0") {
             if (!int.TryParse(pageSize, out var size) || size < 1 || size > source.MaxPageSize) errors.Add($"Report page size must be between 1 and {source.MaxPageSize}.");
@@ -35,7 +31,7 @@ public sealed class InteractiveReportBlock(IOptionsMonitor<InteractiveReportOpti
         if (Text(block, "paperReport") is { Length: > 0 } paper) {
             PaperReport(paper, errors);
             // Row print actions read the record key from this column, so a column the report lacks prints nothing.
-            if (Text(block, "keyColumn") is { Length: > 0 } printKey && definitions?.ReportColumns(sourceName) is { } columns
+            if (Text(block, "keyColumn") is { Length: > 0 } printKey && definitions.SourceColumns(authored.DataSource!) is { } columns
                 && !columns.Contains(printKey, StringComparer.OrdinalIgnoreCase)) errors.Add($"The record key column {printKey} is not a column of the report {sourceName}.");
         }
         if (Text(block, "initialState") is { Length: > 0 } state) {

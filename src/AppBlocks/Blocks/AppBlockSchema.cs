@@ -5,7 +5,7 @@ using Umbraco.Cms.Core.Models.PublishedContent;
 
 namespace UmbracoAppHost.Blocks;
 
-/// <summary>Stable identities shared by the uSync catalogue and block rendering.</summary>
+/// <summary>Stable identities shared by the embedded schema catalogue and block rendering.</summary>
 public static class AppBlockSchema
 {
     public const string PageAlias = "appBlockPage";

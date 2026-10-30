@@ -38,6 +38,7 @@ public static class AppBlocksExtensions
         configure?.Invoke(connections);
         services.AddSingleton<IApplicationConnectionFactory, ApplicationConnections>();
         services.AddSingleton(new Setup.AppBlocksSchema(typeof(AppBlocksExtensions).Assembly));
+        services.AddScoped<Setup.IAppBlocksSchemaMigration, Setup.FormClassMigration>();
         services.AddDataProtection();
         services.AddSingleton<ConnectionCatalog>();
         services.AddScoped<ConnectionTables>();

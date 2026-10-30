@@ -97,6 +97,7 @@ public sealed class FormResourceRegistry(IEnumerable<IFormResource> resources, I
     private IReadOnlyDictionary<string, IFormResource>? all;
 
     public IReadOnlyDictionary<string, IFormResource> Resources => all ??= Merge();
+    public IReadOnlyDictionary<string, IFormResource> RegisteredResources => code;
     public IFormResource? Find(string alias) => code.GetValueOrDefault(alias) ?? Resources.GetValueOrDefault(alias);
 
     private Dictionary<string, IFormResource> Merge()

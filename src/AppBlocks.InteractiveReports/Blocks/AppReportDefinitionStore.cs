@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AppBlocks.Connections;
+using AppBlocks.InteractiveReports.Reports;
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Core.Definitions;
 using InteractiveReport.Core.Model;
@@ -18,13 +19,15 @@ public sealed class AppReportDefinitionStore(
     ConfiguredReportStore configured, AppBlockContent content,
     ReportDefinitionCompiler compiler,
     PublishedReportCatalog catalog, DataSourceReportBindings bindings, ConnectionCatalog? managed = null,
-    AppBlocks.Documents.IAppDocumentLinks? documents = null)
+    AppBlocks.Documents.IAppDocumentLinks? documents = null,
+    ReportSourcePreviews? previews = null, IHttpContextAccessor? http = null)
     : IReportDefinitionStore, IReportDefinitionAuthorizationStore
 {
     public async ValueTask<ReportDefinitionAuthorization?> FindAuthorization(string name, CancellationToken ct = default)
     {
-        if (name.StartsWith(PublishedReportCatalog.SourceReportPrefix, StringComparison.Ordinal))
-            return catalog.SourceForReport(name) is null ? null : new(name, new ReportAuthorization { Policy = ReportAdministratorRequirement.Policy });
+        if (name.StartsWith(ReportSourcePreviews.Prefix, StringComparison.Ordinal))
+            return previews?.Find(name, http?.HttpContext?.User) is null ? null
+                : new(name, new ReportAuthorization { Policy = ReportAdministratorRequirement.Policy });
         if (!AppBlockContent.ParseReportName(name, out _, out _))
         {
             if (catalog.IsUnavailableReport(name)) return null;
@@ -34,22 +37,22 @@ public sealed class AppReportDefinitionStore(
                 : await configured.Value.Find(name, ct) is { } normal ? new(normal.Name, normal.Authorization) : null;
         }
         if (content.Report(name) is not { } instance) return null;
-        if (instance.Block.Content.Value<string>("dataSource") is { Length: > 0 } selection)
-            return catalog.ResolveSource(selection) is null ? null : new(name, new ReportAuthorization { Policy = AppPagePolicyProvider.Name(instance.Page.Key, null) });
-        if (!catalog.Reports.TryGetValue(instance.Block.Content.Value<string>("reportName") ?? "", out var source)) return null;
-        return new(name, new ReportAuthorization { Policy = AppPagePolicyProvider.Name(instance.Page.Key, source.Authorization?.Policy) });
+        if (instance.Block.Content.Value<string>("dataSource", culture: instance.Culture) is { Length: > 0 } selection)
+            return catalog.ResolveBlockSource(instance.Block.Content.Key, selection, new List<string>()) is null
+                ? null : new(name, new ReportAuthorization { Policy = AppPagePolicyProvider.Name(instance.Page.Key, null) });
+        return null;
     }
 
     public async ValueTask<ReportDefinition?> Find(string name, CancellationToken ct = default)
     {
-        if (name.StartsWith(PublishedReportCatalog.SourceReportPrefix, StringComparison.Ordinal)) {
-            if (catalog.SourceForReport(name) is not { } previewSource) return null;
-            var preview = ReadBlock(previewSource.Key, property => property == "dataSource" ? previewSource.Key.ToString() : null);
-            if (preview is null) return null;
-            await bindings.BindAsync(preview.Definition, previewSource, ct);
-            preview.Definition.SourceName = name;
-            preview.Definition.Authorization = new ReportAuthorization { Policy = ReportAdministratorRequirement.Policy };
-            return compiler.CompileManaged(name, preview.Definition, managed);
+        if (name.StartsWith(ReportSourcePreviews.Prefix, StringComparison.Ordinal))
+        {
+            if (previews?.Find(name, http?.HttpContext?.User) is not { DataSource: { } previewSource } preview) return null;
+            var definition = Copy(preview.Definition);
+            await bindings.BindAsync(definition, previewSource, ct);
+            definition.SourceName = name;
+            definition.Authorization = new ReportAuthorization { Policy = ReportAdministratorRequirement.Policy };
+            return compiler.CompileManaged(name, definition, managed);
         }
         if (!AppBlockContent.ParseReportName(name, out _, out _))
         {
@@ -61,21 +64,12 @@ public sealed class AppReportDefinitionStore(
         }
         if (content.Report(name) is not { } instance) return null;
         var block = instance.Block.Content;
-        string sourceName; ReportDefinition source; DataSourceDefinition? dataSource;
-        if (block.Value<string>("dataSource") is { Length: > 0 }) {
-            var authored = ReadBlock(block.Key, property => block.GetProperty(property)?.GetValue(instance.Culture));
-            if (authored?.DataSource is null) return null;
-            source = authored.Definition; dataSource = authored.DataSource;
-            sourceName = PublishedReportCatalog.SourceReportName(dataSource);
-        } else {
-            sourceName = block.Value<string>("reportName") ?? "";
-            if (!catalog.Reports.TryGetValue(sourceName, out source!)) return null;
-            dataSource = catalog.ReportNodes.GetValueOrDefault(sourceName)?.DataSource;
-        }
-        var result = Copy(source);
-        if (dataSource is not null) await bindings.BindAsync(result, dataSource, ct);
-        result.SourceName = sourceName;
-        result.Authorization = new ReportAuthorization { Policy = AppPagePolicyProvider.Name(instance.Page.Key, source.Authorization?.Policy) };
+        var authored = ReadBlock(block.Key, property => block.GetProperty(property)?.GetValue(instance.Culture));
+        if (authored?.DataSource is null) return null;
+        var result = Copy(authored.Definition);
+        await bindings.BindAsync(result, authored.DataSource, ct);
+        result.SourceName = name;
+        result.Authorization = new ReportAuthorization { Policy = AppPagePolicyProvider.Name(instance.Page.Key, null) };
         result.DocumentFiles = null; // Configured files belong to their original saved-view family.
         if (block.Value<string>("heading") is { Length: > 0 } title) result.Title = title;
         if (block.Value<string>("initialState") is { Length: > 0 } state) result.DefaultState = JsonSerializer.Deserialize<ReportState>(state, IrJson.Options);

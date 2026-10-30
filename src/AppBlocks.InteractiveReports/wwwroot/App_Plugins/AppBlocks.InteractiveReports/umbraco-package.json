@@ -3,12 +3,12 @@
   "extensions": [
     {
       "type": "propertyEditorUi",
-      "alias": "AppHost.ReportPicker",
-      "name": "Application report source",
-      "element": "/App_Plugins/ApplicationBlocks/report-picker.js",
+      "alias": "AppBlocks.ReportSource",
+      "name": "Application report table or SQL",
+      "element": "/App_Plugins/ApplicationBlocks/report-source.js",
       "meta": {
-        "label": "Report source",
-        "icon": "icon-table",
+        "label": "Table or SQL query",
+        "icon": "icon-database",
         "group": "Application",
         "propertyEditorSchemaAlias": "Umbraco.TextBox"
       }

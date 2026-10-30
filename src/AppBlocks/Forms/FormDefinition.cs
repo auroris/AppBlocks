@@ -25,7 +25,7 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
         if (matches.Length != 1) return null;
         var block = matches[0];
         var interfaces = block.Content.Value<BlockListModel>("formInterface");
-        if (interfaces?.Count != 1 || resources.Find(interfaces[0].Content.Value<string>("resource") ?? "") is not { } resource) return null;
+        if (interfaces?.Count != 1 || resources.RegisteredResources.GetValueOrDefault(interfaces[0].Content.Value<string>("resource") ?? "") is not { } resource) return null;
         var children = AppBlockContent.Flatten(block.Areas.SelectMany(a => a)).ToArray();
         if (children.Any(b => b.Content.ContentType.Alias is "appForm" or "appReport")) return null;
         var fields = children.Where(b => AppBlockSchema.FieldAliases.Contains(b.Content.ContentType.Alias)).ToArray();

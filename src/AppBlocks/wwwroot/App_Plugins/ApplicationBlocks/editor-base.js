@@ -14,6 +14,7 @@ export class AppEditor extends UmbLitElement {
         super(); this.value = ""; this.readonly = false;
         this.consumeContext(UMB_AUTH_CONTEXT, async auth => {
             if (!auth) return;
+            this.auth = auth;
             try {
                 const token = await auth.getLatestToken();
                 const response = await fetch(`${pathBase}/umbraco/management/api/v1/application-blocks/catalogue`, {

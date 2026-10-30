@@ -69,15 +69,9 @@ public sealed class DemoSeed(IConfiguration configuration, IServiceProvider serv
             if (!(await types.CreateAsync(pageType, Constants.Security.SuperUserKey)).Success) throw new InvalidOperationException("Could not create demo article type.");
         }
 #pragma warning disable CS0618
-        var root = contents.GetById(Key("sources")) ?? contents.Create("Demo data", -1, "dataSources");
-        root.Key = Key("sources"); Save(root);
-        var source = contents.GetById(Key("source")) ?? contents.Create("Tasks", root.Id, "sqlDataSource");
-        source.Key = Key("source"); source.SetValue("alias", "demo.tasks"); source.SetValue("source", "AppBlocksDemoTasks");
-        source.SetValue("connection", ConnectionCatalog.ApplicationConnection);
-        source.SetValue("keyColumns", "id"); source.SetValue("allowInsert", true); source.SetValue("allowUpdate", true); Save(source);
         var page = contents.GetById(Key("page")) ?? contents.Create("A normal content page", -1, "demoArticle"); page.Key = Key("page"); page.TemplateId = template.Id;
-        page.SetValue("mainContent", PageBlocks("Umbraco.BlockList", source.Key, richText.Key, "main").ToJsonString());
-        page.SetValue("sidebar", PageBlocks("Umbraco.BlockGrid", source.Key, richText.Key, "side").ToJsonString());
+        page.SetValue("mainContent", PageBlocks("Umbraco.BlockList", richText.Key, "main").ToJsonString());
+        page.SetValue("sidebar", PageBlocks("Umbraco.BlockGrid", richText.Key, "side").ToJsonString());
         Save(page);
         void Save(IContent content) {
             if (!contents.Save(content).Success) throw new InvalidOperationException("Could not save demo " + content.Name);
@@ -97,11 +91,12 @@ public sealed class DemoSeed(IConfiguration configuration, IServiceProvider serv
         return type;
     }
 
-    internal static JsonObject PageBlocks(string editor, Guid source, Guid textType, string prefix)
+    internal static JsonObject PageBlocks(string editor, Guid textType, string prefix)
     {
         var body = Set(editor);
         Add(body, editor, Key(prefix + "-text"), textType, ("text", JsonValue.Create("This text belongs to the website. The following forms and reports use native Umbraco blocks.")));
-        var report = Add(body, editor, Key(prefix + "-report"), AppBlockSchema.Key("appReport"), ("heading", JsonValue.Create("Tasks")), ("dataSource", JsonValue.Create(source.ToString())), ("pageSize", JsonValue.Create(10)));
+        var source = new JsonObject { ["kind"] = "table", ["connection"] = ConnectionCatalog.ApplicationConnection, ["source"] = "AppBlocksDemoTasks" };
+        Add(body, editor, Key(prefix + "-report"), AppBlockSchema.Key("appReport"), ("heading", JsonValue.Create("Tasks")), ("dataSource", JsonValue.Create(source.ToJsonString())), ("pageSize", JsonValue.Create(10)));
         var fields = Set("Umbraco.BlockGrid");
         var iface = Set("Umbraco.BlockList");
         Add(iface, "Umbraco.BlockList", Key(prefix + "-interface"), AppBlockSchema.Key("appFormInterface"), ("resource", JsonValue.Create("demo.tasks")), ("keyParameter", JsonValue.Create(prefix + "Id")));
