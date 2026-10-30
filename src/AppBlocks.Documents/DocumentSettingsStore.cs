@@ -32,7 +32,7 @@ public sealed class DocumentSettingsStore(IConfiguration configuration, IWebHost
     private string FilePath => Path.Combine(configuration["AppBlocks:DataRoot"] ?? configuration["UmbracoAppHost:DataRoot"]
         ?? environment.ContentRootPath, "App_Data", "AppBlocks", "documents.json");
 
-    public PressroomConfigurationList List() => new(ReadConfigurations().Select(Info).ToArray(), File.Exists(FilePath));
+    public PressroomConfigurationList List() => new(ReadConfigurations().Where(c => !string.IsNullOrWhiteSpace(c.Url)).Select(Info).ToArray(), File.Exists(FilePath));
     private static PressroomConfigurationInfo Info(StoredPressroomConfiguration item)
         => new(item.Id, item.Name, item.Url, item.ProtectedApiKey is not null, item.Output, item.TimeoutSeconds);
 
@@ -40,17 +40,17 @@ public sealed class DocumentSettingsStore(IConfiguration configuration, IWebHost
     public DocumentSettingsInfo Get()
     {
         var item = ReadConfigurations().FirstOrDefault(c => c.Output == "pdf");
-        return new(item?.Url, item?.ProtectedApiKey is not null, item?.TimeoutSeconds ?? 65, File.Exists(FilePath));
+        return new(string.IsNullOrWhiteSpace(item?.Url) ? null : item.Url, item?.ProtectedApiKey is not null, item?.TimeoutSeconds ?? 65, File.Exists(FilePath));
     }
 
     internal PressroomSettings Resolve()
     {
-        var item = DefaultPdf();
-        return new(item?.Url, item?.ApiKey, item?.TimeoutSeconds ?? 65);
+        var item = ReadConfigurations().FirstOrDefault(c => c.Output == "pdf") is { } stored ? Resolve(stored) : null;
+        return new(string.IsNullOrWhiteSpace(item?.Url) ? null : item.Url, item?.ApiKey, item?.TimeoutSeconds ?? 65);
     }
 
     internal ResolvedPressroomConfiguration? DefaultPdf()
-        => ReadConfigurations().FirstOrDefault(c => c.Output == "pdf") is { } item ? Resolve(item) : null;
+        => ReadConfigurations().FirstOrDefault(c => c.Output == "pdf" && !string.IsNullOrWhiteSpace(c.Url)) is { } item ? Resolve(item) : null;
     internal ResolvedPressroomConfiguration Resolve(Guid id)
         => Resolve(ReadConfigurations().SingleOrDefault(c => c.Id == id) ?? throw new KeyNotFoundException("The selected document configuration no longer exists."));
     private ResolvedPressroomConfiguration Resolve(StoredPressroomConfiguration item)
