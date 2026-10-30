@@ -1,0 +1,77 @@
+{
+  "name": "Application blocks",
+  "extensions": [
+    {
+      "type": "propertyEditorUi",
+      "alias": "AppHost.ReportPicker",
+      "name": "Application report source",
+      "element": "/App_Plugins/ApplicationBlocks/report-picker.js",
+      "meta": {
+        "label": "Report source",
+        "icon": "icon-table",
+        "group": "Application",
+        "propertyEditorSchemaAlias": "Umbraco.TextBox"
+      }
+    },
+    {
+      "type": "propertyEditorUi",
+      "alias": "AppHost.ResourcePicker",
+      "name": "Application form resource",
+      "element": "/App_Plugins/ApplicationBlocks/resource-picker.js",
+      "meta": {
+        "label": "Form resource",
+        "icon": "icon-database",
+        "group": "Application",
+        "propertyEditorSchemaAlias": "Umbraco.TextBox"
+      }
+    },
+    {
+      "type": "propertyEditorUi",
+      "alias": "AppHost.FieldPicker",
+      "name": "Application field binding",
+      "element": "/App_Plugins/ApplicationBlocks/field-picker.js",
+      "meta": {
+        "label": "Field binding",
+        "icon": "icon-edit",
+        "group": "Application",
+        "propertyEditorSchemaAlias": "Umbraco.TextBox"
+      }
+    },
+    {
+      "type": "propertyEditorUi",
+      "alias": "AppHost.ReportState",
+      "name": "Application report starting view",
+      "element": "/App_Plugins/ApplicationBlocks/report-state.js",
+      "meta": {
+        "label": "Report starting view",
+        "icon": "icon-table",
+        "group": "Application",
+        "propertyEditorSchemaAlias": "Umbraco.TextArea"
+      }
+    },
+    {
+      "element": "/App_Plugins/ApplicationBlocks/list-picker.js",
+      "alias": "AppHost.ListPicker",
+      "type": "propertyEditorUi",
+      "meta": {
+        "propertyEditorSchemaAlias": "Umbraco.TextBox",
+        "group": "Application",
+        "label": "List of values",
+        "icon": "icon-list"
+      },
+      "name": "Application list of values"
+    },
+    {
+      "element": "/App_Plugins/ApplicationBlocks/data-source-picker.js",
+      "alias": "AppHost.DataSourcePicker",
+      "type": "propertyEditorUi",
+      "meta": {
+        "propertyEditorSchemaAlias": "Umbraco.TextBox",
+        "group": "Application",
+        "label": "SQL data source",
+        "icon": "icon-database"
+      },
+      "name": "Published SQL data source"
+    }
+  ]
+}

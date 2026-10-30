@@ -1,0 +1,154 @@
+@using System.Globalization
+@using Microsoft.AspNetCore.Mvc.Rendering
+@using Microsoft.AspNetCore.WebUtilities
+@using UmbracoAppHost.Blocks
+@using UmbracoAppHost.Schedules
+@model AppBlockView
+@inject ScheduleQueries Queries
+@*
+    Resources against time: the rows of one source down the side, the bars of another across a window of days or
+    hours. The server lays the whole table out (Schedules/ScheduleLayout.cs): one cell per row and column, the bars
+    as positioned links inside the cell where they start, each in its own sub-row when bars overlap, an open-ended
+    bar running to the window's edge. The runtime only scrolls the window to today and shows a bar's details as a
+    tooltip; without it the table still reads and every bar is reachable with the keyboard.
+*@
+@{
+    var item = Model.Block;
+    var settings = ScheduleSettings.Read(item.Content);
+    var id = "schedule-" + item.ContentKey.ToString("N");
+    var culture = CultureInfo.CurrentUICulture;
+    var parameters = Context.Request.Query.Where(p => p.Value.Count == 1).ToDictionary(p => p.Key, p => p.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+    var window = ScheduleWindow.Resolve(settings, parameters, DateTime.Now);
+    var days = window.Scale == ScheduleScale.Days;
+    var level = Math.Clamp(Model.HeadingLevel, 2, 6);
+    var heading = new TagBuilder("h" + level);
+    heading.AddCssClass("ah-schedule__title");
+    heading.Attributes["id"] = id + "-title";
+    heading.InnerHtml.Append(settings.Heading ?? "");
+    string Date(DateOnly date) => date.ToString("d MMMM yyyy", culture);
+    string Moment(DateTime moment) => days && moment.TimeOfDay == TimeSpan.Zero ? moment.ToString("d MMM yyyy", culture) : moment.ToString("d MMM yyyy HH:mm", culture);
+    string Weekday(DateTime date) { var name = date.ToString("ddd", culture).TrimEnd('.'); return name.Length > 2 ? name[..2] : name; }
+    // The same page with another window: every other parameter stays, so a form's record or a filter is kept.
+    string Address(ScheduleWindow? target)
+    {
+        var query = Context.Request.Query.Where(p => !p.Key.Equals(ScheduleWindow.FromParameter, StringComparison.OrdinalIgnoreCase) && !p.Key.Equals(ScheduleWindow.ToParameter, StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(p => p.Key, p => (string?)p.Value.ToString());
+        if (target is not null)
+        {
+            query[ScheduleWindow.FromParameter] = target.From.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            query[ScheduleWindow.ToParameter] = target.To.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        }
+        return QueryHelpers.AddQueryString(Context.Request.PathBase + Context.Request.Path, query);
+    }
+    string Details(ScheduleRow row, ScheduleBar bar) => $": {row.Label}, {Moment(bar.StartsAt)}{(bar.EndsAt is { } end ? " to " + Moment(end) : " onward")}{(bar.Kind is null ? "" : ", " + bar.Kind)}";
+    string KindClass(int index) => index > 0 ? " app-schedule-kind-" + ((index - 1) % 8 + 1) : "";
+}
+@if (Model.MemberId is null)
+{
+    <p class="app-block-signin" role="status">Sign in to see the schedule.</p>
+}
+else
+{
+    var data = await Queries.LoadAsync(settings, window, Context.User, Model.Page.Key, item.ContentKey, parameters, Context.RequestAborted);
+    var layout = data.Problem is null ? ScheduleLayout.Build(window, data.Rows!, data.Bars!, settings.LinkTemplate, Context.Request.PathBase) : null;
+    <section class="app-schedule ah-schedule" id="@id" data-app-schedule data-scale="@(days ? "days" : "hours")" aria-labelledby="@(settings.Heading is null ? null : id + "-title")">
+        @if (settings.Heading is not null) { @heading }
+        @if (settings.Help is not null) { <p class="ah-schedule__help">@settings.Help</p> }
+        <div class="app-schedule-toolbar ah-schedule__toolbar">
+            <p class="app-schedule-window">@Date(window.From) to @Date(window.To)</p>
+            <nav class="app-schedule-nav" aria-label="Schedule window">
+                <a href="@Address(window.Shift(-1))" rel="prev">Earlier</a>
+                <a href="@Address(null)">Today</a>
+                <a href="@Address(window.Shift(1))" rel="next">Later</a>
+            </nav>
+        </div>
+        @if (layout is null)
+        {
+            <p class="app-schedule-problem" role="alert">@data.Problem</p>
+        }
+        else if (layout.RowCount == 0)
+        {
+            <p class="app-schedule-empty">The schedule has no rows to show.</p>
+        }
+        else
+        {
+            <div class="app-schedule-scroll ah-schedule__scroll">
+                <table class="app-schedule-table app-schedule-table--@(days ? "days" : "hours")" data-today-column="@layout.TodayColumn">
+                    <caption class="app-schedule-caption">@(settings.Heading ?? "Schedule"), @Date(window.From) to @Date(window.To)</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col" rowspan="2" class="app-schedule-corner"><span class="app-schedule-label"></span></th>
+                            @foreach (var period in layout.HeaderGroups)
+                            {
+                                <th scope="colgroup" colspan="@period.Span" class="app-schedule-period">@(days ? period.Start.ToString("MMMM yyyy", culture) : period.Start.ToString("ddd d MMMM yyyy", culture))</th>
+                            }
+                        </tr>
+                        <tr>
+                            @foreach (var column in layout.Columns)
+                            {
+                                <th scope="col" class="app-schedule-col@(column.IsWeekend ? " app-schedule-col--weekend" : "")@(column.IsToday ? " app-schedule-col--today" : "")" aria-current="@(column.IsToday ? "date" : null)">
+                                    @if (days)
+                                    {
+                                        <span class="app-schedule-day">@column.Start.Day</span><span class="app-schedule-weekday">@Weekday(column.Start)</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="app-schedule-day">@column.Start.ToString("HH", culture)</span>
+                                    }
+                                </th>
+                            }
+                        </tr>
+                    </thead>
+                    @foreach (var group in layout.Groups)
+                    {
+                        <tbody class="app-schedule-group">
+                            @if (group.Title is not null)
+                            {
+                                <tr class="app-schedule-group-title"><th scope="rowgroup" colspan="@(layout.Columns.Count + 1)"><span class="app-schedule-label">@group.Title</span></th></tr>
+                            }
+                            @foreach (var row in group.Rows)
+                            {
+                                var starts = row.Bars.ToLookup(bar => bar.Start);
+                                <tr class="app-schedule-row" style="--ah-lanes: @row.Lanes" data-row-key="@row.Key">
+                                    <th scope="row" class="app-schedule-row-label"><span class="app-schedule-label">@row.Label</span></th>
+                                    @foreach (var column in layout.Columns)
+                                    {
+                                        <td class="app-schedule-cell@(column.IsWeekend ? " app-schedule-col--weekend" : "")@(column.IsToday ? " app-schedule-col--today" : "")">
+                                            @foreach (var bar in starts[column.Index])
+                                            {
+                                                var classes = "app-schedule-bar" + KindClass(bar.KindIndex) + (bar.OpenEnded ? " app-schedule-bar--open" : "")
+                                                    + (bar.ClippedStart ? " app-schedule-bar--clipped-start" : "") + (bar.ClippedEnd ? " app-schedule-bar--clipped-end" : "");
+                                                var style = FormattableString.Invariant($"--ah-span: {bar.Span}; --ah-lane: {bar.Lane}");
+                                                if (bar.Link is not null)
+                                                {
+                                                    <a class="@classes" href="@bar.Link" style="@style" data-key="@bar.Key" data-kind="@bar.Kind">@bar.Label<span class="app-schedule-bar__details">@Details(row, bar)</span></a>
+                                                }
+                                                else
+                                                {
+                                                    <span class="@classes" tabindex="0" style="@style" data-key="@bar.Key" data-kind="@bar.Kind">@bar.Label<span class="app-schedule-bar__details">@Details(row, bar)</span></span>
+                                                }
+                                            }
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    }
+                </table>
+            </div>
+            @if (layout.BarCount == 0)
+            {
+                <p class="app-schedule-empty">No bars between @Date(window.From) and @Date(window.To).</p>
+            }
+            @if (layout.Legend.Count > 0)
+            {
+                <ul class="app-schedule-legend ah-schedule__legend" aria-label="Legend">
+                    @foreach (var entry in layout.Legend)
+                    {
+                        <li><span class="app-schedule-swatch@(KindClass(entry.Index))" aria-hidden="true"></span>@entry.Kind</li>
+                    }
+                </ul>
+            }
+        }
+    </section>
+}

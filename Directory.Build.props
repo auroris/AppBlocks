@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>0.1.0-alpha.1</Version>
+    <Authors>auroris</Authors>
+    <InteractiveReportsRoot Condition="'$(InteractiveReportsRoot)' == ''">$(MSBuildThisFileDirectory)..\Interactive-Reports</InteractiveReportsRoot>
+    <UseInteractiveReportsSource Condition="'$(UseInteractiveReportsSource)' == '' and Exists('$(InteractiveReportsRoot)/src/InteractiveReport.AspNetCore/InteractiveReport.AspNetCore.csproj')">true</UseInteractiveReportsSource>
+  </PropertyGroup>
+</Project>

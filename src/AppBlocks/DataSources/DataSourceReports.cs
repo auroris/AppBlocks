@@ -1,0 +1,88 @@
+using System.Security.Claims;
+using InteractiveReport.AspNetCore;
+using InteractiveReport.Core.Execution;
+using InteractiveReport.Core.Model;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Primitives;
+using UmbracoAppHost.Blocks;
+using UmbracoAppHost.Forms;
+
+namespace UmbracoAppHost.DataSources;
+
+internal static class DataSourceReportParameters
+{
+    internal static Dictionary<string, string>? From(HttpContext? http)
+    {
+        if (http is null) return null;
+        IEnumerable<KeyValuePair<string, StringValues>> parameters = http.Request.Query.Where(p => !p.Key.Equals(AppBlockContent.CultureParameter, StringComparison.OrdinalIgnoreCase));
+        // Keep page parameters separate from the adapter's own pageSize, search and export parameters.
+        if (http.Request.Query.TryGetValue("appPageQuery", out var pageQuery) && pageQuery.Count == 1)
+            parameters = QueryHelpers.ParseQuery(pageQuery.ToString());
+        return parameters.Where(p => p.Value.Count == 1)
+            .ToDictionary(p => p.Key, p => p.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+    }
+}
+
+/// <summary>Request-owned values: report SQL carries parameters, never interpolated user or URL data.</summary>
+public sealed class DataSourceReportBindings(DataSourceRuntime runtime, IDataSourceUserResolver users, IHttpContextAccessor http)
+{
+    internal const string Prefix = "apphost:data-source:";
+    private readonly Dictionary<string, object?> values = new(StringComparer.Ordinal);
+    internal object? Get(string token) => values.GetValueOrDefault(token);
+
+    public async Task<ReportDefinition> BindAsync(ReportDefinition report, DataSourceDefinition source, CancellationToken ct)
+    {
+        var plan = runtime.Plan(source).Plan ?? throw new DataSourceException("The report's data source is not available.");
+        var principal = http.HttpContext?.User ?? new ClaimsPrincipal();
+        var user = await users.ResolveAsync(principal, ct) ?? new DataSourceUser("", null, null, null, [], false);
+        var query = DataSourceReportParameters.From(http.HttpContext);
+        var parameters = new SqlParameters(plan.Dialect);
+        var now = runtime.Now();
+        object? Value(BindVariable variable) => DataSourceQueries.Bind(variable, user, query, now, plan.Dialect);
+        var from = plan.From(parameters, Value);
+        var predicate = "{{RowRestriction}}" + (plan.Restriction is null ? "" : " AND (" + plan.Restriction.Render(parameters, Value) + ")");
+        report.Sql = plan.Dialect.Select(from, plan.Columns.Select(c => c.Column), [], predicate);
+        report.Connection = source.Connection;
+        report.ContextParams = new(StringComparer.OrdinalIgnoreCase);
+        var sourceToken = Prefix + source.ComputeFingerprint() + ":";
+        foreach (var parameter in parameters.Bindings)
+        {
+            // Stable specifications preserve the adapter's schema cache; the values themselves live only in this request.
+            var token = sourceToken + parameter.Name;
+            values[token] = parameter.Value is TypedValue typed ? typed.Value : parameter.Value;
+            report.ContextParams[parameter.Name] = new ContextParamSpec { Claim = token };
+        }
+        return report;
+    }
+}
+
+public sealed record OriginalContextParameters(IContextParameterResolver Resolver);
+
+/// <summary>Preserves the host's resolver for configured reports and resolves only this request's data-source bindings.</summary>
+public sealed class DataSourceContextParameters(OriginalContextParameters original, IHttpContextAccessor http) : IContextParameterResolver
+{
+    public ValueTask<object?> Resolve(string name, ContextParamSpec spec, ClaimsPrincipal? user, CancellationToken ct = default)
+    {
+        if (spec.Claim?.StartsWith(DataSourceReportBindings.Prefix, StringComparison.Ordinal) != true)
+            return original.Resolver.Resolve(name, spec, user, ct);
+        ct.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(http.HttpContext?.RequestServices.GetRequiredService<DataSourceReportBindings>().Get(spec.Claim));
+    }
+}
+
+public sealed class DataSourceReportAccess(PublishedDataCatalog catalog, DataSourceQueries queries, IHttpContextAccessor http)
+{
+    public async ValueTask<RowRestriction> RestrictAsync(InteractiveReportRowRestrictionRequest request, CancellationToken ct)
+    {
+        var alias = request.SourceReportName ?? request.ReportName;
+        if (catalog.SourceForReport(alias) is not { } source) return RowRestriction.NotApplicable;
+        AppBlockContent.ParseReportName(request.ReportName, out var page, out var block);
+        var parameters = DataSourceReportParameters.From(http.HttpContext);
+        try
+        {
+            await queries.AuthorizeAsync(source, new FormExecutionContext(request.User, page, block, source.ComputeFingerprint(), Parameters: parameters), ct);
+            return RowRestriction.Unrestricted;
+        }
+        catch (UnauthorizedAccessException) { return RowRestriction.Deny; }
+    }
+}

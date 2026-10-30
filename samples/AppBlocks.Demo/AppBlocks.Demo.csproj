@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup>
+    <Content Update="appsettings.*.local.json" CopyToPublishDirectory="Never" />
+    <PackageReference Include="Umbraco.Cms" Version="18.3.0" />
+    <ProjectReference Include="../../src/AppBlocks/AppBlocks.csproj" />
+  </ItemGroup>
+</Project>

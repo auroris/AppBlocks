@@ -1,0 +1,22 @@
+{
+  "name": "AppBlocks",
+  "version": "0.1.0-alpha.1",
+  "extensions": [
+    {
+      "type": "dashboard", "alias": "AppBlocks.Dashboard", "name": "AppBlocks",
+      "element": "/App_Plugins/AppBlocks/dashboard.js", "weight": 30,
+      "meta": { "label": "AppBlocks", "pathname": "appblocks" },
+      "conditions": [{ "alias": "Umb.Condition.SectionAlias", "match": "Umb.Section.Settings" }]
+    },
+    {
+      "type": "propertyEditorUi", "alias": "AppBlocks.ConnectionPicker", "name": "AppBlocks connection",
+      "element": "/App_Plugins/AppBlocks/connection-picker.js",
+      "meta": { "label": "Database connection", "icon": "icon-server", "group": "AppBlocks", "propertyEditorSchemaAlias": "Umbraco.TextBox" }
+    },
+    {
+      "type": "propertyEditorUi", "alias": "AppBlocks.TablePicker", "name": "AppBlocks table",
+      "element": "/App_Plugins/AppBlocks/table-picker.js",
+      "meta": { "label": "Database table", "icon": "icon-table", "group": "AppBlocks", "propertyEditorSchemaAlias": "Umbraco.TextBox" }
+    }
+  ]
+}

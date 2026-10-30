@@ -1,0 +1,45 @@
+@using Microsoft.AspNetCore.Mvc.Rendering
+@using UmbracoAppHost.Blocks
+@model AppBlockView
+@*
+    APEX's region: an optional title bar over one area. The themes draw the chrome on the ah-region
+    hooks. A collapsible region is a details element, which opens and closes without script and
+    keeps its title as the toggle's accessible name; without a title there would be nothing to
+    click, so an untitled region never collapses. The title takes the level its place in the page
+    gives it, and the region's own content continues one level below.
+*@
+@{
+    var item = Model.Block;
+    var title = item.Content.Value<string>("heading");
+    var titled = !string.IsNullOrWhiteSpace(title);
+    var collapsible = titled && item.Settings?.Value<bool>(AppBlockLayout.CollapsibleAlias) == true;
+    var id = "region-" + item.ContentKey.ToString("N");
+    var level = Math.Clamp(Model.HeadingLevel, 2, 6);
+    var heading = new TagBuilder("h" + level);
+    heading.AddCssClass("ah-region__title");
+    heading.Attributes["id"] = id + "-title";
+    heading.InnerHtml.Append(title ?? "");
+    var area = item.Areas.FirstOrDefault();
+    IHtmlContent content = area is null ? HtmlString.Empty : await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Items.cshtml",
+        new AppBlockItems(Model.Page, area, area.ColumnSpan, Model.Form, Model.MemberId, titled ? Math.Min(level + 1, 6) : level, Model.Variables));
+}
+@if (collapsible)
+{
+    <details class="ah-region ah-region--collapsible" id="@id" open>
+        <summary class="ah-region__header">@heading</summary>
+        <div class="ah-region__body">@content</div>
+    </details>
+}
+else if (titled)
+{
+    <section class="ah-region" id="@id" aria-labelledby="@id-title">
+        <div class="ah-region__header">@heading</div>
+        <div class="ah-region__body">@content</div>
+    </section>
+}
+else
+{
+    <div class="ah-region ah-region--untitled" id="@id">
+        <div class="ah-region__body">@content</div>
+    </div>
+}

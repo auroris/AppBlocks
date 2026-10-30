@@ -1,0 +1,211 @@
+@using Umbraco.Extensions
+@using Umbraco.Cms.Core.Models.PublishedContent
+@using Umbraco.Cms.Core.Strings
+@using UmbracoAppHost.Blocks
+@using UmbracoAppHost.Forms
+@using UmbracoAppHost.DataSources
+@model AppBlockView
+@inject FormResourceRegistry Resources
+@inject AppPageAssets Assets
+@inject PublishedDataCatalog Definitions
+@inject ListOfValuesService Lists
+@inject IVariationContextAccessor VariationContext
+@{
+    var item = Model.Block;
+    var block = item.Content;
+    var alias = block.ContentType.Alias;
+    // Umbraco returns an empty string, not null, for a text property nobody filled in, so a ?? fallback needs this.
+    string? Text(string property) => block.Value<string>(property) is { } value && !string.IsNullOrWhiteSpace(value) ? value : null;
+    var heading = Text("heading");
+    var paperReport = block.Value<IPublishedContent>("paperReport");
+    var printUrl = paperReport is null ? null : Context.Request.PathBase + "/api/paper-reports/" + paperReport.Key;
+    var culture = VariationContext.VariationContext?.Culture;
+    var apiQuery = culture is not null && Model.Page.Cultures.ContainsKey(culture) ? "?" + AppBlockContent.CultureParameter + "=" + Uri.EscapeDataString(culture) : "";
+}
+@if (alias == AppBlockSchema.FormsContainerAlias)
+{
+    var forms = block.Value<BlockGridModel>("forms") ?? BlockGridModel.Empty;
+    <div class="app-forms-container">
+        @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Items.cshtml", new AppBlockItems(Model.Page, forms, forms.GridColumns ?? 12,
+            MemberId: Model.MemberId, Variables: Model.Variables))
+    </div>
+}
+else if ((alias is "appForm" or "appReport") && Model.MemberId is null)
+{
+    <p class="app-block-signin" role="status">Sign in to use this @(alias == "appForm" ? "form" : "report").</p>
+}
+else if (alias == "appReport")
+{
+    var name = AppBlockContent.ReportName(Model.Page.Key, item.ContentKey);
+    var controls = block.Value<string>("controls");
+    <section class="app-block-report">
+        @if (printUrl is not null) { <p class="app-report-actions"><a href="@(printUrl + Context.Request.QueryString)">Print</a></p> }
+        <template data-app-report data-state-key="@(Model.MemberId):@name:@culture" data-print-url="@printUrl"
+            data-print-key-column="@Text("keyColumn")" data-print-key-parameter="@(Text("keyParameter") ?? "id")">
+            <interactive-report report="@name" report-title="@(heading ?? Text("reportName"))"
+                api-base="@(Context.Request.PathBase)/api/reports@apiQuery" download-base="@(Context.Request.PathBase)/api/download@apiQuery"
+                initial-page-size="@(block.Value<int?>("pageSize") is > 0 and var size ? size : (int?)null)"
+                controls="@(string.IsNullOrWhiteSpace(controls) ? null : controls)" empty-message="@(block.Value<string>("emptyMessage"))"></interactive-report>
+        </template>
+    </section>
+}
+else if (alias == "appForm")
+{
+    var definition = FormDefinition.Resolve(Model.Page, item.ContentKey, Resources, Definitions, apiQuery.Length > 0 ? culture : null);
+    if (definition is null)
+    {
+        <p role="alert">This form has an invalid resource or field configuration.</p>
+    }
+    else
+    {
+        var destination = definition.Interface.Value<IPublishedContent>("returnPage")?.Url() ?? Context.Request.PathBase + "/";
+        <form class="app-form" data-label-position="@(string.Equals(block.Value<string>("labelPosition")?.Trim(), "left", StringComparison.OrdinalIgnoreCase) ? "left" : "top")" data-app-form data-api="@(Context.Request.PathBase)/api/forms/@Model.Page.Key/@item.ContentKey@apiQuery"
+            data-key-parameter="@definition.KeyParameter" data-return="@destination" novalidate>
+            @if (!string.IsNullOrWhiteSpace(heading)) { <h2>@heading</h2> }
+            <div class="app-form-message" role="status" aria-live="polite"></div>
+            <div class="app-form-errors" role="alert" tabindex="-1" hidden></div>
+            @if (printUrl is not null)
+            {
+                <p><a href="@printUrl" data-print data-print-url="@printUrl" data-print-key-parameter="@definition.KeyParameter" hidden>Print</a></p>
+            }
+            <fieldset class="app-form-body" disabled>
+                @foreach (var area in item.Areas)
+                {
+                    @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Items.cshtml", new AppBlockItems(Model.Page, area, area.ColumnSpan, definition,
+                        Model.MemberId, string.IsNullOrWhiteSpace(heading) ? Model.HeadingLevel : Model.HeadingLevel + 1, Model.Variables))
+                }
+                @if (!AppBlockContent.Flatten(item.Areas.SelectMany(a => a)).Any(b => b.Content.ContentType.Alias == "appActions"))
+                {
+                    <div class="app-form-actions"><button type="submit" data-save>Save</button><a href="@destination">Cancel</a><button type="button" data-delete hidden>Delete</button></div>
+                }
+            </fieldset>
+        </form>
+    }
+}
+else if (alias == "appFieldset")
+{
+    var help = Text("helpText");
+    <fieldset class="app-fieldset">
+        <legend>@heading</legend>
+        @if (help is not null) { <p class="app-fieldset-help">@help</p> }
+        @foreach (var area in item.Areas)
+        {
+            @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Items.cshtml", new AppBlockItems(Model.Page, area, area.ColumnSpan, Model.Form, Model.MemberId, Model.HeadingLevel, Model.Variables))
+        }
+    </fieldset>
+}
+else if (AppBlockSchema.ColumnLayoutAliases.Contains(alias))
+{
+    @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Layout.cshtml", Model)
+}
+else if (alias == AppBlockSchema.RegionAlias)
+{
+    @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Region.cshtml", Model)
+}
+else if (alias == AppBlockSchema.RichTextAlias)
+{
+    @* Rich text takes the theme's typography from the ah-rich-text hook. Umbraco's own views write the editor's
+       HTML unencoded; this partial is a plain Razor view, so it does that explicitly. *@
+    <div class="ah-rich-text">@Html.Raw(block.Value<IHtmlEncodedString>("text")?.ToHtmlString())</div>
+}
+else if (alias == AppBlockSchema.HtmlAlias)
+{
+    @* Raw HTML renders as written: back-office access is the trust boundary. *@
+    @Html.Raw(block.Value<string>("html"))
+}
+else if (alias == AppBlockSchema.CssAlias)
+{
+    @* Collected once into the head, so nothing renders here. *@
+    Assets.AddStyle(block.Value<string>("css"));
+}
+else if (alias == AppBlockSchema.ScriptAlias)
+{
+    @* Collected for the end of the body, after the shell's own scripts. *@
+    Assets.AddScript(block.Value<string>("script"));
+}
+else if (alias == AppBlockSchema.AttachmentsAlias)
+{
+    @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Attachments.cshtml", Model)
+}
+else if (alias == AppBlockSchema.TabularAlias)
+{
+    @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Tabular.cshtml", Model)
+}
+else if (alias == AppBlockSchema.ScheduleAlias)
+{
+    @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Schedule.cshtml", Model)
+}
+else if (alias == "appActions" && Model.Form is not null)
+{
+    var destination = Model.Form.Interface.Value<IPublishedContent>("returnPage")?.Url() ?? Context.Request.PathBase + "/";
+    <div class="app-form-actions">
+        <button type="submit" data-save>@(Text("saveLabel") ?? "Save")</button>
+        <a href="@destination">@(Text("cancelLabel") ?? "Cancel")</a>
+        <button type="button" data-delete hidden>@(Text("deleteLabel") ?? "Delete")</button>
+    </div>
+}
+else if (Model.Form is not null && AppBlockSchema.FieldAliases.Contains(alias))
+{
+    var key = block.Value<string>("field");
+    var field = Model.Form.Resource.Fields.FirstOrDefault(f => f.Key == key);
+    if (field is not null)
+    {
+        var id = "field-" + item.ContentKey.ToString("N");
+        var readOnly = field.ReadOnly || block.Value<bool>("readOnly") || alias == "appDisplay";
+        var required = field.Required || block.Value<bool>("required");
+        var label = Text("label") ?? field.Label;
+        var placeholder = Text(AppBlockField.PlaceholderAlias);
+        // Resolved now and applied by the runtime to a new record's empty field; null leaves the field as the resource starts it.
+        var defaultValue = Model.Variables?.Resolve(Text(AppBlockField.DefaultValueAlias), field.Kind);
+        // Razor writes a data-* attribute even when its value is null, so this one is written whole, and only when there is a default.
+        var defaultAttribute = defaultValue is null ? HtmlString.Empty : new HtmlString("data-default=\"" + Html.Encode(defaultValue) + "\"");
+        if (AppBlockField.IsHidden(block))
+        {
+            @* Bound and submitted like any other field, but not shown; Items.cshtml gives it no grid cell. *@
+            <input type="hidden" id="@id" name="@key" data-field="@key" data-kind="@field.Kind" data-readonly="@readOnly.ToString().ToLowerInvariant()"
+                data-label="@label" @defaultAttribute />
+        }
+        else
+        {
+            <div class="app-form-field">
+                <label for="@id">@(label)@if (required) { <span aria-hidden="true"> *</span> }</label>
+                @if (alias == "appTextArea")
+                {
+                    <textarea id="@id" name="@key" data-field="@key" data-kind="@field.Kind" data-readonly="@readOnly.ToString().ToLowerInvariant()"
+                        rows="4" required="@required" readonly="@readOnly" maxlength="@field.MaxLength" placeholder="@placeholder" @defaultAttribute
+                        aria-describedby="@id-help @id-error"></textarea>
+                }
+                else if (alias == "appSelect")
+                {
+                    IReadOnlyList<FormChoice> choices = field.Choices ?? [];
+                    string? listProblem = null;
+                    if (Text("listOfValues") is { } selected)
+                    {
+                        try {
+                            var parameters = Context.Request.Query.Where(p => p.Value.Count == 1).ToDictionary(p => p.Key, p => p.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+                            choices = await Lists.ChoicesAsync(selected, new FormExecutionContext(Context.User, Model.Page.Key, Model.Form.Block.ContentKey, Model.Form.Revision, Parameters: parameters), Context.RequestAborted);
+                        }
+                        catch (Exception error) when (error is not OperationCanceledException) { choices = []; listProblem = "The choices for this field are not available. Try reloading the page."; }
+                    }
+                    @* A select has no placeholder attribute; its empty choice carries the text instead. *@
+                    <select id="@id" name="@key" data-field="@key" data-kind="@field.Kind" data-readonly="@readOnly.ToString().ToLowerInvariant()" required="@required" disabled="@readOnly"
+                        @defaultAttribute aria-describedby="@id-help @id-error">
+                        <option value="">@(placeholder ?? "Select a value")</option>
+                        @foreach (var choice in choices) { <option value="@choice.Value">@choice.Label</option> }
+                    </select>
+                    @if (listProblem is not null) { <p role="alert">@listProblem</p> }
+                }
+                else
+                {
+                    var inputType = alias switch { "appNumber" => "number", "appDate" => "date", "appTime" => "time", "appDateTime" => "datetime-local", "appCheckbox" => "checkbox", _ => "text" };
+                    <input id="@id" name="@key" data-field="@key" data-kind="@field.Kind" data-readonly="@readOnly.ToString().ToLowerInvariant()"
+                        type="@inputType" step="@(inputType == "number" ? "any" : null)" min="@field.Minimum" max="@field.Maximum"
+                        required="@(required && inputType != "checkbox")" readonly="@readOnly" disabled="@(readOnly && inputType == "checkbox")" maxlength="@field.MaxLength"
+                        placeholder="@placeholder" @defaultAttribute aria-describedby="@id-help @id-error" />
+                }
+                <small id="@id-help">@block.Value("helpText")</small>
+                <span id="@id-error" class="app-field-error"></span>
+            </div>
+        }
+    }
+}

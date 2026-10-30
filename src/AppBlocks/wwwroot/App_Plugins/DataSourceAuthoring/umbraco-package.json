@@ -1,0 +1,6 @@
+{
+  "name": "Data source authoring",
+  "extensions": [
+    { "type": "propertyEditorUi", "alias": "AppHost.DataSourceTest", "name": "Data source test", "element": "/App_Plugins/DataSourceAuthoring/data-source-test.js", "meta": { "label": "Test data source", "icon": "icon-play", "group": "Application", "propertyEditorSchemaAlias": "Umbraco.TextBox" } }
+  ]
+}

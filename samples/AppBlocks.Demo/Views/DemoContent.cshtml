@@ -1,0 +1,9 @@
+﻿@inherits Umbraco.Cms.Web.Common.Views.UmbracoViewPage
+@using Umbraco.Extensions
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>@Model.Name</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;margin:0;color:#252333;background:#f6f5fa}header,main{max-width:1100px;margin:auto;padding:30px}header{border-bottom:1px solid #ddd}main{display:grid;grid-template-columns:2fr 1fr;gap:32px}article,aside{background:white;padding:24px;border-radius:12px;min-width:0}h1{margin:0}a{color:#5143a3}@@media(max-width:750px){main{grid-template-columns:1fr}}</style></head>
+<body><header><h1>@Model.Name</h1><p>This layout belongs to the demo website. AppBlocks supplies only the blocks.</p><a href="/umbraco/section/settings/dashboard/appblocks">Open AppBlocks</a></header>
+<main><article><h2>Native Block List</h2>@await Html.GetBlockListHtmlAsync(Model, "mainContent")</article>
+<aside><h2>Native Block Grid</h2>@await Html.GetBlockGridHtmlAsync(Model, "sidebar")</aside></main></body></html>

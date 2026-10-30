@@ -1,0 +1,33 @@
+@using UmbracoAppHost.Blocks
+@model AppBlockView
+@*
+    Full width, Two columns and Three columns: neutral markup, no chrome. The areas carry the spans
+    umbraco-blockgridlayout.css places them by; the themes add the gutters and stack the areas below
+    their breakpoint. A layout's areas never hold another column layout (the grid data type forbids
+    it), so nothing here needs to cope with nesting.
+
+    The split of Two columns sets how wide each area is. The grid inside an area keeps the span the
+    data type configures, as Umbraco's own area partial does, because that is the grid the backoffice
+    shows and corrects the blocks' spans against: a block filling its area there fills it here too,
+    whichever split the page uses.
+*@
+@{
+    var item = Model.Block;
+    var alias = item.Content.ContentType.Alias;
+    var areas = item.Areas.ToList();
+    var spans = AppBlockLayout.AreaSpans(item);
+    var columns = item.AreaGridColumns ?? item.GridColumns ?? 12;
+    var split = alias == "appColumns" && spans.Count == 2 ? $" ah-layout--split-{spans[0]}-{spans[1]}" : "";
+}
+<div class="ah-layout ah-layout--@AppBlockLayout.Modifier(alias)@split umb-block-grid__area-container" data-layout="@alias"
+    style="--umb-block-grid--area-grid-columns: @columns;">
+@for (var i = 0; i < areas.Count; i++)
+{
+    var area = areas[i];
+    var span = i < spans.Count ? spans[i] : area.ColumnSpan;
+    <div class="ah-area ah-area--@area.Alias umb-block-grid__area" data-area-alias="@area.Alias" data-area-col-span="@span"
+        style="--umb-block-grid--area-column-span: @span; --umb-block-grid--area-row-span: @area.RowSpan;">
+        @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Items.cshtml", new AppBlockItems(Model.Page, area, area.ColumnSpan, Model.Form, Model.MemberId, Model.HeadingLevel, Model.Variables))
+    </div>
+}
+</div>

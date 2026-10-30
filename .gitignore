@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+**/node_modules/
+artifacts/
+.vs/
+.idea/
+**/App_Data/
+**/umbraco/Data/
+**/umbraco/Logs/
+**/appsettings.*.local.json
+*.log

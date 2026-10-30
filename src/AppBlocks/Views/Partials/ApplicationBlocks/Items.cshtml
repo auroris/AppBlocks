@@ -1,0 +1,33 @@
+@using UmbracoAppHost.Blocks
+@model AppBlockItems
+@*
+    One grid of blocks: the page, or one area of a block. The Umbraco classes and custom properties
+    are the ones umbraco-blockgridlayout.css computes columns from; ah-grid and ah-grid__item are the
+    hooks each theme styles (gutters, and stacking below its breakpoint). The grid is as many columns
+    wide as the area spans, as in the backoffice, so a span means the same in both places.
+
+    A field's width replaces the span the backoffice gives it, and ah-grid__item--width-N names the
+    width the editor chose. CSS and JavaScript blocks and hidden fields take no cell: their partial
+    still runs, to register the code or render the hidden input, but without a grid item around it.
+*@
+@if (Model.Items.Any())
+{
+    <div class="ah-grid umb-block-grid__layout-container" data-grid-columns="@Model.Columns" style="--umb-block-grid--grid-columns: @Model.Columns;">
+    @foreach (var item in Model.Items)
+    {
+        var view = new AppBlockView(Model.Page, item, Model.Form, Model.MemberId, Model.HeadingLevel, Model.Variables);
+        if (!AppBlockLayout.OccupiesCell(item))
+        {
+            @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Block.cshtml", view)
+            continue;
+        }
+        var span = AppBlockLayout.ItemSpan(item, Model.Columns);
+        var width = AppBlockField.Width(item.Content) is { } chosen ? " ah-grid__item--width-" + chosen : "";
+        <div class="ah-grid__item@(width) umb-block-grid__layout-item" data-content-element-type-alias="@item.Content.ContentType.Alias"
+            data-col-span="@span" data-row-span="@item.RowSpan"
+            style="--umb-block-grid--item-column-span: @span; --umb-block-grid--item-row-span: @item.RowSpan;">
+            @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Block.cshtml", view)
+        </div>
+    }
+    </div>
+}

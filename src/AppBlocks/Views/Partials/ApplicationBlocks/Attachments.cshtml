@@ -1,0 +1,66 @@
+@using Microsoft.AspNetCore.Mvc.Rendering
+@using Microsoft.Extensions.Options
+@using UmbracoAppHost.Attachments
+@using UmbracoAppHost.Blocks
+@model AppBlockView
+@inject IOptions<AttachmentSettings> Settings
+@inject IVariationContextAccessor VariationContext
+@*
+    The files of a record. The server renders the frame and the limits; the runtime loads the list from
+    /api/attachments and performs the uploads. Inside a form the block waits for the form's record (the
+    app-form:loaded and app-form:saved events) and asks with the record's key; on its own it asks at once with
+    the page's address. The controls carry form="" so the enclosing form never submits them, and buttons are
+    type="button" for the same reason.
+*@
+@{
+    var item = Model.Block;
+    var block = AttachmentBlock.Read(item.Content, Settings.Value);
+    var culture = VariationContext.VariationContext?.Culture;
+    var apiQuery = culture is not null && Model.Page.Cultures.ContainsKey(culture) ? "?" + AppBlockContent.CultureParameter + "=" + Uri.EscapeDataString(culture) : "";
+    var api = Context.Request.PathBase + AttachmentEndpoints.Route + "/" + Model.Page.Key + "/" + item.ContentKey + apiQuery;
+    var ownedByForm = block.OwnedByForm && Model.Form is not null;
+    var id = "attachments-" + item.ContentKey.ToString("N");
+    var level = Math.Clamp(Model.HeadingLevel, 2, 6);
+    var heading = new TagBuilder("h" + level);
+    heading.AddCssClass("ah-attachments__title");
+    heading.Attributes["id"] = id + "-title";
+    heading.InnerHtml.Append(block.Heading ?? "");
+}
+@if (Model.MemberId is null)
+{
+    <p class="app-block-signin" role="status">Sign in to see the files.</p>
+}
+else if (block.OwnedByForm && Model.Form is null)
+{
+    <p role="alert">This Attachments block is not inside a form and names no owner.</p>
+}
+else
+{
+    <section class="app-attachments ah-attachments" id="@id" data-app-attachments data-api="@api" data-owner="@(ownedByForm ? "form" : "page")"
+        data-key-parameter="@(Model.Form?.KeyParameter ?? "id")" data-read-only="@block.ReadOnly.ToString().ToLowerInvariant()"
+        data-max-size="@block.Limits.MaxFileSize" data-accept="@block.Limits.Accept" aria-labelledby="@(block.Heading is null ? null : id + "-title")">
+        @if (block.Heading is not null) { @heading }
+        @if (block.Help is not null) { <p class="ah-attachments__help">@block.Help</p> }
+        <div class="app-attachments-message" role="status" aria-live="polite"></div>
+        <div class="app-attachments-errors" role="alert" tabindex="-1" hidden></div>
+        <ul class="app-attachments-list ah-attachments__list" aria-busy="true"></ul>
+        @if (!block.ReadOnly)
+        {
+            <div class="app-attachments-upload ah-attachments__upload" hidden>
+                <label><span>File</span> <input type="file" form="" data-attachment-file accept="@block.Limits.Accept"></label>
+                @if (block.Purposes.Count > 0)
+                {
+                    <label><span>Purpose</span>
+                        <select form="" data-attachment-purpose>
+                            <option value="">Choose a purpose</option>
+                            @foreach (var purpose in block.Purposes) { <option value="@purpose">@purpose</option> }
+                        </select>
+                    </label>
+                }
+                <label><span>Label</span> <input type="text" form="" data-attachment-label maxlength="200" autocomplete="off"></label>
+                <label><span>Notes</span> <input type="text" form="" data-attachment-notes maxlength="1000" autocomplete="off"></label>
+                <button type="button" data-attachment-upload>Upload</button>
+            </div>
+        }
+    </section>
+}

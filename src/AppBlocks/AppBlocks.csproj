@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <PropertyGroup>
+    <PackageId>AppBlocks</PackageId>
+    <Title>AppBlocks for Umbraco</Title>
+    <Description>Forms, interactive reports and database-backed application blocks for Umbraco.</Description>
+    <PackageTags>umbraco;forms;reports;blocks;database</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
+    <RazorCompileOnBuild>true</RazorCompileOnBuild>
+    <RazorCompileOnPublish>true</RazorCompileOnPublish>
+    <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+    <StaticWebAssetBasePath>/</StaticWebAssetBasePath>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Using Include="Microsoft.AspNetCore.Builder" />
+    <Using Include="Microsoft.AspNetCore.Hosting" />
+    <Using Include="Microsoft.AspNetCore.Http" />
+    <Using Include="Microsoft.AspNetCore.Routing" />
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <Using Include="Microsoft.Extensions.Hosting" />
+    <Using Include="Microsoft.Extensions.Logging" />
+    <Using Include="Umbraco.Cms.Core.DependencyInjection" />
+    <Using Include="Umbraco.Extensions" />
+    <InternalsVisibleTo Include="AppBlocks.Tests" />
+    <InternalsVisibleTo Include="UmbracoAppHost" />
+    <InternalsVisibleTo Include="UmbracoAppHost.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Umbraco.Cms" Version="18.3.0" />
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="uSync" Version="18.2.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseInteractiveReportsSource)' == 'true'">
+    <ProjectReference Include="$(InteractiveReportsRoot)/src/InteractiveReport.AspNetCore/InteractiveReport.AspNetCore.csproj" />
+    <ProjectReference Include="$(InteractiveReportsRoot)/src/InteractiveReport.Client.Json/InteractiveReport.Client.Json.csproj"
+                      AdditionalProperties="CustomAfterMicrosoftCommonTargets=$(MSBuildThisFileDirectory)InteractiveReports.targets" />
+    <ProjectReference Include="$(InteractiveReportsRoot)/src/InteractiveReport.Client.FileDownload/InteractiveReport.Client.FileDownload.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseInteractiveReportsSource)' != 'true'">
+    <PackageReference Include="InteractiveReport.AspNetCore" Version="1.0.0" />
+    <PackageReference Include="InteractiveReport.Client.Json" Version="1.0.0" />
+    <PackageReference Include="InteractiveReport.Client.FileDownload" Version="1.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <EmbeddedResource Include="../../docs/business-rules.md" LogicalName="AppBlocks.BusinessRules.md" />
+    <EmbeddedResource Include="Views/**/*.cshtml;Schema/**/*.config;Attachments/Schema/**/*.sql" />
+    <EmbeddedResource Include="Reports/umbraco-reports.json" LogicalName="UmbracoAppHost.Reports.umbraco-reports.json" />
+    <Content Update="**/*.cshtml;appsettings-schema*.json;umbraco-package-schema.json" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+  </ItemGroup>
+</Project>

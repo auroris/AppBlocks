@@ -1,0 +1,164 @@
+{
+  "InteractiveReport": {
+    "Reports": {
+      "umbraco-recent-pages": {
+        "title": "Recently changed pages",
+        "connection": "UmbracoDb",
+        "sql": "SELECT LOWER(CAST(n.uniqueId AS VARCHAR(36))) AS PAGE_KEY, n.id AS PAGE_ID, v.text AS NAME, {ContentPath} AS PATH, COALESCE(NULLIF(u.userName, ''), u.userLogin, 'Unknown user') AS EDITED_BY, {EditedAt} AS EDITED_AT, v.versionDate AS VERSION_DATE FROM umbracoNode n JOIN umbracoDocument d ON d.nodeId = n.id JOIN umbracoContentVersion v ON v.nodeId = n.id AND v.\"current\" = 1 LEFT JOIN umbracoUser u ON u.id = v.userId WHERE n.trashed = 0 AND {{RowRestriction}}",
+        "defaultPageSize": 10,
+        "columnLabels": {
+          "PAGE_KEY": "Key",
+          "PAGE_ID": "Id",
+          "NAME": "Page name",
+          "PATH": "Path",
+          "EDITED_BY": "Edited by",
+          "EDITED_AT": "Edited when",
+          "VERSION_DATE": "Save time (full precision)"
+        },
+        "columns": {
+          "PATH": { "helpText": "The full content tree path, including this page." },
+          "EDITED_AT": { "helpText": "When the latest version was saved, including unpublished changes." }
+        },
+        "editLink": {
+          "urlTemplate": "/umbraco/section/content/workspace/document/edit/{PAGE_KEY}",
+          "label": "Edit page",
+          "target": "_self"
+        },
+        "authorization": { "policy": "UmbracoBackOfficeContentReports" },
+        "defaultState": {
+          "page": { "index": 1, "size": 10 },
+          "activeTable": "pages",
+          "tables": {
+            "pages": {
+              "from": "definition",
+              "composables": [
+                { "kind": "select", "columns": ["NAME", "PATH", "EDITED_BY", "EDITED_AT"] },
+                {
+                  "kind": "sort",
+                  "sorts": [
+                    { "col": "VERSION_DATE", "dir": "desc" },
+                    { "col": "PAGE_ID", "dir": "desc" }
+                  ]
+                },
+                { "kind": "formats", "formats": { "EDITED_AT": { "mask": "yyyy-mm-dd hh:mm:ss" } } }
+              ]
+            }
+          }
+        }
+      },
+      "umbraco-members": {
+        "title": "Umbraco Members",
+        "connection": "UmbracoDb",
+        "sql": "SELECT n.id AS MEMBER_ID, n.text AS NAME, m.LoginName AS LOGIN, m.Email AS EMAIL, m.isApproved AS APPROVED, m.lastLoginDate AS LAST_LOGIN, n.createDate AS CREATED FROM cmsMember m JOIN umbracoNode n ON n.id = m.nodeId",
+        "columnLabels": {
+          "MEMBER_ID": "Id",
+          "LAST_LOGIN": "Last Login",
+          "CREATED": "Created"
+        },
+        "authorization": {
+          "policy": "UmbracoReportAdministrators"
+        }
+      },
+      "umbraco-media": {
+        "title": "Umbraco Media",
+        "connection": "UmbracoDb",
+        "sql": "SELECT n.id AS MEDIA_ID, n.text AS NAME, tn.text AS MEDIA_TYPE, NULLIF(CONCAT(p10.text, CASE WHEN p10.id IS NOT NULL THEN ' / ' END, p9.text, CASE WHEN p9.id IS NOT NULL THEN ' / ' END, p8.text, CASE WHEN p8.id IS NOT NULL THEN ' / ' END, p7.text, CASE WHEN p7.id IS NOT NULL THEN ' / ' END, p6.text, CASE WHEN p6.id IS NOT NULL THEN ' / ' END, p5.text, CASE WHEN p5.id IS NOT NULL THEN ' / ' END, p4.text, CASE WHEN p4.id IS NOT NULL THEN ' / ' END, p3.text, CASE WHEN p3.id IS NOT NULL THEN ' / ' END, p2.text, CASE WHEN p2.id IS NOT NULL THEN ' / ' END, p1.text), '') AS FOLDER, mv.path AS FILE_PATH, CONCAT('{SiteRoot}', mv.path) AS FILE_URL, ext.varcharValue AS EXTENSION, CAST(bytes.varcharValue AS BIGINT) AS SIZE_BYTES, w.intValue AS WIDTH, h.intValue AS HEIGHT, n.createDate AS UPLOADED, cu.userName AS UPLOADED_BY, cu.userEmail AS UPLOADED_BY_EMAIL, v.versionDate AS MODIFIED, mu.userName AS MODIFIED_BY, CASE WHEN n.trashed = 1 THEN 'Yes' ELSE 'No' END AS IN_RECYCLE_BIN, n.uniqueId AS MEDIA_KEY FROM umbracoNode n JOIN umbracoContent c ON c.nodeId = n.id JOIN cmsContentType ct ON ct.nodeId = c.contentTypeId AND ct.alias <> 'Folder' JOIN umbracoNode tn ON tn.id = ct.nodeId JOIN umbracoContentVersion v ON v.nodeId = n.id AND v.\"current\" = 1 LEFT JOIN umbracoMediaVersion mv ON mv.id = v.id LEFT JOIN umbracoUser cu ON cu.id = n.nodeUser LEFT JOIN umbracoUser mu ON mu.id = v.userId LEFT JOIN umbracoNode p1 ON p1.id = n.parentId AND p1.id > 0 LEFT JOIN umbracoNode p2 ON p2.id = p1.parentId AND p2.id > 0 LEFT JOIN umbracoNode p3 ON p3.id = p2.parentId AND p3.id > 0 LEFT JOIN umbracoNode p4 ON p4.id = p3.parentId AND p4.id > 0 LEFT JOIN umbracoNode p5 ON p5.id = p4.parentId AND p5.id > 0 LEFT JOIN umbracoNode p6 ON p6.id = p5.parentId AND p6.id > 0 LEFT JOIN umbracoNode p7 ON p7.id = p6.parentId AND p7.id > 0 LEFT JOIN umbracoNode p8 ON p8.id = p7.parentId AND p8.id > 0 LEFT JOIN umbracoNode p9 ON p9.id = p8.parentId AND p9.id > 0 LEFT JOIN umbracoNode p10 ON p10.id = p9.parentId AND p10.id > 0 LEFT JOIN umbracoPropertyData ext ON ext.versionId = v.id AND ext.propertyTypeId IN (SELECT id FROM cmsPropertyType WHERE Alias = 'umbracoExtension') LEFT JOIN umbracoPropertyData bytes ON bytes.versionId = v.id AND bytes.propertyTypeId IN (SELECT id FROM cmsPropertyType WHERE Alias = 'umbracoBytes') LEFT JOIN umbracoPropertyData w ON w.versionId = v.id AND w.propertyTypeId IN (SELECT id FROM cmsPropertyType WHERE Alias = 'umbracoWidth') LEFT JOIN umbracoPropertyData h ON h.versionId = v.id AND h.propertyTypeId IN (SELECT id FROM cmsPropertyType WHERE Alias = 'umbracoHeight') WHERE UPPER(n.nodeObjectType) = 'B796F64C-1F99-4FFB-B886-4BF4BC011A9C'",
+        "columnLabels": {
+          "MEDIA_ID": "Id",
+          "NAME": "Name",
+          "MEDIA_TYPE": "Type",
+          "FOLDER": "Folder",
+          "FILE_PATH": "File",
+          "FILE_URL": "File URL",
+          "EXTENSION": "Extension",
+          "SIZE_BYTES": "Size (bytes)",
+          "WIDTH": "Width",
+          "HEIGHT": "Height",
+          "UPLOADED": "Uploaded",
+          "UPLOADED_BY": "Uploaded By",
+          "UPLOADED_BY_EMAIL": "Uploader Email",
+          "MODIFIED": "Modified",
+          "MODIFIED_BY": "Modified By",
+          "IN_RECYCLE_BIN": "Recycle Bin",
+          "MEDIA_KEY": "Key"
+        },
+        "columns": {
+          "FOLDER": {
+            "helpText": "Folders from the top of the media library down to the item, up to ten levels; empty for items at the root."
+          },
+          "FILE_PATH": {
+            "helpText": "The file under wwwroot. Click to open it."
+          },
+          "SIZE_BYTES": {
+            "helpText": "Size of the uploaded file in bytes."
+          },
+          "UPLOADED": {
+            "helpText": "When the media item was created."
+          },
+          "MODIFIED": {
+            "helpText": "When the item was last saved: a replaced file, a rename, a move."
+          }
+        },
+        "editLink": {
+          "urlTemplate": "/umbraco/section/media/workspace/media/edit/{MEDIA_KEY}",
+          "label": "Open in the media library",
+          "target": "_blank"
+        },
+        "authorization": {
+          "policy": "UmbracoReportAdministrators"
+        },
+        "defaultState": {
+          "activeTable": "media",
+          "tables": {
+            "media": {
+              "from": "definition",
+              "schema": null,
+              "composables": [
+                {
+                  "kind": "select",
+                  "columns": [
+                    "NAME",
+                    "FOLDER",
+                    "MEDIA_TYPE",
+                    "FILE_PATH",
+                    "EXTENSION",
+                    "SIZE_BYTES",
+                    "WIDTH",
+                    "HEIGHT",
+                    "UPLOADED",
+                    "UPLOADED_BY",
+                    "MODIFIED",
+                    "MODIFIED_BY",
+                    "IN_RECYCLE_BIN"
+                  ]
+                },
+                {
+                  "kind": "formats",
+                  "formats": {
+                    "FILE_PATH": {
+                      "displayAs": "link",
+                      "urlColumn": "FILE_URL",
+                      "textColumn": "FILE_PATH"
+                    },
+                    "SIZE_BYTES": {
+                      "mask": "#,##0"
+                    }
+                  }
+                },
+                {
+                  "kind": "sort",
+                  "sorts": [
+                    {
+                      "col": "UPLOADED",
+                      "dir": "desc"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

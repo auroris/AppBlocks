@@ -1,0 +1,36 @@
+<Project>
+  <!-- Applied only to the source dependency, without changing the sibling repository.
+       Generate and collect resources in that project so the first build embeds them. -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'InteractiveReport.Client.Json'">
+    <AppHostReportsRoot>$(MSBuildProjectDirectory)\..\..</AppHostReportsRoot>
+    <AppHostReportsOutput>$(MSBuildProjectDirectory)\Ui\dist</AppHostReportsOutput>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Update="@(ProjectReference)"
+                      GlobalPropertiesToRemove="%(ProjectReference.GlobalPropertiesToRemove);CustomAfterMicrosoftCommonTargets" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'InteractiveReport.Client.Json'">
+    <AppHostReportsSource Include="$(AppHostReportsRoot)\src\client\**\*;$(AppHostReportsRoot)\docs\**\*;$(AppHostReportsRoot)\scripts\build-client.mjs;$(AppHostReportsRoot)\scripts\build-help.mjs;$(AppHostReportsRoot)\package.json;$(AppHostReportsRoot)\package-lock.json" />
+  </ItemGroup>
+  <Target Name="RestoreAppHostReportsFrontend" Condition="'$(MSBuildProjectName)' == 'InteractiveReport.Client.Json' and '$(DesignTimeBuild)' != 'true'"
+          Inputs="$(AppHostReportsRoot)\package.json;$(AppHostReportsRoot)\package-lock.json"
+          Outputs="$(AppHostReportsRoot)\node_modules\.package-lock.json">
+    <Exec WorkingDirectory="$(AppHostReportsRoot)" Command="npm ci --no-audit --no-fund" />
+  </Target>
+  <Target Name="BuildAppHostReportsFrontend" BeforeTargets="BeforeBuild;EnsureUiBundlesOnReleaseBuild;EnsureUiBundlesOnPack"
+          DependsOnTargets="RestoreAppHostReportsFrontend" Condition="'$(MSBuildProjectName)' == 'InteractiveReport.Client.Json' and '$(DesignTimeBuild)' != 'true'"
+          Inputs="@(AppHostReportsSource)"
+          Outputs="$(AppHostReportsOutput)\ir.js;$(AppHostReportsOutput)\ir-admin.js;$(AppHostReportsOutput)\ir-chart.js;$(AppHostReportsOutput)\help.en.html">
+    <Exec WorkingDirectory="$(AppHostReportsRoot)" Command="npm run build:client" />
+    <Exec WorkingDirectory="$(AppHostReportsRoot)" Command="node scripts/build-help.mjs" />
+  </Target>
+  <Target Name="IncludeAppHostReportsFrontend" BeforeTargets="AssignTargetPaths" DependsOnTargets="BuildAppHostReportsFrontend"
+          Condition="'$(MSBuildProjectName)' == 'InteractiveReport.Client.Json'">
+    <ItemGroup>
+      <EmbeddedResource Remove="Ui\dist\*" />
+      <_AppHostReportAsset Include="Ui\dist\*" />
+      <EmbeddedResource Include="@(_AppHostReportAsset)" WithCulture="false"
+                        LogicalName="InteractiveReport.Client.Json.Ui.%(_AppHostReportAsset.Filename)%(_AppHostReportAsset.Extension)" />
+    </ItemGroup>
+  </Target>
+</Project>

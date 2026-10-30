@@ -1,0 +1,14 @@
+@using UmbracoAppHost.Blocks
+@model AppBlocksPage
+@inject AppPageAssets Assets
+@{
+    // The page is the outermost twelve-column grid, so the spans editors give its forms and reports apply too.
+    var blocks = Model.Blocks ?? AppBlockContent.Blocks(Model.Page);
+    // The runtime's stylesheet joins the head ahead of the page's CSS blocks, so their rules win a tie with it.
+    Assets.AddStylesheet(Context.Request.PathBase + "/App_Plugins/ApplicationBlocks/runtime.css");
+}
+<div class="application-blocks">
+    @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Items.cshtml", new AppBlockItems(Model.Page, blocks, blocks.GridColumns ?? 12,
+        MemberId: Model.MemberId, Variables: Model.Variables))
+</div>
+<script type="module" src="@(Context.Request.PathBase)/App_Plugins/ApplicationBlocks/runtime.js" nonce="@AppPageAssets.Nonce(Context)"></script>

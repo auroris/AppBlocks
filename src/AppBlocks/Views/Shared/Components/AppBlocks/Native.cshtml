@@ -1,0 +1,11 @@
+@using UmbracoAppHost.Blocks
+@model AppBlocksPage
+@* Assets are self-contained: the host layout does not need AppBlocks tag helpers or imports. *@
+@if (!Context.Items.ContainsKey("AppBlocks.NativeAssets"))
+{
+    Context.Items["AppBlocks.NativeAssets"] = true;
+    <link rel="stylesheet" href="@(Context.Request.PathBase)/App_Plugins/ApplicationBlocks/runtime.css" nonce="@AppPageAssets.Nonce(Context)" />
+}
+<div class="appblocks-native">
+    @await Html.PartialAsync("~/Views/Shared/Components/AppBlocks/Default.cshtml", Model)
+</div>

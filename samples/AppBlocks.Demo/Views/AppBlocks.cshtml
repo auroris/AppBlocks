@@ -1,0 +1,14 @@
+﻿@inherits Umbraco.Cms.Web.Common.Views.UmbracoViewPage
+@{
+    Layout = null;
+}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@Model.Name</title>
+    <style>body { margin:0; font:16px/1.55 system-ui,sans-serif; color:#202b36; background:#f6f7f9; } main { max-width:1200px; margin:40px auto; padding:24px; background:white; border-radius:12px; } h1 { font-size:2rem; }</style>
+</head>
+<body><main><h1>@Model.Name</h1>@await Component.InvokeAsync("AppBlocks", new { page = Model })</main></body>
+</html>
