@@ -1,3 +1,5 @@
+import { enableReportPrinting } from "./report-print.js";
+
 const pathBase = new URL(import.meta.url).pathname.split("/App_Plugins/")[0];
 
 async function mountReports() {
@@ -32,6 +34,7 @@ async function mountReports() {
             url.searchParams.set(template.dataset.printKeyParameter || "id", String(key));
             window.open(url, "_blank", "noopener");
         });
+        enableReportPrinting(report);
         template.replaceWith(report);
     }
 }

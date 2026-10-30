@@ -1,0 +1,14 @@
+.app-report-print{box-sizing:border-box;width:min(1100px,95vw);max-height:95vh;padding:24px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#17212b;font:15px system-ui,sans-serif;box-shadow:0 20px 80px #0004}
+.app-report-print::backdrop{background:#17212b80}
+.app-report-print h2{margin:0 0 16px;font-size:22px}
+.app-report-print fieldset{display:flex;flex-wrap:wrap;gap:12px;border:0;padding:0;margin:0}
+.app-report-print legend{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.app-report-print label{display:flex;flex:1;min-width:145px;flex-direction:column;gap:5px;font-size:13px;font-weight:600}
+.app-report-print select,.app-report-print button{font:inherit;padding:9px;border:1px solid #b7c2cf;border-radius:5px;background:#fff;color:inherit}
+.app-report-print iframe{box-sizing:border-box;width:100%;height:48vh;border:1px solid #d6dce2;background:#fff}
+.app-report-print [role=status]{min-height:1.5em;margin:14px 0}
+.app-report-print-note{font-size:12px;color:#526173}
+.app-report-print footer{display:flex;justify-content:flex-end;gap:10px}
+.app-report-print footer button:last-child{background:#1958ad;color:#fff;border-color:#1958ad}
+.app-report-print button:disabled{opacity:.5;cursor:default}
+.app-report-print :focus-visible{outline:2px solid #1958ad;outline-offset:3px}

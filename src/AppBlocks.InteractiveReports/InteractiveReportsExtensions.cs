@@ -1,5 +1,6 @@
 using AppBlocks.Connections;
 using AppBlocks.Setup;
+using AppBlocks.InteractiveReports.Reports;
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Client.FileDownload;
 using InteractiveReport.Client.Json;
@@ -43,6 +44,7 @@ public static class InteractiveReportsExtensions
         services.AddScoped<IAppBlocksSchemaMigration, ReportBlockMigration>();
         services.AddScoped<IAppBlockPlugin, InteractiveReportBlock>();
         services.AddScoped<IAppBlocksCatalogueContributor, ReportCatalogueContributor>();
+        services.AddSingleton<ReportPrintPreviews>();
 
         builder.AddInteractiveReportsSite(builder.Config, reports =>
         {
@@ -92,6 +94,7 @@ public static class InteractiveReportsExtensions
     public static void MapAppBlocksInteractiveReports(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapInteractiveReportJson(InteractiveReportsSite.ReportsRoute);
+        endpoints.MapReportPrinting(InteractiveReportsSite.ReportsRoute);
         endpoints.MapInteractiveReportFileDownload(InteractiveReportsSite.DownloadRoute);
         endpoints.MapInteractiveReportJson(InteractiveReportsSite.BackOfficeReportsRoute);
         endpoints.MapInteractiveReportFileDownload(InteractiveReportsSite.BackOfficeDownloadRoute);

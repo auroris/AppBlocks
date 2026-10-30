@@ -53,11 +53,18 @@ public sealed class StandaloneSiteTests
         builder.CreateUmbracoBuilder().AddBackOffice().AddWebsite().AddComposers().Build();
         builder.Services.Replace(ServiceDescriptor.Singleton<IServerRoleAccessor, SingleServerRoleAccessor>());
         await using var app = builder.Build();
+        var printSubmissions = 0;
         try
         {
             await app.BootUmbracoAsync();
             app.UseUmbraco().WithMiddleware(u => { u.UseBackOffice(); u.UseWebsite(); })
                 .WithEndpoints(u => { u.UseBackOfficeEndpoints(); u.UseWebsiteEndpoints(); });
+            app.MapGet("/test-pressroom/v1/printers", (HttpContext http) =>
+                http.Request.Headers["X-Api-Key"] == "test-printer-key" ? Results.Json(new { printers = new[] { "office", "reception" } }) : Results.Unauthorized());
+            app.MapPost("/test-pressroom/v1/render", (HttpContext http) => {
+                printSubmissions++;
+                return Results.Json(new { jobId = "test-job", printer = "office", status = "submitted", pageCount = 1 }, statusCode: 202);
+            });
             await app.StartAsync();
             var upgrade = app.Services.GetServices<IHostedService>().OfType<BackgroundService>()
                 .Single(service => service.GetType().Name == "UnattendedUpgradeBackgroundService");
@@ -71,13 +78,39 @@ public sealed class StandaloneSiteTests
             var settingsUrl = "/umbraco/management/api/v1/appblocks/documents/settings";
             var unauthorized = await anonymous.GetAsync(settingsUrl);
             Assert.False(unauthorized.IsSuccessStatusCode);
-            using var saved = await admin.PostAsJsonAsync(settingsUrl, new SaveDocumentSettings(null, "secret-value"));
+            var before = await admin.GetFromJsonAsync<PressroomConfigurationList>(settingsUrl);
+            Assert.Single(before!.Configurations);
+            using var saved = await admin.PostAsJsonAsync("/umbraco/management/api/v1/appblocks/documents/configurations",
+                new SavePressroomConfiguration(null, "Another PDF", "https://another.example/", ApiKey: "secret-value"));
             var savedText = await saved.Content.ReadAsStringAsync();
             Assert.True(saved.IsSuccessStatusCode, savedText);
             Assert.DoesNotContain("secret-value", savedText);
-            var current = await admin.GetFromJsonAsync<DocumentSettingsInfo>(settingsUrl);
-            Assert.Null(current!.PressroomUrl);
-            Assert.True(current.HasApiKey);
+            var current = await admin.GetFromJsonAsync<PressroomConfigurationList>(settingsUrl);
+            Assert.Equal(2, current!.Configurations.Count);
+            Assert.True(current.Configurations.Single(c => c.Name == "Another PDF").HasApiKey);
+            foreach (var item in current.Configurations)
+            {
+                using var removed = await admin.DeleteAsync("/umbraco/management/api/v1/appblocks/documents/configurations/" + item.Id);
+                Assert.True(removed.IsSuccessStatusCode);
+            }
+            Assert.Empty(app.Services.GetRequiredService<IDocumentOutputService>().GetDestinations());
+            var pressroom = new Uri(address, "/test-pressroom/").ToString();
+            using var discovery = await admin.PostAsJsonAsync("/umbraco/management/api/v1/appblocks/documents/printers",
+                new DiscoverPressroomPrinters(null, pressroom, "test-printer-key"));
+            Assert.True(discovery.IsSuccessStatusCode, await discovery.Content.ReadAsStringAsync());
+            Assert.Equal(new[] { "office", "reception" }, (await discovery.Content.ReadFromJsonAsync<PressroomPrinterList>())!.Printers);
+            using var invalidPrinter = await admin.PostAsJsonAsync("/umbraco/management/api/v1/appblocks/documents/configurations",
+                new SavePressroomConfiguration(null, "Missing printer", pressroom, "printer:missing", "test-printer-key"));
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, invalidPrinter.StatusCode);
+            using var savedPrinter = await admin.PostAsJsonAsync("/umbraco/management/api/v1/appblocks/documents/configurations",
+                new SavePressroomConfiguration(null, "Office printer", pressroom, "printer:office", "test-printer-key"));
+            Assert.True(savedPrinter.IsSuccessStatusCode, await savedPrinter.Content.ReadAsStringAsync());
+            Assert.Equal(0, printSubmissions); // Discovery and configuration never print a document.
+            var gateway = app.Services.GetRequiredService<IDocumentOutputService>();
+            var destination = Assert.Single(gateway.GetDestinations());
+            using var submitted = await gateway.SubmitAsync(destination.Id, new("<html>Test document</html>"));
+            Assert.Equal("test-job", Assert.IsType<DocumentPrintResult>(submitted).JobId);
+            Assert.Equal(1, printSubmissions);
             Assert.Contains("Documents", await admin.GetStringAsync("/umbraco/management/api/v1/appblocks/dashboard-pages"));
             Assert.Contains("Pressroom URL", await admin.GetStringAsync("/App_Plugins/AppBlocks.Documents/settings.js"));
             Assert.Contains("@page", await admin.GetStringAsync("/App_Plugins/AppBlocks.Documents/print.css"));
@@ -130,6 +163,7 @@ public sealed class StandaloneSiteTests
             Assert.Contains("@page", html);
             Assert.DoesNotContain("<link", html);
             Assert.True(documentResponse.Headers.CacheControl?.NoStore);
+            Assert.Equal(1, printSubmissions); // Loading the template document still did not print.
         }
         finally { await app.StopAsync(); }
     }

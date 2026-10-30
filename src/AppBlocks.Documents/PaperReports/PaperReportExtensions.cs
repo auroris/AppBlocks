@@ -28,8 +28,6 @@ public static class PaperReportExtensions
             client.Timeout = TimeSpan.FromSeconds(10);
             client.MaxResponseContentBufferSize = 8 * 1024 * 1024;
         }).ConfigurePrimaryHttpMessageHandler(SelfContainedHtml.CreateHandler);
-        // Delivery applies one current settings snapshot to each client, so backoffice edits apply immediately.
-        builder.Services.AddHttpClient("Pressroom");
         builder.AddNotificationHandler<ContentPublishingNotification, PaperReportPublishValidator>();
         // Registered after AppBlocks' schema installer so fresh sites already have the document type.
         builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, PaperReportTemplates>();

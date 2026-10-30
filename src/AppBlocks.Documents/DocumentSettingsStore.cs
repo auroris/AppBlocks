@@ -56,12 +56,12 @@ public sealed class DocumentSettingsStore(IConfiguration configuration, IWebHost
     private ResolvedPressroomConfiguration Resolve(StoredPressroomConfiguration item)
         => new(item.Id, item.Name, item.Url, item.ProtectedApiKey is null ? null : protector.Unprotect(item.ProtectedApiKey), item.Output, item.TimeoutSeconds);
 
-    public async Task<PressroomConfigurationInfo> SaveAsync(SavePressroomConfiguration request, CancellationToken ct = default)
+    public async Task<PressroomConfigurationInfo> SaveConfigurationAsync(SavePressroomConfiguration request, CancellationToken ct = default)
     {
         ValidateConnection(request.Url, request.TimeoutSeconds);
         if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length > 100)
             throw new ArgumentException("Enter a configuration name of at most 100 characters.");
-        if (request.Output != "pdf" && !(request.Output.StartsWith("printer:", StringComparison.Ordinal)
+        if (request.Output != "pdf" && !(request.Output?.StartsWith("printer:", StringComparison.Ordinal) == true
             && RequestValidator.IsPrinterIdentifier(request.Output[8..])))
             throw new ArgumentException("Choose PDF or a printer returned by Pressroom.");
         await gate.WaitAsync(ct);

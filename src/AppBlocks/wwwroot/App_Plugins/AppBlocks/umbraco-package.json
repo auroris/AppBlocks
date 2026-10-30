@@ -3,10 +3,22 @@
   "version": "0.1.0-alpha.1",
   "extensions": [
     {
-      "type": "dashboard", "alias": "AppBlocks.Dashboard", "name": "AppBlocks",
-      "element": "/App_Plugins/AppBlocks/dashboard.js", "weight": 30,
-      "meta": { "label": "AppBlocks", "pathname": "appblocks" },
+      "type": "menu", "alias": "AppBlocks.Menu", "name": "AppBlocks menu"
+    },
+    {
+      "type": "sectionSidebarApp", "kind": "menu", "alias": "AppBlocks.Sidebar", "name": "AppBlocks sidebar",
+      "weight": 140,
+      "meta": { "label": "AppBlocks", "menu": "AppBlocks.Menu" },
       "conditions": [{ "alias": "Umb.Condition.SectionAlias", "match": "Umb.Section.Settings" }]
+    },
+    {
+      "type": "menuItem", "alias": "AppBlocks.MenuItem", "name": "AppBlocks menu item",
+      "meta": { "label": "AppBlocks", "icon": "icon-box", "entityType": "appblocks", "menus": ["AppBlocks.Menu"] }
+    },
+    {
+      "type": "workspace", "kind": "default", "alias": "AppBlocks.Workspace", "name": "AppBlocks workspace",
+      "element": "/App_Plugins/AppBlocks/dashboard.js",
+      "meta": { "entityType": "appblocks", "headline": "AppBlocks" }
     },
     {
       "type": "propertyEditorUi", "alias": "AppBlocks.ConnectionPicker", "name": "AppBlocks connection",

@@ -37,5 +37,6 @@ else
 @if (!Context.Items.ContainsKey("AppBlocks.InteractiveReports.Assets"))
 {
     Context.Items["AppBlocks.InteractiveReports.Assets"] = true;
+    <link rel="stylesheet" href="@(Context.Request.PathBase)/App_Plugins/ApplicationBlocks/report-print.css" />
     <script type="module" src="@(Context.Request.PathBase)/App_Plugins/ApplicationBlocks/reports.js" nonce="@AppPageAssets.Nonce(Context)"></script>
 }

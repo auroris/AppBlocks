@@ -63,9 +63,11 @@ public sealed class DocumentSettingsTests
     {
         using var site = new SettingsSite();
         var accessor = System.Reflection.DispatchProxy.Create<IBackOfficeSecurityAccessor, EmptySecurity>();
-        var controller = new DocumentsSettingsController(site.Store, accessor);
+        var controller = new DocumentsSettingsController(site.Store, accessor, null!);
         Assert.IsType<ForbidResult>(controller.Get());
-        Assert.IsType<ForbidResult>(await controller.Save(new("https://other.example/"), default));
+        Assert.IsType<ForbidResult>(await controller.Save(new(null, "Other", "https://other.example/"), default));
+        Assert.IsType<ForbidResult>(await controller.Printers(new(null, "https://other.example/"), default));
+        Assert.IsType<ForbidResult>(await controller.Delete(Guid.NewGuid(), default));
         Assert.False(site.Store.Get().Saved);
     }
 
