@@ -1,0 +1,5 @@
+@model Umbraco.Cms.Core.Models.Blocks.BlockGridModel
+@foreach (var block in Model)
+{
+    @await Html.PartialAsync("blockgrid/Components/" + block.Content.ContentType.Alias, block)
+}

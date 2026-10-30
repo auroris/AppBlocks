@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/AppBlocks.Demo/AppBlocks.Demo.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/AppBlocks.Documents/AppBlocks.Documents.csproj" />
+    <Project Path="src/AppBlocks/AppBlocks.csproj" />
+    <Project Path="src/AppBlocks.InteractiveReports/AppBlocks.InteractiveReports.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AppBlocks.Documents.Tests/AppBlocks.Documents.Tests.csproj" />
+    <Project Path="tests/AppBlocks.Tests/AppBlocks.Tests.csproj" />
+    <Project Path="tests/AppBlocks.InteractiveReports.Tests/AppBlocks.InteractiveReports.Tests.csproj" />
+  </Folder>
+</Solution>

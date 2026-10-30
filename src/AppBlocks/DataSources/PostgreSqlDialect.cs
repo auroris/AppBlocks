@@ -1,7 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Text;
-using InteractiveReport.Core.Model;
+using AppBlocks.Connections;
 
 namespace UmbracoAppHost.DataSources;
 
@@ -10,7 +10,7 @@ public sealed class PostgreSqlDialect : SqlDialect
 {
     public static readonly PostgreSqlDialect Instance = new();
     private PostgreSqlDialect() { }
-    public override ReportDialect Kind => ReportDialect.Postgres;
+    public override DatabaseDialect Kind => DatabaseDialect.Postgres;
     public override IsolationLevel WriteIsolation => IsolationLevel.ReadCommitted;
     public override string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"") + "\"";
     public override string CompileOnly(string statement) => "EXPLAIN " + statement;

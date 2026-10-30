@@ -70,7 +70,7 @@ public sealed class DataSourceContextParameters(OriginalContextParameters origin
     }
 }
 
-public sealed class DataSourceReportAccess(PublishedDataCatalog catalog, DataSourceQueries queries, IHttpContextAccessor http)
+public sealed class DataSourceReportAccess(PublishedReportCatalog catalog, DataSourceQueries queries, IHttpContextAccessor http)
 {
     public async ValueTask<RowRestriction> RestrictAsync(InteractiveReportRowRestrictionRequest request, CancellationToken ct)
     {

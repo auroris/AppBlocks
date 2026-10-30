@@ -2,6 +2,9 @@
 **/obj/
 **/node_modules/
 artifacts/
+artifacts-*.log
+**/appsettings-schema*.json
+**/umbraco-package-schema.json
 .vs/
 .idea/
 **/App_Data/

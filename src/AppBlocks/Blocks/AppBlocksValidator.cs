@@ -1,6 +1,4 @@
 using System.Text.Json;
-using InteractiveReport.AspNetCore;
-using InteractiveReport.Core.Model;
 using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core.Events;
 using Umbraco.Cms.Core.Notifications;
@@ -19,12 +17,11 @@ namespace UmbracoAppHost.Blocks;
 /// Validates authored structure without executing a report or invoking a form operation. A form bound to a data
 /// source is checked against the fields its database columns give, read from the schema rather than from rows.
 /// </summary>
-public sealed class AppBlocksValidator(FormResourceRegistry resources, IOptionsMonitor<InteractiveReportOptions> reports,
-    ReportDefinitionCompiler compiler, PublishedDataCatalog? definitions = null, IContentService? contents = null,
+public sealed class AppBlocksValidator(FormResourceRegistry resources, PublishedDataCatalog? definitions = null, IContentService? contents = null,
     IOptions<AttachmentSettings>? attachments = null, ScheduleSources? schedules = null,
-    AppBlocks.Connections.ConnectionCatalog? managed = null, IContentTypeService? contentTypes = null) : INotificationHandler<ContentPublishingNotification>
+    IContentTypeService? contentTypes = null, IEnumerable<IAppBlockPlugin>? plugins = null) : INotificationHandler<ContentPublishingNotification>
 {
-    private static readonly string[] Aliases = ["appReport", "appForm", "appFormInterface", "appFieldset", "appActions", AppBlockSchema.AttachmentsAlias,
+    private static readonly string[] Aliases = ["appForm", "appFormInterface", "appFieldset", "appActions", AppBlockSchema.AttachmentsAlias,
         AppBlockSchema.ScheduleAlias, AppBlockSchema.TabularAlias, ..AppBlockSchema.LayoutAliases, ..AppBlockSchema.ContentAliases, ..AppBlockSchema.FieldAliases];
     public void Handle(ContentPublishingNotification notification)
     {
@@ -72,7 +69,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, IOptionsM
                 if (website) { VisitContent(item); continue; }
                 var block = data[item.GetProperty("contentKey").GetGuid()];
                 var alias = Alias(block);
-                if (alias == "appReport") { visited.Add(item.GetProperty("contentKey").GetGuid()); Report(block, errors); }
+                if (Plugin(alias) is { } plugin) { visited.Add(item.GetProperty("contentKey").GetGuid()); plugin.Validate(block, errors); }
                 else if (alias == AppBlockSchema.ScheduleAlias) { visited.Add(item.GetProperty("contentKey").GetGuid()); Schedule(block, errors); }
                 // A tabular form outside a form must name its owner; Tabular says so when it does not.
                 else if (alias == AppBlockSchema.TabularAlias) { visited.Add(item.GetProperty("contentKey").GetGuid()); Tabular(block, null, errors); }
@@ -90,7 +87,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, IOptionsM
                 var block = data[key]; var alias = Alias(block);
                 if (alias == "appForm") { forms++; Form(item, block, data, visited, errors, limitNesting: false); return; }
                 if (!visited.Add(key)) throw new InvalidOperationException("Blocks cannot be repeated or cyclic.");
-                if (alias == "appReport") Report(block, errors);
+                if (Plugin(alias) is { } plugin) plugin.Validate(block, errors);
                 else if (alias == AppBlockSchema.AttachmentsAlias) Attachments(block, null, errors);
                 else if (alias == AppBlockSchema.ScheduleAlias) Schedule(block, errors);
                 else if (alias == AppBlockSchema.TabularAlias) Tabular(block, null, errors);
@@ -102,36 +99,6 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, IOptionsM
             errors.Add("The block structure or starting view is invalid: " + error.Message);
         }
         return errors;
-    }
-
-    private void Report(JsonElement block, List<string> errors)
-    {
-        var sourceName = Text(block, "reportName");
-        ReportDefinition source;
-        if (Text(block, "dataSource") is { Length: > 0 }) {
-            var authored = definitions?.ReadBlockReport(block.GetProperty("key").GetGuid(), property => Text(block, property), errors);
-            if (authored is null) { if (errors.Count == 0) errors.Add("Select a published data source."); return; }
-            source = authored.Definition; sourceName = authored.Alias;
-        } else if (!(definitions?.Reports ?? reports.CurrentValue.Reports).TryGetValue(sourceName, out source!)) { errors.Add("Select an available report source."); return; }
-        var definition = JsonSerializer.Deserialize<ReportDefinition>(JsonSerializer.Serialize(source, IrJson.Options), IrJson.Options)!;
-        if (Text(block, "pageSize") is { Length: > 0 } pageSize && pageSize != "0") {
-            if (!int.TryParse(pageSize, out var size) || size < 1 || size > source.MaxPageSize) errors.Add($"Report page size must be between 1 and {source.MaxPageSize}.");
-            else definition.DefaultPageSize = size;
-        }
-        // Control names are Interactive Reports' feature tokens, as for a report definition node.
-        if (Text(block, "controls").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Any(c => ReportFeatures.Canonical(c) is null)) errors.Add("The report contains an unknown control name.");
-        if (Text(block, "formPage").Length > 0 && Text(block, "keyColumn").Length == 0) errors.Add("Select the record key column for the form link.");
-        if (Text(block, "paperReport") is { Length: > 0 } paper) {
-            PaperReport(paper, errors);
-            // Row print actions read the record key from this column, so a column the report lacks prints nothing.
-            if (Text(block, "keyColumn") is { Length: > 0 } printKey && definitions?.ReportColumns(sourceName) is { } columns
-                && !columns.Contains(printKey, StringComparer.OrdinalIgnoreCase)) errors.Add($"The record key column {printKey} is not a column of the report {sourceName}.");
-        }
-        if (Text(block, "initialState") is { Length: > 0 } state) {
-            definition.DefaultState = JsonSerializer.Deserialize<ReportState>(state, IrJson.Options) ?? throw new JsonException("Starting view must be a report document.");
-            if (definition.DefaultState.Tables?.Values.Any(t => t.Schema is { Count: > 0 }) == true) errors.Add("Capture the starting view without its transient schema cache.");
-        }
-        AppBlocks.Connections.ManagedReportCompiler.CompileManaged(compiler, sourceName, definition, managed);
     }
 
     /// <summary>Print opens /api/paper-reports/{key}, which only a Paper report node answers. A node not yet imported is not judged.</summary>
@@ -160,7 +127,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, IOptionsM
             var key = item.GetProperty("contentKey").GetGuid();
             if (!visited.Add(key)) throw new InvalidOperationException("Blocks cannot be repeated or cyclic.");
             var child = data[key]; var alias = Alias(child);
-            if (depth > 0 && alias is "appForm" or "appReport") errors.Add("Forms and reports cannot be nested inside a form.");
+            if (depth > 0 && (alias == "appForm" || Plugin(alias)?.RequiresUser == true)) errors.Add("Forms and reports cannot be nested inside a form.");
             if (alias == "appActions") actions++;
             if (alias == AppBlockSchema.AttachmentsAlias) Attachments(child, resource, errors);
             else if (alias == AppBlockSchema.ScheduleAlias) Schedule(child, errors);
@@ -292,7 +259,8 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, IOptionsM
         "appNumber" => field.Kind == "number", "appDate" => field.Kind == "date", "appTime" => field.Kind == "time",
         "appDateTime" => field.Kind == "datetime", "appCheckbox" => field.Kind == "checkbox", _ => false,
     };
-    private static string Alias(JsonElement block) => Aliases.FirstOrDefault(a => AppBlockSchema.Key(a) == block.GetProperty("contentTypeKey").GetGuid()) ?? "";
+    private IAppBlockPlugin? Plugin(string alias) => plugins?.FirstOrDefault(p => p.Alias == alias);
+    private string Alias(JsonElement block) => Aliases.Concat(plugins?.Select(p => p.Alias) ?? []).FirstOrDefault(a => AppBlockSchema.Key(a) == block.GetProperty("contentTypeKey").GetGuid()) ?? "";
     private static string Text(JsonElement block, string alias) {
         var properties = block.GetProperty("values").EnumerateArray().Where(p => p.GetProperty("alias").GetString() == alias).ToArray();
         if (properties.Length == 0) return "";

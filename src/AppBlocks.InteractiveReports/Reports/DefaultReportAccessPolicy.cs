@@ -11,7 +11,7 @@ namespace UmbracoAppHost.Reports;
 
 /// <summary>Uses native backoffice groups; member identities never acquire administrator access by matching email.</summary>
 public sealed class DefaultReportAccessPolicy(IUserService users, IOptions<AppBlocksOptions> settings,
-    PublishedDataCatalog definitions) : IReportAccessPolicy
+    PublishedReportCatalog definitions) : IReportAccessPolicy
 {
     public async Task<bool> IsAdministratorAsync(ClaimsPrincipal principal)
     {

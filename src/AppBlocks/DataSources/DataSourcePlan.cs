@@ -1,7 +1,7 @@
 using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text;
-using InteractiveReport.Core.Model;
+using AppBlocks.Connections;
 using UmbracoAppHost.Forms;
 
 namespace UmbracoAppHost.DataSources;
@@ -139,7 +139,7 @@ internal static class DataSourcePlanner
                 var targetName = query is null ? source?.Name : source?.BaseColumn;
                 var column = targetName is null ? null : target?.Column(targetName);
                 if (column is null || !keySources.Contains(source)) { errors.Add($"Key sequence {columnName} must name a key column of the written table."); continue; }
-                if (dialect.Kind is not (ReportDialect.Oracle or ReportDialect.Oracle11g))
+                if (dialect.Kind is not (DatabaseDialect.Oracle or DatabaseDialect.Oracle11g))
                 { errors.Add("Key sequences are Oracle settings; this database supplies identity or sequence defaults on its columns."); continue; }
                 var sequence = TableName.Parse(sequenceName) is { } name ? dialect.ReadSequence(connection, name) : null;
                 if (sequence is null) { errors.Add($"The sequence {sequenceName} was not found through connection {d.Connection}."); continue; }
@@ -236,7 +236,7 @@ internal static class DataSourcePlanner
             if (rowVersion is not null) style = VersionStyle.RowVersion;
             else if ((versionField = Field(version)) is { Target: { Nullable: false } versionTarget } && dialect.IsInteger(versionTarget)) style = VersionStyle.Integer;
             else errors.Add($"The version column {version.Name} must be a whole-number column of the written table that does not allow NULL"
-                + (dialect.Kind == ReportDialect.SqlServer ? ", or a rowversion." : "."));
+                + (dialect.Kind == DatabaseDialect.SqlServer ? ", or a rowversion." : "."));
         }
 
         PlanColumn? Audit(string role, params string[] kinds)
@@ -297,7 +297,7 @@ internal static class DataSourcePlanner
         void Compile(SqlTemplate statement, string label)
         {
             // SQLite compiles one statement per EXPLAIN, so each is checked on its own; nothing runs.
-            foreach (var part in dialect.Kind is ReportDialect.Sqlite or ReportDialect.Postgres or ReportDialect.Oracle or ReportDialect.Oracle11g ? statement.Statements : [statement.Text])
+            foreach (var part in dialect.Kind is DatabaseDialect.Sqlite or DatabaseDialect.Postgres or DatabaseDialect.Oracle or DatabaseDialect.Oracle11g ? statement.Statements : [statement.Text])
             {
                 if (SqlTemplate.Parse(part, SqlUse.Statement, "", []) is not { } single) continue;
                 try

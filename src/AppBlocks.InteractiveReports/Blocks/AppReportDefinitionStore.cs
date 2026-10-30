@@ -17,12 +17,13 @@ public sealed class ConfiguredReportStore(IReportDefinitionStore value) { public
 public sealed class AppReportDefinitionStore(
     ConfiguredReportStore configured, AppBlockContent content,
     ReportDefinitionCompiler compiler,
-    PublishedDataCatalog catalog, DataSourceReportBindings bindings, ConnectionCatalog? managed = null)
+    PublishedReportCatalog catalog, DataSourceReportBindings bindings, ConnectionCatalog? managed = null,
+    AppBlocks.Documents.IAppDocumentLinks? documents = null)
     : IReportDefinitionStore, IReportDefinitionAuthorizationStore
 {
     public async ValueTask<ReportDefinitionAuthorization?> FindAuthorization(string name, CancellationToken ct = default)
     {
-        if (name.StartsWith(PublishedDataCatalog.SourceReportPrefix, StringComparison.Ordinal))
+        if (name.StartsWith(PublishedReportCatalog.SourceReportPrefix, StringComparison.Ordinal))
             return catalog.SourceForReport(name) is null ? null : new(name, new ReportAuthorization { Policy = ReportAdministratorRequirement.Policy });
         if (!AppBlockContent.ParseReportName(name, out _, out _))
         {
@@ -41,7 +42,7 @@ public sealed class AppReportDefinitionStore(
 
     public async ValueTask<ReportDefinition?> Find(string name, CancellationToken ct = default)
     {
-        if (name.StartsWith(PublishedDataCatalog.SourceReportPrefix, StringComparison.Ordinal)) {
+        if (name.StartsWith(PublishedReportCatalog.SourceReportPrefix, StringComparison.Ordinal)) {
             if (catalog.SourceForReport(name) is not { } previewSource) return null;
             var preview = ReadBlock(previewSource.Key, property => property == "dataSource" ? previewSource.Key.ToString() : null);
             if (preview is null) return null;
@@ -65,7 +66,7 @@ public sealed class AppReportDefinitionStore(
             var authored = ReadBlock(block.Key, property => block.GetProperty(property)?.GetValue(instance.Culture));
             if (authored?.DataSource is null) return null;
             source = authored.Definition; dataSource = authored.DataSource;
-            sourceName = PublishedDataCatalog.SourceReportName(dataSource);
+            sourceName = PublishedReportCatalog.SourceReportName(dataSource);
         } else {
             sourceName = block.Value<string>("reportName") ?? "";
             if (!catalog.Reports.TryGetValue(sourceName, out source!)) return null;
@@ -90,8 +91,8 @@ public sealed class AppReportDefinitionStore(
             result.EditLink = new ReportEditLink { UrlTemplate = url + "?" + Uri.EscapeDataString(parameter) + "={" + column + "}", Label = block.Value<string>("editLabel") };
             result.CreateLink = new ReportCreateLink { Url = url, Label = block.Value<string>("createLabel") };
         }
-        if (block.Value<IPublishedContent>("paperReport") is not null && block.Value<string>("keyColumn") is { Length: > 0 } printKey)
-            PaperReports.PaperReportLinks.AddPrintAction(result, printKey);
+        if (documents is not null && block.Value<IPublishedContent>("paperReport") is not null && block.Value<string>("keyColumn") is { Length: > 0 } printKey)
+            AppBlocks.InteractiveReports.InteractiveReportPrintLinks.AddPrintAction(result, printKey);
         return compiler.CompileManaged(name, result, managed);
     }
     private PublishedReport? ReadBlock(Guid key, Func<string, object?> value) => catalog.ReadBlockReport(key, value, new List<string>());

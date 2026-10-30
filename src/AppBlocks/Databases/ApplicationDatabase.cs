@@ -4,15 +4,14 @@ using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
-using InteractiveReport.AspNetCore;
+using AppBlocks.Connections;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
-using UmbracoAppHost.Reports;
 
 namespace UmbracoAppHost.Databases;
 
 /// <summary>
-/// An application's own database: a connection registered with Interactive Reports by name, whose schema is ensured
+/// An application's own database: a connection registered with AppBlocks by name, whose schema is ensured
 /// the first time the process opens it. An application with its own tables uses this rather than its own
 /// create-if-missing code; the sample orders database is one.
 /// </summary>
@@ -31,31 +30,34 @@ public static class ApplicationDatabase
     }
 
     /// <summary>
-    /// Registers connection <paramref name="name"/> with Interactive Reports. The connection string is
+    /// Registers connection <paramref name="name"/> with AppBlocks. The connection string is
     /// <c>ConnectionStrings:&lt;name&gt;</c> with <c>ConnectionStrings:&lt;name&gt;_ProviderName</c> (Microsoft.Data.Sqlite, or
     /// Microsoft.Data.SqlClient, the default when a connection string is set without a provider, as Umbraco does), read
     /// from the provider's configuration when a connection is created. Without a connection string it is a SQLite file
     /// <paramref name="defaultFile"/> (default <c>&lt;name&gt;.sqlite.db</c>) in the instance data folder, resolved as
-    /// <see cref="InteractiveReportsSite.DataFile(IServiceProvider, string)"/> resolves it, with its folder created.
+    /// <see cref="ApplicationDatabase.DataFile(IServiceProvider, string)"/> resolves it, with its folder created.
     /// The first time a connection to a given connection string opens in this process, the schema is ensured on a
     /// separate connection to the same database before the caller proceeds; a failed ensure fails that open and the
     /// next open tries again.
     /// </summary>
-    public static InteractiveReportBuilder AddApplicationDatabase(this InteractiveReportBuilder reports, string name, ApplicationSchema? schema = null,
+    public static AppBlocksBuilder AddApplicationDatabase(this AppBlocksBuilder connections, string name, ApplicationSchema? schema = null,
         string? defaultFile = null)
-        => reports.AddConnection(name, provider => {
-            var connection = Create(provider, name, defaultFile);
-            // Startup validation creates and disposes a connection without opening it, so nothing happens before an open.
-            if (schema is not null) connection.StateChange += (sender, change) => {
-                if (change.CurrentState != ConnectionState.Open || sender is not DbConnection opened || IsEnsured(opened, schema)) return;
-                using var separate = Create(provider, name, defaultFile);
-                separate.Open();
-                if (EnsureOnceAsync(separate, schema, sync: true, default).GetAwaiter().GetResult() is { } scripts)
-                    provider.GetService<ILoggerFactory>()?.CreateLogger(typeof(ApplicationDatabase)).LogInformation(
-                        "Ensured the schema of connection {Connection} ({Dialect}): {Scripts} scripts.", name, Dialect(separate), scripts);
-            };
-            return connection;
-        });
+        => connections.AddConnection(name, provider => CreateApplicationConnection(provider, name, schema, defaultFile));
+
+    internal static DbConnection CreateApplicationConnection(IServiceProvider provider, string name, ApplicationSchema? schema, string? defaultFile)
+    {
+        var connection = Create(provider, name, defaultFile);
+        // Startup validation creates and disposes a connection without opening it, so nothing happens before an open.
+        if (schema is not null) connection.StateChange += (sender, change) => {
+            if (change.CurrentState != ConnectionState.Open || sender is not DbConnection opened || IsEnsured(opened, schema)) return;
+            using var separate = Create(provider, name, defaultFile);
+            separate.Open();
+            if (EnsureOnceAsync(separate, schema, sync: true, default).GetAwaiter().GetResult() is { } scripts)
+                provider.GetService<ILoggerFactory>()?.CreateLogger(typeof(ApplicationDatabase)).LogInformation(
+                    "Ensured the schema of connection {Connection} ({Dialect}): {Scripts} scripts.", name, Dialect(separate), scripts);
+        };
+        return connection;
+    }
 
     /// <summary>
     /// Ensures a schema on an open connection, once per process per connection string and schema id: creates the
@@ -95,11 +97,21 @@ public static class ApplicationDatabase
             if (providerName.Equals("Microsoft.Data.Sqlite", StringComparison.OrdinalIgnoreCase)) return new SqliteConnection(connectionString);
             throw new InvalidOperationException($"ConnectionStrings:{name}_ProviderName is {providerName}; an application database uses Microsoft.Data.Sqlite or Microsoft.Data.SqlClient.");
         }
-        var file = InteractiveReportsSite.DataFile(provider, defaultFile ?? name + ".sqlite.db");
+        var file = ApplicationDatabase.DataFile(provider, defaultFile ?? name + ".sqlite.db");
         // SQLite creates the file on open but not its folder.
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         return new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file }.ToString());
     }
+
+    /// <summary>Absolute path of a SQLite file under the site's <c>App_Data</c> folder.</summary>
+    public static string DataFile(IServiceProvider provider, string fileName)
+        => (provider.GetRequiredService<IConfiguration>()["AppBlocks:DataRoot"]
+            ?? provider.GetRequiredService<IConfiguration>()["UmbracoAppHost:DataRoot"]) is { Length: > 0 } root
+            ? Path.Combine(root, "App_Data", fileName)
+            : DataFile(provider.GetRequiredService<IWebHostEnvironment>(), fileName);
+
+    public static string DataFile(IWebHostEnvironment environment, string fileName)
+        => Path.Combine(environment.ContentRootPath, "App_Data", fileName);
 
     private static bool IsEnsured(DbConnection connection, ApplicationSchema schema)
         => Ensured.TryGetValue((connection.ConnectionString, schema.Id), out var memo) && memo.Done;

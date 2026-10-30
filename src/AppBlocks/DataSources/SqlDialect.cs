@@ -2,7 +2,7 @@ using System.Data;
 using System.Data.Common;
 using System.Globalization;
 using System.Text;
-using InteractiveReport.Core.Model;
+using AppBlocks.Connections;
 
 namespace UmbracoAppHost.DataSources;
 
@@ -99,17 +99,17 @@ public abstract class SqlDialect
     /// <summary>Only the dialects in this assembly: each is a reviewed statement builder, not an extension point.</summary>
     private protected SqlDialect() { }
 
-    /// <summary>The DML builder for an Interactive Reports dialect.</summary>
-    public static SqlDialect? For(ReportDialect dialect) => dialect switch {
-        ReportDialect.Sqlite => SqliteDialect.Instance,
-        ReportDialect.SqlServer => SqlServerDialect.Instance,
-        ReportDialect.Postgres => PostgreSqlDialect.Instance,
-        ReportDialect.Oracle => OracleDialect.Instance,
-        ReportDialect.Oracle11g => OracleDialect.Legacy,
+    /// <summary>The DML builder for an application database dialect.</summary>
+    public static SqlDialect? For(DatabaseDialect dialect) => dialect switch {
+        DatabaseDialect.Sqlite => SqliteDialect.Instance,
+        DatabaseDialect.SqlServer => SqlServerDialect.Instance,
+        DatabaseDialect.Postgres => PostgreSqlDialect.Instance,
+        DatabaseDialect.Oracle => OracleDialect.Instance,
+        DatabaseDialect.Oracle11g => OracleDialect.Legacy,
         _ => null,
     };
 
-    public abstract ReportDialect Kind { get; }
+    public abstract DatabaseDialect Kind { get; }
     public abstract string Quote(string identifier);
     public string Quote(TableName table) => table.Schema is null ? Quote(table.Name) : Quote(table.Schema) + "." + Quote(table.Name);
     public virtual string Marker(string name) => "@" + name;
@@ -219,7 +219,7 @@ public sealed class SqliteDialect : SqlDialect
     public static readonly SqliteDialect Instance = new();
     private SqliteDialect() { }
 
-    public override ReportDialect Kind => ReportDialect.Sqlite;
+    public override DatabaseDialect Kind => DatabaseDialect.Sqlite;
     public override string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"") + "\"";
 
     private enum Affinity { Integer, Text, Blob, Real, Numeric }
@@ -354,7 +354,7 @@ public sealed class SqlServerDialect : SqlDialect
     public static readonly SqlServerDialect Instance = new();
     private SqlServerDialect() { }
 
-    public override ReportDialect Kind => ReportDialect.SqlServer;
+    public override DatabaseDialect Kind => DatabaseDialect.SqlServer;
     public override string Quote(string identifier) => "[" + identifier.Replace("]", "]]") + "]";
     public override IsolationLevel WriteIsolation => IsolationLevel.ReadCommitted;
 

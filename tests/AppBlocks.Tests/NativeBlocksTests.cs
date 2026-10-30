@@ -50,8 +50,15 @@ public sealed class NativeBlocksTests
                 Assert.True(identities.Add(Guid.Parse(key.Value)), "Duplicate schema identity: " + key.Value);
         }
         Assert.Equal("true", types.Single(t => (string?)t.Attribute("Alias") == AppBlockSchema.FormsContainerAlias).Element("Info")!.Element("IsElement")!.Value);
-        var report = types.Single(t => (string?)t.Attribute("Alias") == "appReport");
-        Assert.Contains(report.Descendants("GenericProperty"), p => p.Element("Alias")!.Value == "dataSource");
-        Assert.DoesNotContain(report.Descendants("GenericProperty"), p => p.Element("Alias")!.Value is "reportName" or "sql");
+        Assert.DoesNotContain(types, t => (string?)t.Attribute("Alias") == "appReport");
+        Assert.DoesNotContain(typeof(AppBlocksExtensions).Assembly.GetReferencedAssemblies(), a => a.Name!.StartsWith("InteractiveReport"));
+        Assert.False(files.GetFileInfo("Views/Partials/blockgrid/Components/appReport.cshtml").Exists);
+        foreach (var file in files.GetDirectoryContents("Schema/DataTypes").Where(f => !f.IsDirectory)) {
+            using var stream = file.CreateReadStream();
+            var config = XElement.Load(stream).Element("Config")?.Value;
+            if (string.IsNullOrWhiteSpace(config)) continue;
+            using var json = JsonDocument.Parse(config);
+            Assert.DoesNotContain(AppBlockSchema.Key("appReport").ToString(), config);
+        }
     }
 }

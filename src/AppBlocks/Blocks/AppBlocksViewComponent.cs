@@ -41,12 +41,12 @@ public sealed class AppBlocksViewComponent(AppPageAccess access, AppBindVariable
 
 /// <summary>Ordinary page content is public unless Umbraco routing restricts the page through Public Access.</summary>
 [ViewComponent(Name = "WebsiteBlocks")]
-public sealed class WebsiteBlocksViewComponent(AppPageAccess access, AppBindVariableResolver variables) : ViewComponent
+public sealed class WebsiteBlocksViewComponent(AppPageAccess access, AppBindVariableResolver variables, IEnumerable<IAppBlockPlugin> plugins) : ViewComponent
 {
     public async Task<IViewComponentResult> InvokeAsync(IPublishedContent page)
     {
-        var interactive = AppBlockContent.Flatten(AppBlockContent.Blocks(page)).Any(block => block.Content.ContentType.Alias is "appForm" or "appReport" or AppBlockSchema.AttachmentsAlias or AppBlockSchema.ScheduleAlias
-            or AppBlockSchema.TabularAlias);
+        var interactive = AppBlockContent.Flatten(AppBlockContent.Blocks(page)).Any(block => block.Content.ContentType.Alias is "appForm" or AppBlockSchema.AttachmentsAlias or AppBlockSchema.ScheduleAlias
+            or AppBlockSchema.TabularAlias || plugins.Any(plugin => plugin.RequiresUser && plugin.Alias == block.Content.ContentType.Alias));
         if (!interactive) return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, null));
 
         // Both the sign-in notice and the admitted person's defaults depend on this request, not just the content revision.

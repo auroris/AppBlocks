@@ -5,7 +5,7 @@ import { request, download, pathBase } from "./api.js";
 
 export default class AppBlocksDashboard extends UmbLitElement {
     static properties = {
-        tab: { state: true }, forms: { state: true }, connections: { state: true }, issues: { state: true },
+        companionPages: { state: true }, companionView: { state: true }, tab: { state: true }, forms: { state: true }, connections: { state: true }, issues: { state: true },
         error: { state: true }, message: { state: true }, busy: { state: true }, loading: { state: true },
         editing: { state: true }, sample: { state: true }, selectedForm: { state: true }, search: { state: true },
     };
@@ -36,16 +36,24 @@ export default class AppBlocksDashboard extends UmbLitElement {
         @media(max-width:760px) { :host { padding:18px; } .summary { grid-template-columns:1fr; } .summary article { padding:16px; } }
     `;
     constructor() {
-        super(); this.tab = "forms"; this.forms = []; this.connections = []; this.issues = []; this.search = ""; this.loading = true;
+        super(); this.companionPages = []; this.tab = "forms"; this.forms = []; this.connections = []; this.issues = []; this.search = ""; this.loading = true;
         this.consumeContext(UMB_AUTH_CONTEXT, auth => { if (auth) { this.auth = auth; this.load(); } });
     }
     async load() {
         this.error = undefined; this.loading = true;
-        const results = await Promise.allSettled([request(this.auth, "forms"), request(this.auth, "connections")]);
+        const results = await Promise.allSettled([request(this.auth, "forms"), request(this.auth, "connections"), request(this.auth, "dashboard-pages")]);
         if (results[0].status === "fulfilled") { this.forms = results[0].value.forms; this.issues = results[0].value.problems; }
         if (results[1].status === "fulfilled") this.connections = results[1].value;
+        if (results[2].status === "fulfilled") this.companionPages = results[2].value;
         this.error = results.filter(r => r.status === "rejected").map(r => r.reason.message).join(" ") || undefined;
         this.loading = false;
+    }
+    async showCompanion(page) {
+        this.tab = page.alias; this.error = undefined; this.message = undefined; this.companionView = undefined;
+        try {
+            await import(pathBase + page.script);
+            if (this.tab === page.alias) this.companionView = document.createElement(page.element);
+        } catch { this.error = "This settings view could not be loaded. Refresh and try again."; }
     }
     async showSample(form) {
         this.busy = true; this.error = undefined;
@@ -100,9 +108,9 @@ export default class AppBlocksDashboard extends UmbLitElement {
     render() {
         return html`<header><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><div><h1>AppBlocks</h1><p>Forms and reports, connected to your data.</p></div></header>
             <div class="summary"><article><strong>${this.loading ? "…" : this.forms.length}</strong><span>Forms across this site</span></article><article><strong>${this.loading ? "…" : this.connections.length}</strong><span>Database connections</span></article><article><strong>Umbraco database</strong><span>Your default connection · detected automatically</span></article></div>
-            <nav aria-label="AppBlocks views">${[["forms","Forms"],["connections","Connections"],["help","Getting started"]].map(([key,label]) => html`<button aria-pressed=${this.tab===key} @click=${() => { this.tab=key; this.error=undefined; this.message=undefined; }}>${label}</button>`)}<button ?disabled=${this.loading} @click=${this.load}>Refresh</button></nav>
+            <nav aria-label="AppBlocks views">${[["forms","Forms"],["connections","Connections"],["help","Getting started"]].map(([key,label]) => html`<button aria-pressed=${this.tab===key} @click=${() => { this.tab=key; this.error=undefined; this.message=undefined; }}>${label}</button>`)}${this.companionPages.map(page => html`<button aria-pressed=${this.tab === page.alias} @click=${() => this.showCompanion(page)}>${page.label}</button>`)}<button ?disabled=${this.loading} @click=${this.load}>Refresh</button></nav>
             <div aria-live="polite">${this.error ? html`<div class="error" role="alert">${this.error}</div>` : ""}${this.message ? html`<div class="notice">${this.message}</div>` : ""}</div>
-            ${this.loading ? html`<p role="status">Loading AppBlocks…</p>` : this.tab === "forms" ? this.renderForms() : this.tab === "connections" ? this.renderConnections() : this.renderHelp()}`;
+            ${this.loading ? html`<p role="status">Loading AppBlocks…</p>` : this.tab === "forms" ? this.renderForms() : this.tab === "connections" ? this.renderConnections() : this.tab === "help" ? this.renderHelp() : this.companionView}`;
     }
 }
 customElements.define("appblocks-dashboard", AppBlocksDashboard);

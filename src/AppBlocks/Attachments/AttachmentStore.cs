@@ -2,7 +2,7 @@ using System.Data;
 using System.Data.Common;
 using System.Globalization;
 using System.Security.Cryptography;
-using InteractiveReport.Core.Execution;
+using AppBlocks.Connections;
 using Microsoft.Extensions.Options;
 using UmbracoAppHost.Databases;
 
@@ -30,7 +30,7 @@ public sealed record AttachmentPurge(int Links, int Files, long Bytes);
 /// revision, of one of that owner's live links is simply not found, so a readable record can never be paired with
 /// another record's file. SQLite and SQL Server are supported.
 /// </summary>
-public sealed class AttachmentStore(IReportConnectionFactory connections, IOptions<AttachmentSettings> settings, ILogger<AttachmentStore> logger)
+public sealed class AttachmentStore(IApplicationConnectionFactory connections, IOptions<AttachmentSettings> settings, ILogger<AttachmentStore> logger)
 {
     public static readonly ApplicationSchema Schema = ApplicationSchema.FromEmbedded(typeof(AttachmentStore).Assembly, "Attachments/Schema");
 

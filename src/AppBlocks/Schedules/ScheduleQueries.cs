@@ -14,13 +14,19 @@ public sealed record ScheduleSource(string Alias, DataSourceDefinition Definitio
 /// policies decide what a person sees. A report definition with inline SQL is not accepted: its own authorization lives
 /// in the report, which this path would not apply.
 /// </summary>
-public sealed class ScheduleSources(PublishedDataCatalog catalog, DataSourceRuntime runtime)
+public interface IScheduleSourceProvider
+{
+    bool TryResolve(string alias, out ScheduleSource? source);
+    IReadOnlyList<string>? Columns(ScheduleSource source);
+}
+
+public sealed class ScheduleSources(PublishedDataCatalog catalog, DataSourceRuntime runtime, IEnumerable<IScheduleSourceProvider>? providers = null)
 {
     public ScheduleSource? Resolve(string? alias)
     {
         if (string.IsNullOrWhiteSpace(alias)) return null;
         alias = alias.Trim();
-        if (catalog.ReportNodes.TryGetValue(alias, out var node)) return node.DataSource is { } source ? new(alias, source, FromReport: true) : null;
+        foreach (var provider in providers ?? []) if (provider.TryResolve(alias, out var source)) return source;
         return catalog.ResolveSource(alias) is { } definition ? new(alias, definition, FromReport: false) : null;
     }
 
@@ -30,7 +36,7 @@ public sealed class ScheduleSources(PublishedDataCatalog catalog, DataSourceRunt
     /// </summary>
     public IReadOnlyList<string>? Columns(ScheduleSource source)
     {
-        if (source.FromReport && catalog.ReportColumns(source.Alias) is { } reportColumns) return reportColumns;
+        foreach (var provider in providers ?? []) if (provider.Columns(source) is { } columns) return columns;
         var plan = runtime.Plan(source.Definition).Plan;
         return plan?.Columns.SelectMany(column => new[] { column.Column, column.Field }).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }

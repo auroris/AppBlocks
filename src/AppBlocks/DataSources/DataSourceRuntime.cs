@@ -1,18 +1,15 @@
 using System.Collections.Concurrent;
 using System.Data.Common;
 using AppBlocks.Connections;
-using InteractiveReport.AspNetCore;
-using InteractiveReport.Core.Execution;
-using InteractiveReport.Core.Model;
 
 namespace UmbracoAppHost.DataSources;
 
 /// <summary>
-/// What every data source shares: the Interactive Reports connections and dialects, the plan cache, the create
+/// What every data source shares: the application connections and dialects, the plan cache, the create
 /// receipts and the clock. Plans are cached by definition fingerprint for a minute, so a published change takes
 /// effect at once and a change to the database schema within a minute; a failure is retried after five seconds.
 /// </summary>
-public sealed class DataSourceRuntime(IReportConnectionFactory connections, ReportDefinitionCompiler compiler, ILogger<DataSourceRuntime> logger,
+public sealed class DataSourceRuntime(IApplicationConnectionFactory connections, ILogger<DataSourceRuntime> logger,
     TimeProvider? time = null, ConnectionCatalog? managed = null)
 {
     private static readonly TimeSpan PlanLifetime = TimeSpan.FromMinutes(1);
@@ -81,10 +78,10 @@ public sealed class DataSourceRuntime(IReportConnectionFactory connections, Repo
         {
             using var connection = connections.CreateConnection(definition.Connection);
             connection.Open();
-            if (dialect.Kind == ReportDialect.Oracle && int.TryParse(connection.ServerVersion.Split('.')[0], out var major) && major < 12)
+            if (dialect.Kind == DatabaseDialect.Oracle && int.TryParse(connection.ServerVersion.Split('.')[0], out var major) && major < 12)
             {
                 dialect = OracleDialect.Legacy;
-                connections.SetDetectedDialect(definition.Connection, ReportDialect.Oracle11g);
+                connections.SetDetectedDialect(definition.Connection, DatabaseDialect.Oracle11g);
             }
             return DataSourcePlanner.Build(definition, dialect, connection, errors, compileStatements);
         }
@@ -98,14 +95,14 @@ public sealed class DataSourceRuntime(IReportConnectionFactory connections, Repo
         }
     }
 
-    /// <summary>The dialect Interactive Reports resolves for a registered connection, which data sources share with reports.</summary>
+    /// <summary>The dialect resolved for a registered application connection.</summary>
     internal SqlDialect? Dialect(string connection, ICollection<string> errors)
     {
-        ReportDialect? dialect;
-        try { dialect = compiler.CompileManaged("data-source", new ReportDefinition { Connection = connection, Sql = "SELECT 1" }, managed).Dialect; }
+        DatabaseDialect? dialect;
+        try { dialect = connections.Dialect(connection); }
         catch (InvalidOperationException)
         {
-            errors.Add($"The connection {connection} is not registered. Use the name of a connection registered in code, as reports do.");
+            errors.Add($"The connection {connection} is not registered. Choose a managed connection or register it with AddAppBlocks.");
             return null;
         }
         if (dialect is { } known && SqlDialect.For(known) is { } result) return result;

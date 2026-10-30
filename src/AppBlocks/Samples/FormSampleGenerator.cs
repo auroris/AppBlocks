@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using UmbracoAppHost.Forms;
 
 namespace AppBlocks.Samples;
@@ -9,16 +10,27 @@ public static class FormSampleGenerator
 {
     public static string Generate(DiscoveredForm form)
     {
-        var fields = form.Fields.Where(f => !f.ReadOnly).Select((field, index) => (Field: field, Name: "Field" + (index + 1))).ToArray();
-        string Literal(string value) => JsonSerializer.Serialize(value);
+        var names = new HashSet<string>(["Id", "Version", "SampleFormValues", "Equals", "GetHashCode", "ToString", "Deconstruct", "PrintMembers", "EqualityContract", "Clone", "GetType", "MemberwiseClone", "Finalize"], StringComparer.OrdinalIgnoreCase);
+        string Name(FormField field, int index) {
+            var name = string.Concat(Regex.Split(field.Key, "[^A-Za-z0-9]+").Where(part => part.Length > 0).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
+            if (name.Length == 0) name = "Field" + (index + 1);
+            if (char.IsDigit(name[0])) name = "Field" + name;
+            name = name[..Math.Min(name.Length, 64)];
+            var candidate = name; var suffix = 2;
+            while (!names.Add(candidate)) candidate = name + suffix++;
+            return candidate;
+        }
+        var fields = form.Fields.Where(f => !f.ReadOnly).Select((field, index) => (Field: field, Name: Name(field, index))).ToArray();
+        string Literal(string value) => JsonSerializer.Serialize(value, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        string Column(string name) => "\"" + name + "\"";
         string SqlType(FormField field) => field.Kind switch { "number" => "NUMERIC", "boolean" or "checkbox" => "INTEGER", _ => "TEXT" };
         string CsType(FormField field) => field.Kind switch { "number" => "decimal?", "boolean" or "checkbox" => "bool?", _ => "string?" };
         var schema = "CREATE TABLE IF NOT EXISTS SampleForm (Id TEXT PRIMARY KEY, Version INTEGER NOT NULL DEFAULT 1"
-            + string.Concat(fields.Select(f => $", {f.Name} {SqlType(f.Field)}")) + ");";
-        var select = "SELECT Id, Version" + string.Concat(fields.Select(f => ", " + f.Name)) + " FROM SampleForm WHERE Id = @id;";
-        var insertColumns = string.Concat(fields.Select(f => ", " + f.Name));
+            + string.Concat(fields.Select(f => $", {Column(f.Name)} {SqlType(f.Field)}")) + ");";
+        var select = "SELECT Id, Version" + string.Concat(fields.Select(f => ", " + Column(f.Name))) + " FROM SampleForm WHERE Id = @id;";
+        var insertColumns = string.Concat(fields.Select(f => ", " + Column(f.Name)));
         var parameters = string.Concat(fields.Select(f => ", @" + f.Name));
-        var updates = string.Concat(fields.Select(f => $", {f.Name} = excluded.{f.Name}"));
+        var updates = string.Concat(fields.Select(f => $", {Column(f.Name)} = excluded.{Column(f.Name)}"));
         var upsert = $"INSERT INTO SampleForm (Id, Version{insertColumns}) SELECT @id, 1{parameters} WHERE @version = 0 OR EXISTS (SELECT 1 FROM SampleForm WHERE Id = @id) ON CONFLICT(Id) DO UPDATE SET Version = SampleForm.Version + 1{updates} WHERE SampleForm.Version = @version;";
         var code = new StringBuilder();
         code.AppendLine("// SAMPLE ONLY — a SQLite example, not deployed code or a production migration.");
@@ -26,7 +38,7 @@ public static class FormSampleGenerator
         code.AppendLine("// Generated from form " + form.FormKey + " on page " + form.PageKey + ".");
         code.AppendLine("// Shared identity, groups, validation and authorization recipes: docs/business-rules.md");
         code.AppendLine("// Supply an authorization callback; add row-level business rules before using real data.");
-        code.AppendLine("using System.Data.Common;\nusing System.Globalization;\nusing System.Security.Claims;\nusing System.Text.Json.Serialization;\nusing Microsoft.Data.Sqlite;\n");
+        code.AppendLine("using System;\nusing System.Threading;\nusing System.Threading.Tasks;\nusing System.Security.Claims;\nusing System.Text.Json.Serialization;\nusing Microsoft.Data.Sqlite;\n");
         code.AppendLine("namespace AppBlocks.Samples.Generated;\n");
         code.AppendLine("public sealed record SampleFormValues\n{");
         foreach (var field in fields)

@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using Npgsql;
-using UmbracoAppHost.Reports;
 
 namespace AppBlocks.Connections;
 
@@ -19,6 +18,7 @@ internal sealed record ConnectionMaterial(string Provider, string Value, string 
 /// <summary>Credentials belong to the installation, never to content or a schema export.</summary>
 public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvironment environment, IDataProtectionProvider protection)
 {
+    public const string UmbracoConnection = "UmbracoDb";
     private readonly IDataProtector protector = protection.CreateProtector("AppBlocks.Connections.v1");
     private readonly SemaphoreSlim gate = new(1, 1);
     private string FilePath => Path.Combine(configuration["AppBlocks:DataRoot"] ?? configuration["UmbracoAppHost:DataRoot"]
@@ -28,7 +28,7 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     {
         var result = new Dictionary<string, ConnectionInfo>(StringComparer.OrdinalIgnoreCase)
         {
-            [InteractiveReportsSite.UmbracoConnection] = new(InteractiveReportsSite.UmbracoConnection,
+            [UmbracoConnection] = new(UmbracoConnection,
                 "Umbraco database", Provider(configuration["ConnectionStrings:umbracoDbDSN_ProviderName"] ?? "sqlServer"), true, true),
         };
         foreach (var item in configuration.GetSection("ConnectionStrings").GetChildren())
@@ -43,7 +43,7 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
 
     internal ConnectionMaterial? Find(string name)
     {
-        if (name.Equals(InteractiveReportsSite.UmbracoConnection, StringComparison.OrdinalIgnoreCase))
+        if (name.Equals(UmbracoConnection, StringComparison.OrdinalIgnoreCase))
         {
             var value = configuration.GetConnectionString("umbracoDbDSN");
             return value is null ? null : new(Provider(configuration["ConnectionStrings:umbracoDbDSN_ProviderName"] ?? "sqlServer"), Expand(value), Hash(value));
@@ -62,7 +62,7 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     {
         if (!Regex.IsMatch(request.Name, "^[A-Za-z][A-Za-z0-9_-]{0,63}$", RegexOptions.CultureInvariant)
             || request.Name.Equals("umbracoDbDSN", StringComparison.OrdinalIgnoreCase)
-            || request.Name.Equals(InteractiveReportsSite.ReportsConnection, StringComparison.OrdinalIgnoreCase)
+            || request.Name.Equals("ReportsDb", StringComparison.OrdinalIgnoreCase)
             || request.Name.Equals("AttachmentsDb", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Use a unique name beginning with a letter, with up to 64 letters, numbers, hyphens or underscores.");
         if (List().Any(c => c.Name.Equals(request.Name, StringComparison.OrdinalIgnoreCase) && c.ReadOnly))

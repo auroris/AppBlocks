@@ -3,6 +3,6 @@
   <ItemGroup>
     <Content Update="appsettings.*.local.json" CopyToPublishDirectory="Never" />
     <PackageReference Include="Umbraco.Cms" Version="18.3.0" />
-    <ProjectReference Include="../../src/AppBlocks/AppBlocks.csproj" />
+    <ProjectReference Include="../../src/AppBlocks.InteractiveReports/AppBlocks.InteractiveReports.csproj" />
   </ItemGroup>
 </Project>

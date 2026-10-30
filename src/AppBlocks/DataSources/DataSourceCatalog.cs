@@ -112,7 +112,7 @@ public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMembe
 public sealed class DataSourceUrlSegmentProvider : IUrlSegmentProvider
 {
     public string? GetUrlSegment(IContentBase content, string? culture = null)
-        => content.ContentType.Alias is DataSourceSchema.RootAlias or DataSourceSchema.SqlAlias or PublishedDataCatalog.ReportAlias or PublishedDataCatalog.ListAlias ? "data-source-" + content.Key.ToString("N") : null;
+        => content.ContentType.Alias is DataSourceSchema.RootAlias or DataSourceSchema.SqlAlias or "reportDefinition" or PublishedDataCatalog.ListAlias ? "data-source-" + content.Key.ToString("N") : null;
 }
 
 public static class DataSourceExtensions
@@ -120,7 +120,7 @@ public static class DataSourceExtensions
     /// <summary>
     /// Registers the data source engine: published <c>sqlDataSource</c> nodes become form resources by alias,
     /// publishing validates them against their database, and their URLs stay out of the way of pages. Connections
-    /// are the ones registered with Interactive Reports. Add <see cref="IDataSourcePolicy"/> implementations for
+    /// are the ones registered with AppBlocks. Add <see cref="IDataSourcePolicy"/> implementations for
     /// rules a row restriction cannot express.
     /// </summary>
     public static IUmbracoBuilder AddDataSources(this IUmbracoBuilder builder)

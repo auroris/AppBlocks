@@ -1,7 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Text;
-using InteractiveReport.Core.Model;
+using AppBlocks.Connections;
 
 namespace UmbracoAppHost.DataSources;
 
@@ -12,7 +12,7 @@ public sealed class OracleDialect : SqlDialect
     public static readonly OracleDialect Legacy = new(true);
     private readonly bool legacy;
     private OracleDialect(bool legacy) => this.legacy = legacy;
-    public override ReportDialect Kind => legacy ? ReportDialect.Oracle11g : ReportDialect.Oracle;
+    public override DatabaseDialect Kind => legacy ? DatabaseDialect.Oracle11g : DatabaseDialect.Oracle;
     public override IsolationLevel WriteIsolation => IsolationLevel.ReadCommitted;
     public override string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"") + "\"";
     public override string Marker(string name) => ":" + name;

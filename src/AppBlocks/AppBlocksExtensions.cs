@@ -1,8 +1,4 @@
-using InteractiveReport.AspNetCore;
-using InteractiveReport.Client.FileDownload;
-using InteractiveReport.Client.Json;
 using AppBlocks.Connections;
-using InteractiveReport.Core.Execution;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Umbraco.Cms.Core.Composing;
@@ -14,7 +10,6 @@ using UmbracoAppHost.Attachments;
 using UmbracoAppHost.Blocks;
 using UmbracoAppHost.DataSources;
 using UmbracoAppHost.Forms;
-using UmbracoAppHost.Reports;
 using UmbracoAppHost.Schedules;
 using UmbracoAppHost.Tabular;
 
@@ -27,41 +22,28 @@ public sealed class AppBlocksComposer : IComposer
 
 public static class AppBlocksExtensions
 {
-    private sealed record Registration(InteractiveReportBuilder Reports);
-
     /// <summary>Automatically called by the composer. Hosts may call it again to register business databases.</summary>
-    public static IUmbracoBuilder AddAppBlocks(this IUmbracoBuilder builder, Action<InteractiveReportBuilder>? configure = null)
+    public static IUmbracoBuilder AddAppBlocks(this IUmbracoBuilder builder, Action<AppBlocksBuilder>? configure = null)
     {
         var services = builder.Services;
-        if (services.FirstOrDefault(d => d.ServiceType == typeof(Registration))?.ImplementationInstance is Registration existing)
+        if (services.FirstOrDefault(d => d.ServiceType == typeof(AppBlocksBuilder))?.ImplementationInstance is AppBlocksBuilder existing)
         {
-            configure?.Invoke(existing.Reports);
+            configure?.Invoke(existing);
             return builder;
         }
-        services.AddOptions<AppBlocksOptions>().Bind(builder.Config.GetSection(AppBlocksOptions.Section));
+        var connections = new AppBlocksBuilder();
+        services.AddSingleton(connections);
+        connections.AddAttachmentsDatabase(builder.Config);
+        configure?.Invoke(connections);
+        services.AddSingleton<IApplicationConnectionFactory, ApplicationConnections>();
+        services.AddSingleton(new Setup.AppBlocksSchema(typeof(AppBlocksExtensions).Assembly));
         services.AddDataProtection();
         services.AddSingleton<ConnectionCatalog>();
         services.AddScoped<ConnectionTables>();
         services.AddScoped<Samples.FormInventory>();
         builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, Setup.SchemaInstaller>();
         services.TryAddScoped<ApplicationAccessPolicy>();
-        services.TryAddScoped<IReportAccessPolicy, DefaultReportAccessPolicy>();
         services.AddControllersWithViews().AddApplicationPart(typeof(AppBlocksExtensions).Assembly);
-        builder.AddInteractiveReportsSite(builder.Config, reports =>
-        {
-            reports.AddAttachmentsDatabase(builder.Config);
-            configure?.Invoke(reports);
-            services.AddSingleton(new Registration(reports));
-        });
-        services.PostConfigure<InteractiveReportOptions>(options =>
-        {
-            if (string.IsNullOrWhiteSpace(options.SavedReports.Connection) && string.IsNullOrWhiteSpace(options.SavedReports.DataSource))
-                options.SavedReports.Connection = InteractiveReportsSite.UmbracoConnection;
-        });
-        Decorate<IReportConnectionFactory>(services, (sp, inner) => new ManagedConnectionFactory(inner, sp.GetRequiredService<ConnectionCatalog>()));
-        var configuredStore = services.Last(d => d.ServiceType == typeof(InteractiveReport.Core.Definitions.IReportDefinitionStore));
-        services.AddSingleton(sp => new ConfiguredReportStore((InteractiveReport.Core.Definitions.IReportDefinitionStore)Create(sp, configuredStore)));
-        services.Replace(ServiceDescriptor.Scoped<InteractiveReport.Core.Definitions.IReportDefinitionStore, AppReportDefinitionStore>());
         services.AddScoped<AppBlockContent>();
         services.AddScoped<AppPageAccess>();
         Decorate<IPublicAccessChecker>(services, (sp, inner) => new AdministratorPublicAccessChecker(inner, sp.GetRequiredService<IHttpContextAccessor>()));
@@ -81,7 +63,6 @@ public static class AppBlocksExtensions
         builder.AddNotificationAsyncHandler<RoutingRequestNotification, UmbracoAppHost.Website.ProtectedPageCacheHeaders>();
         services.Configure<UmbracoPipelineOptions>(options => options.AddFilter(new UmbracoPipelineFilter("AppBlocks")
         {
-            PostPipeline = app => app.UseInteractiveReportsSite(),
             PostMapEndpoints = endpoints => endpoints.MapAppBlocks(),
         }));
         return builder;
@@ -89,10 +70,6 @@ public static class AppBlocksExtensions
 
     public static void MapAppBlocks(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapInteractiveReportJson(InteractiveReportsSite.ReportsRoute);
-        endpoints.MapInteractiveReportFileDownload(InteractiveReportsSite.DownloadRoute);
-        endpoints.MapInteractiveReportJson(InteractiveReportsSite.BackOfficeReportsRoute);
-        endpoints.MapInteractiveReportFileDownload(InteractiveReportsSite.BackOfficeDownloadRoute);
         endpoints.MapApplicationForms();
         endpoints.MapAttachments();
         endpoints.MapTabular();

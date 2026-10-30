@@ -22,7 +22,21 @@ public sealed class DemoSeed(IConfiguration configuration, IServiceProvider serv
     public static Guid Key(string value) => AppBlockSchema.Key("standalone-demo:" + value);
     public async Task HandleAsync(UmbracoApplicationStartedNotification notification, CancellationToken ct)
     {
-        if (!configuration.GetValue<bool>("AppBlocksDemo:SeedContent") || contents.GetById(Key("page"))?.Published == true) return;
+        if (!configuration.GetValue<bool>("AppBlocksDemo:SeedContent")) return;
+        if (contents.GetById(Key("page")) is { Published: true } existing) {
+            var changed = false;
+            foreach (var alias in new[] { "mainContent", "sidebar" }) {
+                var value = JsonNode.Parse(existing.GetValue(alias)?.ToString() ?? "{}");
+                foreach (var block in value?["contentData"]?.AsArray() ?? [])
+                foreach (var property in block?["values"]?.AsArray() ?? [])
+                    if (property?["alias"]?.GetValue<string>() == "forms" && property["value"] is JsonObject nested) {
+                        property["value"] = nested.ToJsonString(); changed = true;
+                    }
+                if (changed) existing.SetValue(alias, value!.ToJsonString());
+            }
+            if (changed) Save(existing);
+            return;
+        }
         await ActivatorUtilities.CreateInstance<SchemaInstaller>(services).EnsureAsync(ct);
         await using (var connection = connections.Openable("UmbracoDb"))
         {
@@ -97,7 +111,8 @@ public sealed class DemoSeed(IConfiguration configuration, IServiceProvider serv
         var config = JsonNode.Parse(XElement.Load(stream).Element("Config")!.Value)!;
         var formConfig = config["blocks"]!.AsArray().Single(b => b!["contentElementTypeKey"]!.GetValue<string>() == AppBlockSchema.Key("appForm").ToString())!;
         form["areas"]!.AsArray().Add(new JsonObject { ["key"] = formConfig["areas"]![0]!["key"]!.DeepClone(), ["items"] = new JsonArray(field) });
-        Add(body, editor, Key(prefix + "-container"), AppBlockSchema.Key(AppBlockSchema.FormsContainerAlias), ("forms", fields));
+        // ContentService.SetValue expects storage values; nested Block Grid properties store serialized JSON.
+        Add(body, editor, Key(prefix + "-container"), AppBlockSchema.Key(AppBlockSchema.FormsContainerAlias), ("forms", JsonValue.Create(fields.ToJsonString())));
         return body;
     }
 

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <PropertyGroup>
+    <PackageId>AppBlocks.Documents</PackageId>
+    <Title>AppBlocks Documents for Umbraco</Title>
+    <Description>Generate templated HTML and PDF documents from AppBlocks data sources. PDF conversion optionally uses Pressroom.</Description>
+    <PackageTags>umbraco;appblocks;documents;pdf</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
+    <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+    <StaticWebAssetBasePath>/</StaticWebAssetBasePath>
+    <PressroomRoot Condition="'$(PressroomRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..\Pressroom</PressroomRoot>
+    <UsePressroomSource Condition="'$(UsePressroomSource)' == '' and Exists('$(PressroomRoot)/src/Pressroom.Client/Pressroom.Client.csproj')">true</UsePressroomSource>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../AppBlocks/AppBlocks.csproj" />
+    <PackageReference Include="HtmlAgilityPack" Version="1.13.1" />
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.14" />
+    <ProjectReference Include="$(PressroomRoot)/src/Pressroom.Client/Pressroom.Client.csproj" Condition="'$(UsePressroomSource)' == 'true'" />
+    <PackageReference Include="Pressroom.Client" Version="0.1.0" Condition="'$(UsePressroomSource)' != 'true'" />
+    <Using Include="Microsoft.AspNetCore.Builder" />
+    <Using Include="Microsoft.AspNetCore.Hosting" />
+    <Using Include="Microsoft.AspNetCore.Http" />
+    <Using Include="Microsoft.AspNetCore.Routing" />
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <Using Include="Microsoft.Extensions.Logging" />
+    <Using Include="Umbraco.Cms.Core.DependencyInjection" />
+    <Using Include="Umbraco.Extensions" />
+    <InternalsVisibleTo Include="AppBlocks.Documents.Tests" />
+    <EmbeddedResource Include="Schema/**/*.config" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <Content Update="Schema/**/*.config;appsettings-schema*.json;umbraco-package-schema.json" Pack="false" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+  </ItemGroup>
+</Project>

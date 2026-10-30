@@ -10,6 +10,7 @@
 @inject PublishedDataCatalog Definitions
 @inject ListOfValuesService Lists
 @inject IVariationContextAccessor VariationContext
+@inject IEnumerable<IAppBlockPlugin> Plugins
 @{
     var item = Model.Block;
     var block = item.Content;
@@ -18,7 +19,7 @@
     string? Text(string property) => block.Value<string>(property) is { } value && !string.IsNullOrWhiteSpace(value) ? value : null;
     var heading = Text("heading");
     var paperReport = block.Value<IPublishedContent>("paperReport");
-    var printUrl = paperReport is null ? null : Context.Request.PathBase + "/api/paper-reports/" + paperReport.Key;
+    var printUrl = paperReport is null ? null : Context.RequestServices.GetService<AppBlocks.Documents.IAppDocumentLinks>()?.Url(paperReport.Key, Context.Request.PathBase);
     var culture = VariationContext.VariationContext?.Culture;
     var apiQuery = culture is not null && Model.Page.Cultures.ContainsKey(culture) ? "?" + AppBlockContent.CultureParameter + "=" + Uri.EscapeDataString(culture) : "";
 }
@@ -30,24 +31,13 @@
             MemberId: Model.MemberId, Variables: Model.Variables))
     </div>
 }
-else if ((alias is "appForm" or "appReport") && Model.MemberId is null)
+else if (alias == "appForm" && Model.MemberId is null)
 {
-    <p class="app-block-signin" role="status">Sign in to use this @(alias == "appForm" ? "form" : "report").</p>
+    <p class="app-block-signin" role="status">Sign in to use this form.</p>
 }
-else if (alias == "appReport")
+else if (Plugins.FirstOrDefault(plugin => plugin.Alias == alias) is { } plugin)
 {
-    var name = AppBlockContent.ReportName(Model.Page.Key, item.ContentKey);
-    var controls = block.Value<string>("controls");
-    <section class="app-block-report">
-        @if (printUrl is not null) { <p class="app-report-actions"><a href="@(printUrl + Context.Request.QueryString)">Print</a></p> }
-        <template data-app-report data-state-key="@(Model.MemberId):@name:@culture" data-print-url="@printUrl"
-            data-print-key-column="@Text("keyColumn")" data-print-key-parameter="@(Text("keyParameter") ?? "id")">
-            <interactive-report report="@name" report-title="@(heading ?? Text("reportName"))"
-                api-base="@(Context.Request.PathBase)/api/reports@apiQuery" download-base="@(Context.Request.PathBase)/api/download@apiQuery"
-                initial-page-size="@(block.Value<int?>("pageSize") is > 0 and var size ? size : (int?)null)"
-                controls="@(string.IsNullOrWhiteSpace(controls) ? null : controls)" empty-message="@(block.Value<string>("emptyMessage"))"></interactive-report>
-        </template>
-    </section>
+    @await Html.PartialAsync(plugin.ViewPath, Model)
 }
 else if (alias == "appForm")
 {
@@ -66,7 +56,7 @@ else if (alias == "appForm")
             <div class="app-form-errors" role="alert" tabindex="-1" hidden></div>
             @if (printUrl is not null)
             {
-                <p><a href="@printUrl" data-print data-print-url="@printUrl" data-print-key-parameter="@definition.KeyParameter" hidden>Print</a></p>
+                <p><a href="@printUrl" target="_blank" rel="noopener" data-print data-print-url="@printUrl" data-print-key-parameter="@definition.KeyParameter" hidden>Print</a></p>
             }
             <fieldset class="app-form-body" disabled>
                 @foreach (var area in item.Areas)

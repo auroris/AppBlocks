@@ -3,18 +3,6 @@
   "extensions": [
     {
       "type": "propertyEditorUi",
-      "alias": "AppHost.ReportPicker",
-      "name": "Application report source",
-      "element": "/App_Plugins/ApplicationBlocks/report-picker.js",
-      "meta": {
-        "label": "Report source",
-        "icon": "icon-table",
-        "group": "Application",
-        "propertyEditorSchemaAlias": "Umbraco.TextBox"
-      }
-    },
-    {
-      "type": "propertyEditorUi",
       "alias": "AppHost.ResourcePicker",
       "name": "Application form resource",
       "element": "/App_Plugins/ApplicationBlocks/resource-picker.js",
@@ -35,18 +23,6 @@
         "icon": "icon-edit",
         "group": "Application",
         "propertyEditorSchemaAlias": "Umbraco.TextBox"
-      }
-    },
-    {
-      "type": "propertyEditorUi",
-      "alias": "AppHost.ReportState",
-      "name": "Application report starting view",
-      "element": "/App_Plugins/ApplicationBlocks/report-state.js",
-      "meta": {
-        "label": "Report starting view",
-        "icon": "icon-table",
-        "group": "Application",
-        "propertyEditorSchemaAlias": "Umbraco.TextArea"
       }
     },
     {

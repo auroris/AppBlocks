@@ -1,4 +1,4 @@
-using InteractiveReport.AspNetCore;
+using AppBlocks.Connections;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using UmbracoAppHost.Blocks;
 using UmbracoAppHost.Databases;
@@ -23,11 +23,11 @@ public static class AttachmentsExtensions
     /// two attachment tables created on first use. When <c>Attachments:Connection</c> names a connection of the host's
     /// own, nothing is registered here and the tables are created in that database when the store first opens it.
     /// </summary>
-    public static InteractiveReportBuilder AddAttachmentsDatabase(this InteractiveReportBuilder reports, IConfiguration configuration)
+    public static AppBlocksBuilder AddAttachmentsDatabase(this AppBlocksBuilder connections, IConfiguration configuration)
     {
         var name = configuration[$"{AttachmentSettings.Section}:Connection"];
         if (string.IsNullOrWhiteSpace(name) || name.Trim() == AttachmentSettings.DefaultConnection)
-            reports.AddApplicationDatabase(AttachmentSettings.DefaultConnection, AttachmentStore.Schema, AttachmentSettings.DefaultDatabaseFile);
-        return reports;
+            connections.AddApplicationDatabase(AttachmentSettings.DefaultConnection, AttachmentStore.Schema, AttachmentSettings.DefaultDatabaseFile);
+        return connections;
     }
 }

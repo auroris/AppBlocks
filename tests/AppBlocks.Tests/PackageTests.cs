@@ -90,7 +90,8 @@ public sealed class PackageTests
     public async Task Generated_sample_compiles_and_round_trips_values_with_auth_and_concurrency()
     {
         var form = new DiscoveredForm(Guid.NewGuid(), Guid.NewGuid(), null, "Example", "Example", "", false,
-            [new("title\"with-characters", "Title", "text", Required: true, MaxLength: 100), new("amount", "Amount", "number"), new("done", "Done", "checkbox")]);
+            [new("title\"with-characters", "Title", "text", Required: true, MaxLength: 100), new("amount", "Amount", "number"), new("done", "Done", "checkbox"),
+                new("select", "SQL keyword", "text"), new("equals", "Record member", "text"), new("title-with-characters", "Duplicate identifier", "text"), new("id", "Identifier", "text")]);
         var source = FormSampleGenerator.Generate(form);
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
             .Append(typeof(SqliteConnection).Assembly.Location).Distinct().Select(path => MetadataReference.CreateFromFile(path));
@@ -116,9 +117,9 @@ public sealed class PackageTests
         var repository = Activator.CreateInstance(type, connectionString, (Func<ClaimsPrincipal, bool>)(_ => true))!;
         var principal = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, "member-1")], "test"));
         var values = Activator.CreateInstance(valuesType)!;
-        valuesType.GetProperty("Field1")!.SetValue(values, "O'Brien; DROP TABLE SampleForm; --");
-        valuesType.GetProperty("Field2")!.SetValue(values, 123.45m);
-        valuesType.GetProperty("Field3")!.SetValue(values, true);
+        valuesType.GetProperty("TitleWithCharacters")!.SetValue(values, "O'Brien; DROP TABLE SampleForm; --");
+        valuesType.GetProperty("Amount")!.SetValue(values, 123.45m);
+        valuesType.GetProperty("Done")!.SetValue(values, true);
         async Task<bool> Save(long version) => await (Task<bool>)type.GetMethod("UpsertAsync")!.Invoke(repository, ["record-1", version, values, principal, CancellationToken.None])!;
         Assert.True(await Save(0));
         Assert.False(await Save(0));
@@ -126,7 +127,7 @@ public sealed class PackageTests
         await read;
         var record = read.GetType().GetProperty("Result")!.GetValue(read)!;
         var actualValues = recordType.GetProperty("Values")!.GetValue(record);
-        Assert.Equal("O'Brien; DROP TABLE SampleForm; --", valuesType.GetProperty("Field1")!.GetValue(actualValues));
+        Assert.Equal("O'Brien; DROP TABLE SampleForm; --", valuesType.GetProperty("TitleWithCharacters")!.GetValue(actualValues));
         Assert.True(await Save(1)); Assert.False(await Save(1));
         var denied = (Task)type.GetMethod("ReadAsync")!.Invoke(repository, ["record-1", new ClaimsPrincipal(), CancellationToken.None])!;
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => denied);
