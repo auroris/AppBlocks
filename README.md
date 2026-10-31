@@ -1,10 +1,33 @@
-# AppBlocks
+<h1 align="center">AppBlocks</h1>
 
-Forms and database-backed blocks that fit into an existing Umbraco website.
+<p align="center">
+  Forms, reports and database-backed blocks for Umbraco.<br>
+  Add them to the Block Grid or Block List you already have, alongside your Rich Text, on the pages you already have.
+</p>
 
-AppBlocks supplies the **Forms container** element type for native Block Grid and Block List editors. The optional **AppBlocks.InteractiveReports** NuGet companion adds **Interactive Report** and requires AppBlocks. Put them alongside your site's other blocks, including Rich Text. The site keeps its page types, templates, layout and authentication. AppBlocks does not install a page template or require an AppBlocks page type.
+<p align="center">
+  <a href="LICENSE"><img alt="MIT license" src="docs/images/badge-license.svg"></a>
+  <img alt="Umbraco 18.3" src="docs/images/badge-umbraco.svg">
+  <img alt=".NET 10" src="docs/images/badge-dotnet-10.svg">
+  <img alt="Status: alpha" src="docs/images/badge-status.svg">
+  <img alt="SQLite, SQL Server, PostgreSQL and Oracle supported" src="docs/images/badge-databases.svg">
+</p>
 
-This is an unpublished alpha targeting Umbraco **18.3** and **.NET 10**. The repository is local; no public repository or NuGet release has been created.
+![An ordinary Umbraco page with an interactive report and an editable form, in both a Block List and a Block Grid](docs/images/hero.png)
+
+## What it is
+
+AppBlocks gives Umbraco editors blocks that work with real application data. The site keeps its page types, templates, layout and sign-in. AppBlocks adds no page type or template of its own.
+
+- **Sets itself up.** Install the package and start the site. Its definitions install through Umbraco's own services, with no import step or configuration.
+- **Forms backed by your C#.** Add a Forms container to a page and bind it to a registered class. Your class owns persistence, validation and business rules, and the field pickers follow its fields. Attachments, editable tables and schedules are included.
+- **Interactive reports.** The optional **AppBlocks.InteractiveReports** package adds a block powered by [Interactive Reports](https://github.com/auroris/Interactive-Reports). Pick a table or write a SELECT, and readers can search, filter, sort, chart, save and download.
+- **Documents and printing.** The optional **AppBlocks.Documents** package produces template-based HTML and PDF documents, with optional direct-to-printer output through Pressroom.
+- **Umbraco's access rules first.** Blocks follow their page's Public Access. Add group rules, row restrictions and C# policies only when a rule goes beyond the page.
+- **Your own database.** Application data goes in a separate SQLite file by default, away from Umbraco's. Connect SQL Server, PostgreSQL or Oracle from the backoffice, with connection strings encrypted at rest.
+- **Keeps working when it can't create tables.** If the database account isn't allowed to, the backoffice shows the grant or script to run, and everything else carries on.
+
+This is an alpha targeting Umbraco **18.3** and **.NET 10**. No NuGet release has been created yet.
 
 ## Add it to a site
 
@@ -25,7 +48,7 @@ The native blocks include their required assets and inherit ordinary site typogr
 
 ## Connections
 
-**Settings → AppBlocks → Connections** supplies **AppBlocks database** (`AppBlocksDb`) as the default for forms and reports. On SQLite installations, its `AppBlocks.sqlite.db` file sits beside Umbraco's SQLite database. Application data, saved report views and uploaded file contents share this file by default. It is created on first use with foreign keys and write-ahead logging enabled. The site supplies its business tables; saved-report and upload tables are created by their stores.
+**Settings → AppBlocks → Connections** supplies **AppBlocks database** (`AppBlocksDb`) as the default for forms and reports. On SQLite installations, its `AppBlocks.sqlite.db` file sits beside Umbraco's SQLite database. Application data, saved report views and uploaded file contents share this file by default. It is created on first use with foreign keys and write-ahead logging enabled. The site supplies its business tables; saved-report and upload tables are created by their stores, or by hand where the database account may not (see [Database setup](#database-setup)).
 
 Use this separate database for application work. SQLite permits only one writer per database, so keeping form submissions and uploads out of Umbraco's file avoids competing with CMS saves. `UmbracoDb` remains available for sources that specifically read CMS data. AppBlocks opens its own connections; it does not share Umbraco's scope or transaction.
 
@@ -58,6 +81,30 @@ Connections added directly to Interactive Reports' builder through the companion
 Oracle 11.2 mode uses 11.2-compatible metadata and row limits, with explicit key sequences for generated keys (`keySequences`, for example `{"ID":"ORDERS_SEQ"}`). Oracle 12+ mode additionally discovers identity columns. The reports companion preserves the selected compatibility mode. Upload storage still requires a separate SQLite or SQL Server connection.
 
 The bundled driver matches Interactive Reports' live-test dependency. Oracle's [current driver certification](https://docs.oracle.com/en/database/oracle/oracle-database/26/odpnt/InstallSystemRequirements.html) lists Database 19c and later; connectivity to older servers requires verification independently of the selected SQL compatibility mode.
+
+## Database setup
+
+Forms and reports read the site's own tables and need nothing created. Two features keep tables of their own, and create them on first use when the database account may. **Settings → AppBlocks → Database setup** shows administrators each feature's connection, whether its tables are there, and both ways to set it up for that database type. Looking at the screen creates nothing, and it never shows a connection string.
+
+| Feature | Tables | Connection | Without them |
+| --- | --- | --- | --- |
+| File uploads | `APP_ATTACHMENT`, `APP_ATTACHMENT_LINK` | `Attachments:Connection`, by default `AppBlocksDb` | Attachments blocks show a plain notice instead of files, and nothing can be uploaded. The form around them keeps working. |
+| Saved report views (`AppBlocks.InteractiveReports`) | `IR_SAVED_REPORTS`, and `IR_ADMINISTRATORS` for the saved report administration page | `InteractiveReport:SavedReports`, by default `AppBlocksDb` | Saving views is hidden and reports open on their own starting view. Reports still load, query and export. |
+
+Everything else keeps working in that state, and no visitor sees an error. An administrator who is signed in to the backoffice also gets a link to the setup screen. The reason is logged once as a warning, with what to do, rather than on every request.
+
+There are two ways to set a feature up, and either takes effect on the next request, with no restart:
+
+1. **Grant the permission**, so AppBlocks creates the tables itself. The screen prints the statements with the account's name in them.
+   - **SQLite** has no accounts: the account the site runs under needs write access to the database file and its folder.
+   - **SQL Server**: `CREATE TABLE`, `ALTER` on the `dbo` schema, and `SELECT`, `INSERT`, `UPDATE`, `DELETE` and `REFERENCES` on it. Tables in `dbo` belong to the schema's owner, not to the account that creates them, so this covers every table in `dbo`. To limit the account to these tables, use the script.
+   - **PostgreSQL**: `USAGE` and `CREATE` on the schema. The account owns what it creates.
+   - **Oracle**: `CREATE TABLE` and `CREATE SEQUENCE`, plus `CREATE TRIGGER` on 11.2, and a quota on the account's tablespace. The account owns what it creates.
+2. **Run the script**, viewable and downloadable on the screen, as an account that may create tables. The account the site signs in as then needs no right to create anything. The script is made from what AppBlocks itself runs, so the two cannot differ, and it is safe to run more than once. On SQL Server and PostgreSQL it ends by granting that account read and write on those tables. On Oracle, connect as the account, or as a DBA after `ALTER SESSION SET CURRENT_SCHEMA = <account>`, so that the tables are in its schema.
+
+File uploads run on SQLite and SQL Server only. On PostgreSQL or Oracle the block shows the same notice and nothing is created: select a separate store with `Attachments:Connection`, as described under [Connections](#connections).
+
+`APP_SCHEMA` is a bookkeeping table AppBlocks' schema code writes when it creates tables. Nothing reads it back, so uploads neither need it nor wait for it, and the script leaves it out. An account that may create tables gets one as before.
 
 ## Samples and business rules
 
@@ -137,3 +184,7 @@ Also when updating a host of UmbracoAppHost:
 - Razor views compile at run time there, so a build does not catch an old name. A start does not rewrite a host's `Views/_ViewImports.cshtml`. Change its `@inject UmbracoAppHost.Blocks.AppPageAssets PageAssets` to `@inject AppBlocks.Blocks.AppPageAssets PageAssets` and add `@using AppBlocks.Authentication` and `@using AppBlocks.Publishing`. Check every view of its own too, paper report views especially: `@using UmbracoAppHost.PaperReports` becomes `@using AppBlocks.Documents.PaperReports`.
 - Connections go through `AppBlocksBuilder`. `IUmbracoAppHost.ConfigureReports` is now `ConfigureConnections(WebApplicationBuilder, AppBlocksBuilder)`, the callback of `AddUmbracoAppHost` takes an `AppBlocksBuilder`, and `TestSiteOptions.ConfigureReports` is `ConfigureConnections`. A `reports.AddApplicationDatabase(...)` call becomes `connections.AddApplicationDatabase(...)` with the same arguments. A host that also set other report options there moves them to a composer that calls `AddAppBlocksInteractiveReports`.
 - `UmbracoAppHost:DataRoot` no longer applies to AppBlocks. AppHost sets `AppBlocks:DataRoot` to the same folder, unless a host has configured `AppBlocks:DataRoot` itself. A test or tool that configures AppBlocks services directly sets `AppBlocks:DataRoot`.
+
+## License
+
+[MIT](LICENSE)

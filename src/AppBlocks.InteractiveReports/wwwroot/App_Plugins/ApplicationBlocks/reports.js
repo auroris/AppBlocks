@@ -34,7 +34,8 @@ async function mountReports() {
             url.searchParams.set(template.dataset.printKeyParameter || "id", String(key));
             window.open(url, "_blank", "noopener");
         });
-        enableReportPrinting(report);
+        // Printing renders and delivers documents for an account, so it is not offered to someone with none.
+        if (template.dataset.anonymous !== "true") enableReportPrinting(report);
         template.replaceWith(report);
     }
 }

@@ -11,13 +11,26 @@ public sealed record FormField(string Key, string Label, string Kind, bool Requi
     IReadOnlyList<FormChoice>? Choices = null, bool HasServerDefault = false);
 public sealed record FormCapabilities(bool Create = false, bool Update = false, bool Delete = false);
 public sealed record FormRecord(string? Key, string? Version, IReadOnlyDictionary<string, object?> Values, FormCapabilities Capabilities);
-/// <param name="Member">The authenticated Umbraco Member or backoffice User. Resources decide which account types and groups may perform each operation.</param>
+/// <param name="Member">
+/// Who is calling, never null: an authenticated Umbraco Member or backoffice User, or on a page with no Public Access an
+/// unauthenticated principal for an anonymous visitor. Resources decide which of them, and which groups, may perform each operation;
+/// a resource with no check is public on an unprotected page.
+/// </param>
 /// <param name="Parameters">
 /// The query parameters of the form request, which data sources bind as <c>:PARAM.name</c>. They come from the
 /// browser like any other input, so a resource may filter or default with them but must never authorize with them.
 /// </param>
 public sealed record FormExecutionContext(ClaimsPrincipal Member, Guid PageKey, Guid FormKey, string DefinitionVersion, string? SubmissionKey = null,
-    IReadOnlyDictionary<string, string>? Parameters = null);
+    IReadOnlyDictionary<string, string>? Parameters = null)
+{
+    /// <summary>
+    /// The form's other named controls as the browser submitted them: anything inside the form that is not bound to a
+    /// field, such as a captcha token or a honeypot. Never null, and empty on anything but a submission. It comes from the
+    /// browser like any other input, and AppBlocks neither stores nor validates it, so verify what matters in the resource.
+    /// See <see cref="FormEndpoints.FormData"/> for its limits.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> FormData { get; init; } = FormEndpoints.NoFormData;
+}
 
 public sealed record FormResult(int Status, FormRecord? Record = null, IReadOnlyDictionary<string, string[]>? Errors = null)
 {

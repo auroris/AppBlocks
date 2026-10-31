@@ -4,12 +4,36 @@ const pathBase = new URL(import.meta.url).pathname.split("/App_Plugins/")[0];
 const blank = value => value === undefined || value === null || value === "";
 // Defaults and hidden fields hold their values as text, so a checkbox's arrives as "true" or "false".
 const truthy = value => value === true || typeof value === "string" && /^(true|1|yes|on)$/i.test(value.trim());
+// What an anonymous visitor sees when a block's class or engine refuses them, in place of an error.
+function signInNotice(text) {
+    const notice = document.createElement("p");
+    notice.className = "app-block-signin"; notice.setAttribute("role", "status"); notice.textContent = text;
+    return notice;
+}
+// The form's other named controls, such as a captcha widget's hidden token or a honeypot: everything the browser would
+// have submitted except its fields, passwords, files and the antiforgery field, which travels in a header. Sent apart from
+// the fields, so the server's validation and strict binding never see them. A repeated name goes as a list, which the
+// server leaves out rather than guess at. A block's own controls carry form="", so they are not among the form's elements.
+function otherControls(form) {
+    const controls = {};
+    const add = (name, value) => { controls[name] = Object.hasOwn(controls, name) ? [controls[name], value].flat() : value; };
+    for (const control of form.elements) {
+        if (!control.name || !["INPUT", "SELECT", "TEXTAREA"].includes(control.tagName)) continue;
+        if (control.matches("[data-field], :disabled") || control.name === "__RequestVerificationToken") continue;
+        if (["password", "file", "submit", "button", "reset", "image"].includes(control.type)) continue;
+        if (["checkbox", "radio"].includes(control.type) && !control.checked) continue;
+        if (control.type === "select-multiple") for (const option of control.selectedOptions) add(control.name, option.value);
+        else add(control.name, control.value);
+    }
+    return controls;
+}
 
 function mountForm(form) {
     const fields = [...form.querySelectorAll("[data-field]")];
     const errors = form.querySelector(".app-form-errors");
     const message = form.querySelector(".app-form-message");
     const body = form.querySelector(".app-form-body");
+    const anonymous = form.dataset.anonymous === "true";
     let state;
     let busy = false;
     let submissionKey = crypto.randomUUID();
@@ -82,6 +106,8 @@ function mountForm(form) {
         try {
             const url = requestUrl();
             const response = await fetch(url, { credentials: "same-origin", cache: "no-store" });
+            // The page normally knows this already; a class can still change its mind between rendering and this load.
+            if (response.status === 403 && anonymous) { form.replaceWith(signInNotice("Sign in to use this form.")); return; }
             if (!response.ok) throw new Error(response.status === 403 ? "You do not have access to this form." : response.status === 404 ? "The record was not found." : "The form could not be loaded.");
             state = await response.json(); display(state.record); message.textContent = "";
             // Blocks that follow the record, such as Attachments, learn which record is shown.
@@ -103,18 +129,24 @@ function mountForm(form) {
             else if (value === "") value = null;
             values[field.dataset.field] = value;
         }
+        // Read before the form is disabled below, which would take every control with it.
+        const formData = otherControls(form);
         busy = true; body.disabled = true; showErrors(null); message.textContent = remove ? "Deleting…" : "Saving…";
         try {
             const response = await fetch(requestUrl(state.record.key), {
                 method: remove ? "DELETE" : state.record.key ? "PUT" : "POST", credentials: "same-origin",
                 headers: { "Content-Type": "application/json", RequestVerificationToken: state.antiforgeryToken },
-                body: JSON.stringify({ values, definitionVersion: state.definitionVersion, version: state.record.version, submissionKey }),
+                body: JSON.stringify({ values, definitionVersion: state.definitionVersion, version: state.record.version, submissionKey, formData }),
             });
             if (response.status === 204) { location.assign(form.dataset.return); return; }
-            const result = await response.json();
+            // A class refusing someone anonymous means they need to sign in; what they entered stays in the form.
+            if (response.status === 403 && anonymous) { message.replaceChildren(signInNotice("Sign in to use this form.")); return; }
+            // Some refusals have no body, such as an expired antiforgery token.
+            const result = await response.json().catch(() => ({}));
             if (!response.ok) { showErrors(result.errors ?? { "": [response.status === 403 ? "This operation is not permitted." : "The operation failed. Reload the page if the record has changed."] }); message.textContent = ""; return; }
             display(result.record); submissionKey = crypto.randomUUID(); message.textContent = "Saved.";
-            const url = new URL(location.href); url.searchParams.set(form.dataset.keyParameter, result.record.key); history.replaceState(null, "", url);
+            // A public form may keep nothing to come back to, so a record with no key leaves the address alone.
+            if (result.record.key) { const url = new URL(location.href); url.searchParams.set(form.dataset.keyParameter, result.record.key); history.replaceState(null, "", url); }
             form.dispatchEvent(new CustomEvent("app-form:saved", { bubbles: true, detail: { record: result.record, definitionVersion: state.definitionVersion } }));
         } catch { showErrors({ "": ["The request could not be completed. Your entered values have been retained."] }); message.textContent = ""; }
         finally { busy = false; body.disabled = false; }
@@ -227,6 +259,7 @@ function mountAttachments(root) {
         list.setAttribute("aria-busy", "true");
         try {
             const response = await fetch(requestUrl(), { credentials: "same-origin", cache: "no-store" });
+            if (response.status === 403 && root.dataset.anonymous === "true") { root.replaceWith(signInNotice("Sign in to see the files.")); return; }
             if (!response.ok) { state = null; render(); fail(await problem(response, "The files could not be loaded.")); return; }
             state = await response.json(); render();
         } catch { state = null; render(); fail("The files could not be loaded."); }

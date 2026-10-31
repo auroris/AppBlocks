@@ -8,6 +8,18 @@ using AppBlocks.InteractiveReports.DataSources;
 
 namespace AppBlocks.InteractiveReports.Reports;
 
+/// <summary>
+/// What an anonymous visitor may do with a report, for a policy to apply first: a report block on a page that let them in may
+/// be viewed, queried and exported, and its saved views list as nothing. Everything else is refused, including every
+/// report that is not a block, whatever its name or policy. The definition store has already refused the block for a page with Public Access.
+/// </summary>
+public static class AnonymousReportAccess
+{
+    public static bool Allows(InteractiveReportAuthorizationRequest request)
+        => AppBlockContent.ParseReportName(request.Resource.SourceReportName ?? request.Resource.ReportName, out _, out _)
+            && request.Action is InteractiveReportAction.ViewReport or InteractiveReportAction.Query or InteractiveReportAction.Export or InteractiveReportAction.ListSavedReports;
+}
+
 /// <summary>Uses native backoffice groups; member identities never acquire administrator access by matching email.</summary>
 public sealed class DefaultReportAccessPolicy(IUserService users, IOptions<AppBlocksOptions> settings,
     PublishedReportCatalog definitions) : IReportAccessPolicy
@@ -25,7 +37,7 @@ public sealed class DefaultReportAccessPolicy(IUserService users, IOptions<AppBl
     public async ValueTask<bool> AuthorizeAsync(InteractiveReportAuthorizationRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (request.User.Identity?.IsAuthenticated != true) return false;
+        if (request.User.Identity?.IsAuthenticated != true) return AnonymousReportAccess.Allows(request);
         if (AppBlockContent.ParseReportName(request.Resource.ReportName, out _, out _)
             && request.Action == InteractiveReportAction.SelectDefaultReport) return false;
         var admin = await IsAdministratorAsync(request.User);

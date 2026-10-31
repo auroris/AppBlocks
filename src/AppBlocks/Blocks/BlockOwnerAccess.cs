@@ -41,14 +41,18 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
     /// <param name="blockAlias">The element type the block must be.</param>
     /// <param name="owner">Reads the block's owner settings: the resource alias and the key expression, both empty for the enclosing form's record.</param>
     /// <param name="definition">The revision string the owner's record is loaded under; such blocks never compare it with a form's.</param>
+    /// <param name="allowAnonymous">
+    /// Whether an anonymous visitor to an open page reaches the owner's resource, which then decides as it does for anyone.
+    /// Off, as for a block that has only the data source engine behind it, they are refused here.
+    /// </param>
     public async Task<BlockOwnerScope> ResolveAsync(Guid pageKey, Guid blockKey, string blockAlias, BlockOwnerWords words,
-        Func<IPublishedElement, (string? Resource, string? Key)> owner, string definition, CancellationToken ct)
+        Func<IPublishedElement, (string? Resource, string? Key)> owner, string definition, CancellationToken ct, bool allowAnonymous = false)
     {
         if (http.HttpContext is not { } request) return BlockOwnerScope.Refused(403, "This request has no context.");
         if (content.Page(pageKey) is not { } page) return BlockOwnerScope.Refused(403, $"You do not have access to {words.These}.");
-        var user = await access.UserAsync(page);
+        var user = allowAnonymous ? await access.VisitorAsync(page) : await access.UserAsync(page);
         if (user is null) return BlockOwnerScope.Refused(403, $"You do not have access to {words.These}.");
-        // Antiforgery tokens and the audit log name the actual Umbraco Member or backoffice User.
+        // Antiforgery tokens and the audit log name the actual Umbraco Member or backoffice User, or nobody.
         request.User = user;
         var culture = AppBlockContent.RequestCulture(request);
         var blocks = AppBlockContent.Blocks(page, culture);
@@ -117,6 +121,10 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
     private static string? Single(Microsoft.Extensions.Primitives.StringValues values)
         => values.Count == 1 && !string.IsNullOrWhiteSpace(values[0]) ? values[0] : null;
 
-    /// <summary>Who did something, as the audit columns of a data source record it: the username, or the account key when the ticket carries no name.</summary>
-    public static string Actor(ClaimsPrincipal user) => user.Identity?.Name is { Length: > 0 } name ? name : ApplicationAccessPolicy.UserKey(user);
+    /// <summary>What the audit columns and logs say for someone with no account.</summary>
+    public const string AnonymousActor = "anonymous";
+
+    /// <summary>Who did something, as the audit columns of a data source record it: the username, the account key when the ticket carries no name, or <see cref="AnonymousActor"/> for nobody.</summary>
+    public static string Actor(ClaimsPrincipal user) => user.Identity?.IsAuthenticated != true ? AnonymousActor
+        : user.Identity.Name is { Length: > 0 } name ? name : ApplicationAccessPolicy.UserKey(user);
 }

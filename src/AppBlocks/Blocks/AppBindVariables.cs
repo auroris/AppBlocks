@@ -12,7 +12,7 @@ namespace AppBlocks.Blocks;
 /// page's query string. They are APEX's <c>:APP_USER</c> and friends in Umbraco terms, written with the names the
 /// data sources use for their bind variables, so an editor learns one vocabulary.
 /// </summary>
-/// <param name="Key">The application's key for the account (<see cref="ApplicationAccessPolicy.UserKey"/>): the member id, or <c>backoffice:</c> and the user id.</param>
+/// <param name="Key">The application's key for the account (<see cref="ApplicationAccessPolicy.UserKey"/>): the member id, or <c>backoffice:</c> and the user id. Empty for an anonymous visitor, whose person variables all resolve to nothing.</param>
 /// <param name="Sid">The Windows SID the account is linked to, its external login key; null for an account that only has a password.</param>
 /// <param name="Name">The member's or backoffice user's username.</param>
 /// <param name="Email">The account's email address.</param>

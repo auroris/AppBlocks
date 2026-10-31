@@ -26,7 +26,7 @@
     heading.Attributes["id"] = id + "-title";
     heading.InnerHtml.Append(block.Heading ?? "");
 }
-@if (Model.MemberId is null)
+@if (!Model.Admitted)
 {
     <p class="app-block-signin" role="status">Sign in to see the files.</p>
 }
@@ -38,7 +38,7 @@ else
 {
     <section class="app-attachments ah-attachments" id="@id" data-app-attachments data-api="@api" data-owner="@(ownedByForm ? "form" : "page")"
         data-key-parameter="@(Model.Form?.KeyParameter ?? "id")" data-read-only="@block.ReadOnly.ToString().ToLowerInvariant()"
-        data-max-size="@block.Limits.MaxFileSize" data-accept="@block.Limits.Accept" aria-labelledby="@(block.Heading is null ? null : id + "-title")">
+        data-max-size="@block.Limits.MaxFileSize" data-accept="@block.Limits.Accept" data-anonymous="@(Model.Anonymous ? "true" : null)" aria-labelledby="@(block.Heading is null ? null : id + "-title")">
         @if (block.Heading is not null) { @heading }
         @if (block.Help is not null) { <p class="ah-attachments__help">@block.Help</p> }
         <div class="app-attachments-message" role="status" aria-live="polite"></div>

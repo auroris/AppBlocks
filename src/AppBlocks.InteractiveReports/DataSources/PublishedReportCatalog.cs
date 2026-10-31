@@ -43,6 +43,9 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
     public DataSourceDefinition? ResolveBlockSource(Guid key, string selection, ICollection<string> errors) =>
         ReportBlockSource.Read(key, selection, name => managed?.List().Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) == true, errors);
 
+    /// <summary>Whether a source can only be read by someone signed in: it binds something about the caller, or its schema cannot be read to tell.</summary>
+    public bool RequiresSignedInReader(DataSourceDefinition source) => PlanOf(source).Entry.Plan is not { BindsUser: false };
+
     /// <summary>Builds a report from a block-owned table or SQL query.</summary>
     public PublishedReport? ReadBlockReport(Guid key, Func<string, object?> value, ICollection<string> errors)
     {

@@ -38,6 +38,8 @@ public static class FormSampleGenerator
         code.AppendLine("// Generated from form " + form.FormKey + " on page " + form.PageKey + ".");
         code.AppendLine("// Member and backoffice User identities, groups and business rules: Settings > AppBlocks > Business rules.");
         code.AppendLine("// ClaimsPrincipal can represent an Umbraco Member or a backoffice User; authorize the intended account type explicitly.");
+        code.AppendLine("// On a page with no Public Access an anonymous visitor reaches your class, and a class with no check is public.");
+        code.AppendLine("// Every operation below therefore starts by requiring a sign-in. Remove that line only for an operation you mean to be public.");
         code.AppendLine("// Supply an authorization callback; add row-level business rules before using real data.");
         code.AppendLine("using System;\nusing System.Threading;\nusing System.Threading.Tasks;\nusing System.Security.Claims;\nusing System.Text.Json.Serialization;\nusing Microsoft.Data.Sqlite;\n");
         code.AppendLine("namespace AppBlocks.Samples.Generated;\n");
@@ -51,8 +53,8 @@ public static class FormSampleGenerator
         code.AppendLine("public sealed class SampleFormRepository(string connectionString, Func<ClaimsPrincipal, bool> authorize)\n{");
         code.AppendLine("    // Run once on the example database. Production schema belongs in a migration.");
         code.AppendLine($"    public const string ExampleSchema = {Literal(schema)};");
-        code.AppendLine("    private void DemandAccess(ClaimsPrincipal user)\n    {\n        if (user.Identity?.IsAuthenticated != true || !authorize(user)) throw new UnauthorizedAccessException();\n    }\n");
-        code.AppendLine("    public async Task<SampleFormRecord?> ReadAsync(string id, ClaimsPrincipal user, CancellationToken ct = default)\n    {\n        DemandAccess(user);\n        await using var connection = new SqliteConnection(connectionString);\n        await connection.OpenAsync(ct);\n        await using var command = connection.CreateCommand();");
+        code.AppendLine("    private void DemandAccess(ClaimsPrincipal user)\n    {\n        if (!authorize(user)) throw new UnauthorizedAccessException();\n    }\n");
+        code.AppendLine("    public async Task<SampleFormRecord?> ReadAsync(string id, ClaimsPrincipal user, CancellationToken ct = default)\n    {\n        if (user.Identity?.IsAuthenticated != true) throw new UnauthorizedAccessException();\n        DemandAccess(user);\n        await using var connection = new SqliteConnection(connectionString);\n        await connection.OpenAsync(ct);\n        await using var command = connection.CreateCommand();");
         code.AppendLine($"        command.CommandText = {Literal(select)};");
         code.AppendLine("        command.Parameters.AddWithValue(\"@id\", id);\n        await using var reader = await command.ExecuteReaderAsync(ct);\n        if (!await reader.ReadAsync(ct)) return null;\n        return new(reader.GetString(0), reader.GetInt64(1), new SampleFormValues\n        {");
         for (var i = 0; i < fields.Length; i++)
@@ -62,7 +64,7 @@ public static class FormSampleGenerator
             code.AppendLine($"            {f.Name} = reader.IsDBNull({column}) ? null : {read},");
         }
         code.AppendLine("        });\n    }\n");
-        code.AppendLine("    // For a new record use a new Guid string and expectedVersion = 0.\n    // For an edit pass the Id and Version returned by ReadAsync. False means a stale/missing record.\n    public async Task<bool> UpsertAsync(string id, long expectedVersion, SampleFormValues values, ClaimsPrincipal user, CancellationToken ct = default)\n    {\n        DemandAccess(user);\n        if (string.IsNullOrWhiteSpace(id) || expectedVersion < 0) throw new ArgumentException(\"Supply a record id and a valid version.\");");
+        code.AppendLine("    // For a new record use a new Guid string and expectedVersion = 0.\n    // For an edit pass the Id and Version returned by ReadAsync. False means a stale/missing record.\n    public async Task<bool> UpsertAsync(string id, long expectedVersion, SampleFormValues values, ClaimsPrincipal user, CancellationToken ct = default)\n    {\n        if (user.Identity?.IsAuthenticated != true) throw new UnauthorizedAccessException();\n        DemandAccess(user);\n        if (string.IsNullOrWhiteSpace(id) || expectedVersion < 0) throw new ArgumentException(\"Supply a record id and a valid version.\");");
         foreach (var (field, name) in fields)
         {
             if (field.Required) code.AppendLine($"        if ({(field.Kind is "number" or "boolean" or "checkbox" ? $"values.{name} is null" : $"string.IsNullOrWhiteSpace(values.{name})")}) throw new ArgumentException({Literal(field.Label + " is required.")});");

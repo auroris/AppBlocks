@@ -9,15 +9,19 @@
     string? Text(string property) => block.Value<string>(property) is { } value && !string.IsNullOrWhiteSpace(value) ? value : null;
     var heading = Text("heading");
     var paperReport = block.Value<IPublishedContent>("paperReport");
-    var printUrl = paperReport is null ? null : Context.RequestServices.GetService<AppBlocks.DocumentOutput.IAppDocumentLinks>()?.Url(paperReport.Key, Context.Request.PathBase);
+    // A paper report always renders for a person, so it is no link to offer someone anonymous.
+    var printUrl = paperReport is null || Model.Anonymous ? null : Context.RequestServices.GetService<AppBlocks.DocumentOutput.IAppDocumentLinks>()?.Url(paperReport.Key, Context.Request.PathBase);
     var culture = VariationContext.VariationContext?.Culture;
     var apiQuery = culture is not null && Model.Page.Cultures.ContainsKey(culture) ? "?" + AppBlockContent.CultureParameter + "=" + Uri.EscapeDataString(culture) : "";
     // Saving is simply absent for readers. Only a backoffice administrator is told why, and where to fix it.
+    // A source that binds the signed-in person has nothing to show someone with no account, on any page.
+    var signIn = !Model.Admitted || Model.Anonymous && Context.RequestServices.GetRequiredService<AppBlocks.InteractiveReports.DataSources.PublishedReportCatalog>() is var catalog
+        && (catalog.ResolveBlockSource(block.Key, block.Value<string>("dataSource", culture: apiQuery.Length > 0 ? culture : null) ?? "", new List<string>()) is not { } source || catalog.RequiresSignedInReader(source));
     var savedViewsOff = Model.MemberId is not null && Context.RequestServices.GetService<AppBlocks.InteractiveReports.Reports.SavedViewStore>() is { } savedViews && !await savedViews.ReadyAsync(Context.RequestAborted)
         && await Context.RequestServices.GetRequiredService<AppBlocks.Authentication.ApplicationAccessPolicy>().BackOfficeAdministratorAsync(Context) is not null;
 }
 
-@if (Model.MemberId is null)
+@if (signIn)
 {
     <p class="app-block-signin" role="status">Sign in to use this report.</p>
 }
@@ -28,7 +32,7 @@ else
     <section class="app-block-report">
         @if (savedViewsOff) { <p class="app-report-setup-note" role="status">Saving report views is off because its database tables aren't set up. <a href="@(Context.Request.PathBase + AppBlocks.Databases.DatabaseSetupGuide.ScreenPath)">Open database setup</a></p> }
         @if (printUrl is not null) { <p class="app-report-actions"><a href="@(printUrl + Context.Request.QueryString)" target="_blank" rel="noopener">Print</a></p> }
-        <template data-app-report data-state-key="@(Model.MemberId):@name:@culture" data-print-url="@printUrl"
+        <template data-app-report data-state-key="@(Model.MemberId):@name:@culture" data-print-url="@printUrl" data-anonymous="@(Model.Anonymous ? "true" : null)"
             data-print-key-column="@Text("keyColumn")" data-print-key-parameter="@(Text("keyParameter") ?? "id")">
             <interactive-report report="@name" report-title="@(heading ?? "Report")"
                 api-base="@(Context.Request.PathBase.ToString() + "/api/reports" + apiQuery)" download-base="@(Context.Request.PathBase.ToString() + "/api/download" + apiQuery)"

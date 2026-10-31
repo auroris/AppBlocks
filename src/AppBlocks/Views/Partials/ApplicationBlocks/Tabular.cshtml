@@ -12,7 +12,8 @@
     block waits for the form's record (the app-form:loaded and app-form:saved events) and asks with the record's key;
     on its own it asks at once with the page's address. The controls carry form="" so the enclosing form never submits
     them, and buttons are type="button" for the same reason. The runtime's inputs carry data-column, never data-field,
-    so the enclosing form does not collect them.
+    so the enclosing form does not collect them. Its rows only ever come through the data source engine, whose rules
+    assume a known user, so someone not signed in gets the notice even on an open page.
 *@
 @{
     var item = Model.Block;

@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Antiforgery;
 using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Cms.Core.Web;
-using AppBlocks.Authentication;
 
 namespace AppBlocks.Blocks;
 
@@ -18,15 +17,15 @@ public sealed class NativeAppBlockViewComponent(AppPageAccess access, AppBindVar
         block ??= listItem is null ? null : AppBlockContent.AsGridItem(listItem);
         if (page is null || block is null) return Content("");
         HttpContext.Response.Headers.CacheControl = "no-store";
-        var user = await access.UserAsync(page);
-        if (user is not null) {
-            HttpContext.User = user;
+        var visitor = await access.VisitorAsync(page);
+        if (visitor is not null) {
+            HttpContext.User = visitor;
             // Establish one cookie in the page response before parallel block loads request their tokens.
             // Otherwise each first GET can issue a different cookie, invalidating the other blocks' tokens.
             antiforgery.GetAndStoreTokens(HttpContext);
         }
-        var model = new AppBlocksPage(page, user is null ? null : ApplicationAccessPolicy.UserKey(user),
-            user is null ? null : await variables.ResolveAsync(user, HttpContext.Request.Query), new BlockGridModel([block], 12));
+        var model = new AppBlocksPage(page, visitor is null ? null : AppBlockVisitor.Key(visitor),
+            visitor is null ? null : await variables.ResolveAsync(visitor, HttpContext.Request.Query), new BlockGridModel([block], 12));
         return View("~/Views/Shared/Components/AppBlocks/Native.cshtml", model);
     }
 }

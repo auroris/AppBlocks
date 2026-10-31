@@ -25,8 +25,9 @@ public sealed record AttachmentScope(int Status, string? Problem = null, Attachm
 /// <summary>
 /// Resolves an Attachments block for a request the way the form endpoints resolve a form: the page's access first,
 /// then the block, then the record that owns the files, whose resource must load it for this caller before anything
-/// is read, and whose <see cref="IAttachmentOwner"/> rule, if it has one, decides writing. Everything the request
-/// says about the owner (its key, the page parameters) is input: the resource's own load is what authorizes.
+/// is read, and whose <see cref="IAttachmentOwner"/> rule, if it has one, decides writing. Without that rule an anonymous
+/// visitor only reads. Everything the request says about the owner (its key, the page parameters) is input: the
+/// resource's own load is what authorizes.
 /// </summary>
 public sealed class AttachmentAccess(BlockOwnerAccess owners, IOptions<AttachmentSettings> settings)
 {
@@ -40,11 +41,13 @@ public sealed class AttachmentAccess(BlockOwnerAccess owners, IOptions<Attachmen
         var scope = await owners.ResolveAsync(pageKey, blockKey, AppBlockSchema.AttachmentsAlias, Words, element => {
             var settingsOf = AttachmentBlock.Read(element, settings.Value);
             return (settingsOf.OwnerResource, settingsOf.OwnerKey);
-        }, Definition, ct);
+        }, Definition, ct, allowAnonymous: true);
         if (scope.Status != 200) return AttachmentScope.Refused(scope.Status, scope.Problem!);
         var block = AttachmentBlock.Read(scope.Item!.Content, settings.Value);
         var context = new FormExecutionContext(scope.User!, pageKey, blockKey, Definition, Parameters: scope.Parameters);
-        var write = !block.ReadOnly && (scope.Resource is not IAttachmentOwner rule || await rule.MayWriteAttachmentsAsync(scope.Record!, context, ct));
+        var write = !block.ReadOnly && (scope.Resource is IAttachmentOwner rule
+            ? await rule.MayWriteAttachmentsAsync(scope.Record!, context, ct)
+            : scope.User!.Identity?.IsAuthenticated == true);
         return new(200, null, block, scope.User, new AttachmentOwner(scope.Resource!.Alias, scope.OwnerKey), write);
     }
 

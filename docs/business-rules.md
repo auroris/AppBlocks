@@ -6,6 +6,25 @@ The generated repository uses SQLite and a separate `SampleForm` table to keep t
 
 For application forms and reports, use the separate `AppBlocksDb` database rather than Umbraco's SQLite file. The default `AppBlocks.sqlite.db` sits beside Umbraco's database and holds application data, saved report views and uploads. This separates application writes from CMS saves. Choose another named connection when needed; `Attachments:Connection` can select a separate upload store, including the optional `AttachmentsDb`. The application owns its business tables and schema changes.
 
+## Where each rule belongs
+
+Forms and reports are blocks on ordinary Umbraco pages, so start with Umbraco's own access rules. Protect the page with **Public Access**, by Member Group or by specific Members, and its blocks, their data and their files follow that page, including protection inherited from a parent page. Many sites need nothing more.
+
+The other layers are there for rules a page cannot express. Requests pass through them in order, and each one can only narrow what the last allowed. Use the first layer that can state your rule, and remember that showing or hiding something in the browser is never one of them.
+
+| Layer | What it decides | Set up in |
+| --- | --- | --- |
+| Sign-in | Who the caller is: an Umbraco Member or a backoffice User | Umbraco, including its external login providers |
+| Public Access (the baseline) | Which Members may reach a page | The page's **Public Access** in the backoffice |
+| Read groups and Write groups | Which Member Groups may use a data source | The data source |
+| Row restriction | Which rows a caller can see and write | The data source's **Row restriction** |
+| `IDataSourcePolicy` | Any rule a data source's settings cannot state | C#, registered with dependency injection |
+| `IFormResource` | Everything about a custom form's operations | C#, your resource |
+| `IAttachmentOwner` | Who may change a record's files | C#, on your resource |
+| `IReportAccessPolicy` | What may be done with reports and saved views | C#, or `AppBlocks:ReportAdministratorGroups` |
+
+Two limits apply to every layer. Forms, reports and files need a signed-in Member or backoffice User, so an anonymous visitor sees a sign-in notice and the endpoints refuse the request; a public form needs its own endpoint in your application. And AppBlocks recognizes only Umbraco's Member and backoffice sign-ins, so a caller authenticated another way, such as with a bearer token or an API key, is refused. To use another identity system, sign people in through it as Umbraco Members or Users.
+
 ## The authenticated caller
 
 In Umbraco, a **Member** signs in to the website and can belong to **Member Groups**. A **User** signs in to the backoffice and can belong to **User Groups**. A **backoffice administrator** is a User in the Administrators User Group.
@@ -95,17 +114,178 @@ if (!canEdit)
 
 Avoid granting a Member access by comparing their email address with a backoffice User's email. Sign-in, page access and permission to update a particular record are separate checks.
 
-For the built-in data-source engine, **Read groups** and **Write groups** select Umbraco Member Groups. They have no administrator exception. Leave these settings empty when your application uses its own account-type or User Group rules, and enforce those rules in `IDataSourcePolicy` using `request.User`. Each registered policy must allow the operation. Custom `IFormResource` implementations enforce their own rules on every operation.
+For the built-in data-source engine, **Read groups** and **Write groups** select Umbraco Member Groups, with these results:
 
-Interactive Reports exposes `IReportAccessPolicy` for report permissions. Its default report-administrator group list is empty; a site can explicitly configure `AppBlocks:ReportAdministratorGroups` with User Group aliases or supply its own policy. Umbraco's own backoffice management permissions remain separate from application business rules.
+| Read groups | Write groups | Who may read | Who may write |
+| --- | --- | --- | --- |
+| Empty | Empty | Anyone who can reach the page, including backoffice Users | The same people |
+| Set | Empty | Members in the read groups | The same Members |
+| Empty | Set | Anyone who can reach the page | Members in the write groups |
+| Set | Set | Members in either list | Members in the write groups |
+
+Two consequences are easy to miss. Empty groups do not mean "nobody": on a page without Public Access, any signed-in account can read and write. And there is no administrator exception, so setting a group refuses every backoffice User, Administrators included. When your rules involve backoffice Users, leave these settings empty and enforce the rules in `IDataSourcePolicy` using `request.User`. Each registered policy must allow the operation. Custom `IFormResource` implementations enforce their own rules on every operation.
+
+**Row restriction** limits rows without any C#. It is added to every fetch and write, for example `OWNER_KEY = :USER_KEY` or `REGION IN (:USER_GROUPS)`, and a write that would leave the restriction is refused. It may use `:USER_KEY`, `:USER_SID`, `:USER_NAME`, `:USER_EMAIL`, `:USER_GROUPS` and `:NOW`. `:USER_GROUPS` holds the account's group display names, so a Member and a backoffice User are matched against different lists.
+
+By default, whoever can read a record can read its files and, for a custom resource, change them too. Implement `IAttachmentOwner` on the resource when the rule for changing files is narrower. The data source engine already limits changes to its write groups.
+
+Interactive Reports exposes `IReportAccessPolicy` for report permissions. By default, any signed-in account that can reach a report's page can view, query and export it, and manage its own saved views. Report administration is separate: its group list is empty until a site configures `AppBlocks:ReportAdministratorGroups` with User Group aliases, and only backoffice Users can hold it. To make Members report administrators, supply your own policy. Umbraco's own backoffice management permissions remain separate from application business rules.
+
+## Common scenarios
+
+These are starting points, and they combine. Check the rule on every operation it applies to, because a resource's `Load`, `Create`, `Update` and `Delete` are separate requests.
+
+| Scenario | Approach |
+| --- | --- |
+| Members only | Protect the page with Public Access, or check `account.IsMember` |
+| Backoffice Users only | Leave the page unprotected and check `account.IsBackOfficeUser` |
+| Members and backoffice Users together | Leave the page unprotected and check each account type's groups |
+| Certain Member Groups | Read groups and Write groups, or `account.IsInMemberGroup(...)` |
+| Certain User Groups | `account.IsInUserGroup(...)`, in a resource or policy |
+| Single sign-on | Umbraco external logins, then any rule here. See below |
+| Roles kept in your own database | A role table keyed by `account.Key`. See below |
+| Groups from another system | A resolver that adds them. See below |
+| Roles assigned on each Member | A custom Member property. See User Group selections on a Member |
+| Each person sees only their own rows | Row restriction, or filter in your resource |
+| Rules that depend on the record | `IDataSourcePolicy` or your resource. See Ownership and record status |
+
+A person signed in as both a Member and a backoffice User counts as the Member, so a backoffice-only form refuses them until they sign out of the Member account.
+
+### Single sign-on
+
+Configure the provider, such as Microsoft Entra ID, OpenID Connect or Windows authentication, as an Umbraco external login for Members or for Users. AppBlocks then sees the Umbraco account the login is linked to, and every rule in this guide applies to it. The provider's key for the person is available as `account.Sid` and `:USER_SID`.
+
+AppBlocks reads groups from Umbraco, not from the provider. For provider groups to count, assign them to the account's Member Groups or User Groups when it signs in, or add them with a resolver as shown below. Other claims your sign-in keeps are on `context.Member`, but they are only as current as the cookie, so don't rely on them for a permission that must take effect immediately.
+
+### Choosing an account key
+
+Store something stable to identify an account in your own tables:
+
+| Value | Use it for | Watch out for |
+| --- | --- | --- |
+| `account.Key` | Owners and roles within one site | It holds a Member ID, or `backoffice:` and a User ID, so it won't match across separate databases. Store it as text |
+| `account.Sid` | People who sign in through a provider | Null without an external login. With several logins, it is the first one found |
+| `account.Name` or `account.Email` | Display | Both can change, and may be reused by a later account, so don't use them to grant access |
+
+### Roles in your own database
+
+Your application can keep its own roles. Read them on each request so that a revoked role takes effect immediately:
+
+```csharp
+using System.Threading;
+using System.Threading.Tasks;
+using AppBlocks.Connections;
+using AppBlocks.DataSources;
+
+public sealed class ApplicationRoles(IApplicationConnectionFactory connections)
+{
+    public async Task<bool> HasRoleAsync(DataSourceUser account, string role, CancellationToken ct)
+    {
+        await using var connection = connections.CreateConnection("AppBlocksDb");
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM APP_ROLE WHERE ACCOUNT_KEY = @key AND ROLE_NAME = @role";
+        foreach (var (name, value) in new[] { ("key", account.Key), ("role", role) })
+        {
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = name;
+            parameter.Value = value;
+            command.Parameters.Add(parameter);
+        }
+        return System.Convert.ToInt64(await command.ExecuteScalarAsync(ct)) > 0;
+    }
+}
+```
+
+Register it with `builder.Services.AddScoped<ApplicationRoles>()`, then call it from a resource or policy after resolving the account. Create and maintain `APP_ROLE` as you would any other business table, and adjust the parameter syntax if your database needs another form.
+
+### Adding groups from another system
+
+To bring in groups from a directory or your own tables, wrap the resolver. Read groups, Write groups, `:USER_GROUPS`, `account.IsInMemberGroup(...)` and your own code then see the combined list:
+
+```csharp
+using System.Collections.Generic;
+using System.Security.Claims;
+using System.Threading;
+using System.Threading.Tasks;
+using AppBlocks.DataSources;
+
+public interface IExternalGroups
+{
+    Task<IReadOnlyList<string>> GetAsync(DataSourceUser account, CancellationToken ct);
+}
+
+public sealed class ResolverWithExternalGroups(UmbracoDataSourceUsers umbraco, IExternalGroups external) : IDataSourceUserResolver
+{
+    public async Task<DataSourceUser?> ResolveAsync(ClaimsPrincipal principal, CancellationToken ct)
+    {
+        var account = await umbraco.ResolveAsync(principal, ct);
+        if (account is null) return null;
+        return account with { Groups = [.. account.Groups, .. await external.GetAsync(account, ct)] };
+    }
+}
+```
+
+Register `builder.Services.AddScoped<UmbracoDataSourceUsers>()` and `builder.Services.AddScoped<IDataSourceUserResolver, ResolverWithExternalGroups>()`, with your `IExternalGroups` implementation. The resolver runs on every operation, so cache a slow lookup briefly. Public Access still uses the account's real Member Groups, and `IsInUserGroup` still uses `UserGroupAliases`, which this example does not change.
 
 ## User Group selections on a Member
 
 A Member Type can have a custom property that picks backoffice User Groups. This is a valid application-defined authorization model: your application can use those selections as roles, just as it can use Member Groups, actual User Group membership or another rule. Umbraco stores the selections as property data; your C# resource or policy gives them their application meaning.
 
-In Umbraco 18.3, the built-in **User Group Picker** UI needs a custom Data Type registration before it can be used as a Member Type property. Create a JSON-backed Data Type using that picker UI and add a property such as `applicationUserGroups` to the Member Type. Configure this property to be managed by the backoffice editors responsible for assigning application access, rather than exposed as a self-editable profile field.
+Umbraco 18.3's built-in **User Group Picker** cannot be used for this directly. It isn't offered when creating a Data Type, and it fails to render a property that has no value yet, which leaves a new Member with a blank field and no way to choose. A small wrapper in your site solves both. Add these two files under `wwwroot/App_Plugins/ApplicationUserGroups/`:
 
-Preserve the [picker's native value format](https://github.com/umbraco/Umbraco-CMS/blob/release-18.3.0/src/Umbraco.Web.UI.Client/src/packages/user/user-group/property-editor/user-group-picker/property-editor-ui-user-group-picker.element.ts): a JSON array of references, each containing a `unique` value with the User Group's GUID key. These stored values are keys, not names or aliases:
+```json
+{
+  "name": "Application User Group Picker",
+  "version": "1.0.0",
+  "extensions": [
+    {
+      "type": "propertyEditorUi",
+      "alias": "Application.PropertyEditorUi.UserGroupPicker",
+      "name": "Application User Group Picker",
+      "element": "/App_Plugins/ApplicationUserGroups/user-group-picker.js",
+      "meta": {
+        "label": "Application User Group Picker",
+        "icon": "icon-users",
+        "group": "people",
+        "propertyEditorSchemaAlias": "Umbraco.Plain.Json"
+      }
+    }
+  ]
+}
+```
+
+Save that as `umbraco-package.json`, and this as `user-group-picker.js`:
+
+```javascript
+import { UmbLitElement } from "@umbraco-cms/backoffice/lit-element";
+import { html } from "@umbraco-cms/backoffice/external/lit";
+import { UmbChangeEvent } from "@umbraco-cms/backoffice/event";
+
+export default class ApplicationUserGroupPicker extends UmbLitElement {
+    static properties = { value: { attribute: false } };
+
+    render() {
+        return html`<umb-user-group-input
+            .selection=${(this.value ?? []).map(item => item.unique)}
+            @change=${event => {
+                this.value = event.target.selection.map(unique => ({ unique }));
+                this.dispatchEvent(new UmbChangeEvent());
+            }}></umb-user-group-input>`;
+    }
+}
+customElements.define("application-user-group-picker", ApplicationUserGroupPicker);
+```
+
+After restarting the site:
+
+1. In **Settings → Data Types**, create a Data Type and choose **Application User Group Picker**.
+2. In **Settings → Member Types**, add a property using it, with the alias `applicationUserGroups`.
+3. Leave the property's member-editing and profile-display options off, so Members can't grant themselves roles.
+
+Anyone who can edit Members can now assign these roles, so treat access to the **Members** section accordingly.
+
+The picker stores [Umbraco's own value format](https://github.com/umbraco/Umbraco-CMS/blob/release-18.3.0/src/Umbraco.Web.UI.Client/src/packages/user/user-group/property-editor/user-group-picker/property-editor-ui-user-group-picker.element.ts): a JSON array of references, each containing a `unique` value with the User Group's GUID key. These stored values are keys, not names or aliases:
 
 ```json
 [
@@ -113,7 +293,7 @@ Preserve the [picker's native value format](https://github.com/umbraco/Umbraco-C
 ]
 ```
 
-The following application-owned C# class resolves the current Member from the authenticated principal, reads the property, and loads the referenced groups through `IUserGroupService`. It returns each group's key, current display name and current alias. Empty or malformed selections return no groups; deleted groups are omitted.
+The following application-owned C# class resolves the current Member from the authenticated principal, reads the property, and loads the referenced groups through `IUserGroupService`. It returns each group's key, current display name and current alias. Empty or malformed selections return no groups, so a bad value refuses access rather than granting it; deleted groups are omitted.
 
 ```csharp
 using System;
@@ -183,7 +363,7 @@ if (!canApprove) return FormResult.Denied();
 // Perform this application's approval operation.
 ```
 
-The same helper can be injected into an `IDataSourcePolicy` and called with `request.Context.Member`. Enforce the chosen rule on every relevant operation. A developer can also enumerate `selectedGroups` or compare `group.Key` when a particular group's identity matters independently of its editable alias.
+The same helper can be injected into an `IDataSourcePolicy` and called with `request.Context.Member`. Enforce the chosen rule on every relevant operation. A developer can also enumerate `selectedGroups` or compare `group.Key` when a particular group's identity matters independently of its editable alias, which is the safer choice for a rule that must survive an alias change.
 
 These selections describe this application's roles; they do not alter Umbraco's native Member Groups, backoffice User membership or backoffice permissions. `account.IsInUserGroup(...)` continues to check actual User Group membership, while `MemberUserGroupSelections` reads the Member's application-defined selections. A group rename preserves the stored GUID reference; changing its alias requires updating application rules that compare that alias.
 
@@ -245,7 +425,7 @@ var createdBy = account.Key;
 var createdAt = DateTimeOffset.UtcNow;
 ```
 
-A hidden field or a disabled control is still browser input. Do not use it as the authority for an owner, approval, price, permission or audit value. Bind SQL parameters for submitted values; never concatenate them into SQL.
+A hidden field, a disabled control or a query parameter (`FormExecutionContext.Parameters`, `:PARAM.name`) is still browser input. Do not use it as the authority for an owner, approval, price, permission or audit value. Bind SQL parameters for submitted values; never concatenate them into SQL.
 
 ## Concurrency and duplicate submissions
 

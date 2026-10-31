@@ -10,7 +10,8 @@
     hours. The server lays the whole table out (Schedules/ScheduleLayout.cs): one cell per row and column, the bars
     as positioned links inside the cell where they start, each in its own sub-row when bars overlap, an open-ended
     bar running to the window's edge. The runtime only scrolls the window to today and shows a bar's details as a
-    tooltip; without it the table still reads and every bar is reachable with the keyboard.
+    tooltip; without it the table still reads and every bar is reachable with the keyboard. Both sources only ever
+    come through the data source engine, whose rules assume a known user, so someone not signed in gets the notice even on an open page.
 *@
 @{
     var item = Model.Block;

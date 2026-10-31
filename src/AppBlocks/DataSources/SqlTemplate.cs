@@ -14,7 +14,7 @@ public enum BindVariableKind
     /// <summary>The key the application uses for the account: the member id, or <c>backoffice:</c> and the user id.</summary>
     UserKey,
     UserEmail,
-    /// <summary>The member groups (for an Administrator, the backoffice groups), usable only as <c>IN (:USER_GROUPS)</c>.</summary>
+    /// <summary>The Member Group names, or for a backoffice User the User Group names, usable only as <c>IN (:USER_GROUPS)</c>.</summary>
     UserGroups,
     /// <summary>The web server's local date and time.</summary>
     Now,

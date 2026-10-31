@@ -14,7 +14,14 @@ namespace AppBlocks.DataSources;
 /// <param name="IsBackOfficeUser">True for a backoffice User; false for an Umbraco Member.</param>
 public sealed record DataSourceUser(string Key, string? Sid, string? Name, string? Email, IReadOnlyList<string> Groups, bool IsBackOfficeUser)
 {
-    public bool IsMember => !IsBackOfficeUser;
+    /// <summary>
+    /// Nobody: what a policy sees for an anonymous visitor to a public report block, the one read that reaches policies
+    /// without an account. It has no key, name, email or groups, and is neither a Member nor a backoffice User.
+    /// </summary>
+    public static DataSourceUser Anonymous { get; } = new("", null, null, null, [], false);
+
+    public bool IsAnonymous => Key.Length == 0;
+    public bool IsMember => !IsBackOfficeUser && !IsAnonymous;
     /// <summary>Current Member Group names. Empty for backoffice Users.</summary>
     public IReadOnlyList<string> MemberGroupNames => IsMember ? Groups : [];
     /// <summary>Current User Group display names. Empty for Members.</summary>

@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <Version>0.1.0-alpha.1</Version>
     <Authors>auroris</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <!-- UmbracoAppHost pins the same version in its Directory.Packages.props, and its build fails if the two differ. -->
     <AppBlocksUmbracoVersion>18.3.0</AppBlocksUmbracoVersion>
   </PropertyGroup>

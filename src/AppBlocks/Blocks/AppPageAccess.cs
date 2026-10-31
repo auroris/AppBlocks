@@ -19,13 +19,14 @@ public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker 
         return user?.Identity?.AuthenticationType == IdentityConstants.ApplicationScheme ? user : null;
     }
 
+    /// <summary>A signed-in Member or backoffice User this page admits. Null for everyone else, including an anonymous visitor to an open page.</summary>
     public async Task<ClaimsPrincipal?> UserAsync(Guid pageKey)
     {
         if (content.Page(pageKey) is not { } page) return null;
         return await UserAsync(page);
     }
 
-    /// <summary>Checks the same member/Public Access boundary for another published application page, such as a paper report.</summary>
+    /// <summary>Checks the same member/Public Access boundary for another published application page, such as a paper report. Null for anyone not signed in.</summary>
     public async Task<ClaimsPrincipal?> UserAsync(IPublishedContent page)
     {
         if (http.HttpContext is not { } context) return null;
@@ -37,6 +38,30 @@ public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker 
         if (publicAccess.IsProtected(page.Path).Success) return null;
         return await applicationAccess.BackOfficeUserAsync(context);
     }
+
+    /// <summary>
+    /// Who this request is to the page, for a block that lets its own class or engine decide about anonymous visitors.
+    /// Null means refused. Otherwise it is the signed-in Member or backoffice User <see cref="UserAsync(IPublishedContent)"/>
+    /// admits, or, on a page with no Public Access of its own or inherited, an unauthenticated principal for a visitor
+    /// with no account. An account that presented itself and failed, such as a locked-out Member or a disabled User, stays refused.
+    /// </summary>
+    public async Task<ClaimsPrincipal?> VisitorAsync(IPublishedContent page)
+    {
+        if (await UserAsync(page) is { } user) return user;
+        if (http.HttpContext is not { } context || !IsOpen(page)) return null;
+        if ((await context.AuthenticateAsync(IdentityConstants.ApplicationScheme)).Succeeded) return null;
+        return await applicationAccess.HasBackOfficeTicketAsync(context) ? null : Anonymous;
+    }
+
+    /// <inheritdoc cref="VisitorAsync(IPublishedContent)"/>
+    public async Task<ClaimsPrincipal?> VisitorAsync(Guid pageKey)
+        => content.Page(pageKey) is { } page ? await VisitorAsync(page) : null;
+
+    /// <summary>Whether Umbraco's Public Access leaves this page open, on the page itself and on every ancestor.</summary>
+    public bool IsOpen(IPublishedContent page) => !publicAccess.IsProtected(page.Path).Success;
+
+    /// <summary>The principal an anonymous visitor is represented by: never null, never authenticated, with no claims.</summary>
+    public static ClaimsPrincipal Anonymous => new(new ClaimsIdentity());
 }
 
 public sealed record AppPageRequirement(Guid PageKey) : IAuthorizationRequirement;

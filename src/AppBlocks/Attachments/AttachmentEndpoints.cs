@@ -184,7 +184,7 @@ public static class AttachmentEndpoints
     {
         http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("ApplicationAttachments").LogInformation(
             "Attachment operation {Operation} on {Owner}/{Key} file {File} by {Member} returned {Status}", operation, scope.Owner?.Alias, scope.Owner?.Key, id,
-            scope.User?.FindFirstValue(ClaimTypes.NameIdentifier), status);
+            scope.User?.FindFirstValue(ClaimTypes.NameIdentifier) ?? AppBlocks.Blocks.BlockOwnerAccess.AnonymousActor, status);
         return result;
     }
 

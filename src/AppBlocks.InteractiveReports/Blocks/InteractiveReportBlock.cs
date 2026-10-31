@@ -14,6 +14,7 @@ public sealed class InteractiveReportBlock(ReportDefinitionCompiler compiler,
 {
     public string Alias => "appReport";
     public string ViewPath => "~/Views/Partials/ApplicationBlocks/InteractiveReport.cshtml";
+    /// <summary>The page resolves who is calling for this block, as for a form. An anonymous visitor may then use it where the page and its source allow.</summary>
     public bool RequiresUser => true;
     public void Validate(JsonElement block, List<string> errors)
     {

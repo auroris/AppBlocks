@@ -65,15 +65,23 @@ public static class DatabaseInspector
             return new(false, null, null, null, tables.Select(table => new InspectedTable(table, InspectedTableState.Missing)).ToArray());
         }
         var version = connection is SqliteConnection ? null : connection.ServerVersion;
-        var found = new List<InspectedTable>();
-        foreach (var table in tables)
+        try
         {
-            var state = await TableStateAsync(connection, dialect, table, timeout.Token);
-            if (state == InspectedTableState.Ready && await MayWriteAsync(connection, dialect, table, timeout.Token) == false) state = InspectedTableState.NoAccess;
-            found.Add(new(table, state));
+            var found = new List<InspectedTable>();
+            foreach (var table in tables)
+            {
+                var state = await TableStateAsync(connection, dialect, table, timeout.Token);
+                if (state == InspectedTableState.Ready && await MayWriteAsync(connection, dialect, table, timeout.Token) == false) state = InspectedTableState.NoAccess;
+                found.Add(new(table, state));
+            }
+            var (account, canCreate) = await AccountAsync(connection, dialect, legacyOracle || MajorVersion(version) < 12, timeout.Token);
+            return new(true, account, canCreate, version, found);
         }
-        var (account, canCreate) = await AccountAsync(connection, dialect, legacyOracle || MajorVersion(version) < 12, timeout.Token);
-        return new(true, account, canCreate, version, found);
+        // A database that opens and then stops answering says nothing about its tables.
+        catch (Exception error) when (!ct.IsCancellationRequested && error is DbException or OperationCanceledException)
+        {
+            return new(false, null, null, version, tables.Select(table => new InspectedTable(table, InspectedTableState.Missing)).ToArray());
+        }
     }
 
     /// <summary>Whether this account can read every table, by an empty read of each on an open connection.</summary>
@@ -123,7 +131,7 @@ public static class DatabaseInspector
             await using var reader = await command.ExecuteReaderAsync(ct);
             return InspectedTableState.Ready;
         }
-        catch (DbException error) { return Refusal(error) == DatabaseRefusal.Denied ? InspectedTableState.NoAccess : InspectedTableState.Missing; }
+        catch (DbException error) when (Refusal(error) != DatabaseRefusal.None) { return Refusal(error) == DatabaseRefusal.Denied ? InspectedTableState.NoAccess : InspectedTableState.Missing; }
     }
 
     /// <summary>Whether the account may write to the table; null when the database cannot say without trying.</summary>

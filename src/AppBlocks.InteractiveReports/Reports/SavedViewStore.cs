@@ -13,9 +13,11 @@ namespace AppBlocks.InteractiveReports.Reports;
 /// the engine asks the store for a report's default view before showing any report, and fails the report when that
 /// throws. Here, while the table cannot be used, reads answer as an empty store, so a report opens on its own definition,
 /// and the definition store hides saving. Whether the table can be used is asked afresh until it can, so a grant or a
-/// script takes effect on the next request, and the reason is logged once, with what to do.
+/// script takes effect on the next request, and the reason is logged once, with what to do. A report block's saved views
+/// answer the same way to an anonymous visitor: they belong to accounts, and such a visitor has none.
 /// </summary>
-public sealed class SavedViewStore(ISavedReportStore inner, ConnectionCatalog catalog, IReportConnectionFactory connections, ILogger<SavedViewStore> logger) : ISavedReportStore
+public sealed class SavedViewStore(ISavedReportStore inner, ConnectionCatalog catalog, IReportConnectionFactory connections, ILogger<SavedViewStore> logger,
+    IHttpContextAccessor? http = null) : ISavedReportStore
 {
     private readonly ConcurrentDictionary<(string Connection, string Table), bool> usable = new();
     private string? reported;
@@ -35,13 +37,14 @@ public sealed class SavedViewStore(ISavedReportStore inner, ConnectionCatalog ca
         catch (InvalidOperationException error) { Report(error, "saved-report storage is not configured properly."); return false; }
         var target = (config.ConnectionName, config.TableName);
         if (usable.ContainsKey(target)) return true;
-        DatabaseInspection inspection;
+        DatabaseInspection? inspection = null;
         try { inspection = await InspectAsync(catalog, connections, config, [config.TableName], ct); }
-        catch (Exception error) when (error is InvalidOperationException or ArgumentException) { Report(error, $"the connection {config.ConnectionName} cannot be opened."); return false; }
-        if (!inspection.Reachable) { Report(null, $"the connection {config.ConnectionName} cannot be opened."); return false; }
-        var state = inspection.StateOf(config.TableName);
+        // A declared dialect over a connection type only the store knows how to drive: the store has to find out by using it.
+        catch (Exception) when (!ct.IsCancellationRequested) { }
+        if (inspection is { Reachable: false }) { Report(null, $"the connection {config.ConnectionName} cannot be opened."); return false; }
+        var state = inspection?.StateOf(config.TableName) ?? InspectedTableState.Missing;
         if (state == InspectedTableState.NoAccess) { Report(null, $"this account may not read and write {config.TableName} on connection {config.ConnectionName}."); return false; }
-        if (state == InspectedTableState.Missing && (!config.AutoCreate || inspection.CanCreateTables == false))
+        if (state == InspectedTableState.Missing && inspection is not null && (!config.AutoCreate || inspection.CanCreateTables == false))
         {
             Report(null, $"the table {config.TableName} is missing on connection {config.ConnectionName}, and this account {(config.AutoCreate ? "may not create it" : "is not set to create it")}.");
             return false;
@@ -56,7 +59,6 @@ public sealed class SavedViewStore(ISavedReportStore inner, ConnectionCatalog ca
             return false;
         }
         usable[target] = true;
-        if (Interlocked.Exchange(ref reported, null) is not null) logger.LogInformation("Saved report views work again on connection {Connection}.", config.ConnectionName);
         return true;
     }
 
@@ -87,7 +89,13 @@ public sealed class SavedViewStore(ISavedReportStore inner, ConnectionCatalog ca
     private async Task<T> ReadAsync<T>(Func<Task<T>> read, T nothing, CancellationToken ct)
     {
         if (!await ReadyAsync(ct)) return nothing;
-        try { return await read(); }
+        try
+        {
+            var result = await read();
+            // Only a read that worked says they are back: a table can be there and still not be the one the store needs.
+            if (Interlocked.Exchange(ref reported, null) is not null) logger.LogInformation("Saved report views work again.");
+            return result;
+        }
         catch (Exception error) when (!ct.IsCancellationRequested)
         {
             // It worked before and has stopped, so the next request looks again.
@@ -97,10 +105,20 @@ public sealed class SavedViewStore(ISavedReportStore inner, ConnectionCatalog ca
         }
     }
 
-    public Task<SavedReport?> Get(long id, CancellationToken ct = default) => ReadAsync(() => inner.Get(id, ct), null, ct);
+    /// <summary>Whether this request is someone with no account asking about a report block. Work outside a request, such as a synchronization at startup, is not.</summary>
+    private bool HiddenFrom(string reportName) => http?.HttpContext is { } context && context.User.Identity?.IsAuthenticated != true
+        && AppBlocks.Blocks.AppBlockContent.ParseReportName(reportName, out _, out _);
+
+    public async Task<SavedReport?> Get(long id, CancellationToken ct = default)
+    {
+        var report = await ReadAsync(() => inner.Get(id, ct), null, ct);
+        return report is not null && HiddenFrom(report.ReportName) ? null : report;
+    }
     public Task<SavedReport?> FindConfiguredFile(string reportName, string sourceFile, CancellationToken ct = default) => inner.FindConfiguredFile(reportName, sourceFile, ct);
-    public Task<IReadOnlyList<SavedReport>> ListFamily(string reportName, CancellationToken ct = default) => ReadAsync(() => inner.ListFamily(reportName, ct), [], ct);
-    public Task<SavedReport?> FindDefault(string reportName, CancellationToken ct = default) => ReadAsync(() => inner.FindDefault(reportName, ct), null, ct);
+    public Task<IReadOnlyList<SavedReport>> ListFamily(string reportName, CancellationToken ct = default)
+        => HiddenFrom(reportName) ? Task.FromResult<IReadOnlyList<SavedReport>>([]) : ReadAsync(() => inner.ListFamily(reportName, ct), [], ct);
+    public Task<SavedReport?> FindDefault(string reportName, CancellationToken ct = default)
+        => HiddenFrom(reportName) ? Task.FromResult<SavedReport?>(null) : ReadAsync(() => inner.FindDefault(reportName, ct), null, ct);
     public Task<SavedReport?> FindTitleCollision(string reportName, string title, string? owner, bool isPublic, long? exceptId = null, CancellationToken ct = default)
         => ReadAsync(() => inner.FindTitleCollision(reportName, title, owner, isPublic, exceptId, ct), null, ct);
     public Task<IReadOnlyList<SavedReport>> ListAll(CancellationToken ct = default) => ReadAsync(() => inner.ListAll(ct), [], ct);

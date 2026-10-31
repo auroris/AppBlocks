@@ -43,8 +43,20 @@ public sealed class ApplicationAccessPolicy(IUserService users)
         return null;
     }
 
+    /// <summary>Whether the request carries a valid backoffice ticket at all, whatever the account's current standing.</summary>
+    public async Task<bool> HasBackOfficeTicketAsync(HttpContext context)
+    {
+        foreach (var scheme in new[] { Constants.Security.BackOfficeExposedAuthenticationType, Constants.Security.BackOfficeAuthenticationType })
+        {
+            var result = await context.AuthenticateAsync(scheme);
+            if (result.Succeeded && result.Principal is { Identity.IsAuthenticated: true } principal && IsBackOfficeIdentity(principal)) return true;
+        }
+        return false;
+    }
+
     // Member and backoffice IDs belong to separate account stores. Keep their browser state and
-    // submission receipts separate, preserving existing member keys.
+    // submission receipts separate, preserving existing member keys. An anonymous visitor has no
+    // account and so no key: this is empty for them, which must never be used as anyone's identity.
     public static string UserKey(ClaimsPrincipal user) =>
         (IsBackOfficeIdentity(user) ? "backoffice:" : "") + user.FindFirstValue(ClaimTypes.NameIdentifier);
 }

@@ -43,6 +43,14 @@ The built-in `AppBlocksDb` connection is the default for application data and sa
 
 To store saved views elsewhere, set `InteractiveReport:SavedReports:Connection` to a registered connection, or `InteractiveReport:SavedReports:DataSource` to a configured connection-string name. These explicit settings take precedence over `AppBlocksDb`. To override the shared default database itself, configure `ConnectionStrings:AppBlocksDb` and `ConnectionStrings:AppBlocksDb_ProviderName`. See the [base guide](../../README.md#connections) for file locations and separate upload storage.
 
+## Database setup
+
+Saved views use `IR_SAVED_REPORTS` on the connection above. The saved report administration page at `/api/reports/admin` also reads `IR_ADMINISTRATORS`, although AppBlocks decides who is an administrator itself, so nothing a reader does needs that table. Where the account may, the report store creates them on first use, including on Oracle 11.2 a sequence and a trigger behind the key.
+
+Where it may not, **Settings → AppBlocks → Database setup** shows both remedies for that database type: the permission to grant, or a script to run. The script comes from the report stores' own statements, and it works for an account with no DDL rights at all. It needs read and write on the tables, which it grants on SQL Server and PostgreSQL. On PostgreSQL and Oracle an account with no DDL rights is refused the store's DDL even when the objects already exist, so the store then checks that it can read the table and carries on. Setting `InteractiveReport:SavedReports:AutoCreate` to `false` stops it trying at all. Either remedy takes effect on the next request, with no restart. The [base guide](../../README.md#database-setup) has the permissions for each database type.
+
+Until then, reports do not depend on it. They load, query and export on their own starting view, saving is out of their features, so the **Report** actions and the saved-view selector are absent, and readers see no error. The reason is logged once, with what to do, and a backoffice administrator also sees a line on the block linking to the setup screen. The administration page itself keeps reporting failures, for administrators alone, because it exists to manage those rows. A site that replaces `ISavedReportStore` with its own answers for that store's storage, and the screen says so.
+
 For an additional business connection:
 
 ```csharp

@@ -36,7 +36,7 @@ public sealed class DataSourceReportBindings(DataSourceRuntime runtime, IDataSou
     {
         var plan = runtime.Plan(source).Plan ?? throw new DataSourceException("The report's data source is not available.");
         var principal = http.HttpContext?.User ?? new ClaimsPrincipal();
-        var user = await users.ResolveAsync(principal, ct) ?? new DataSourceUser("", null, null, null, [], false);
+        var user = await users.ResolveAsync(principal, ct) ?? DataSourceUser.Anonymous;
         var query = DataSourceReportParameters.From(http.HttpContext);
         var parameters = new SqlParameters(plan.Dialect);
         var now = runtime.Now();
@@ -95,9 +95,12 @@ public sealed class DataSourceReportAccess(PublishedReportCatalog catalog, DataS
         if (source is null) return RowRestriction.NotApplicable;
         AppBlockContent.ParseReportName(request.ReportName, out var page, out var block);
         var parameters = DataSourceReportParameters.From(http.HttpContext);
+        var context = new FormExecutionContext(request.User, page, block, source.ComputeFingerprint(), Parameters: parameters);
         try
         {
-            await queries.AuthorizeAsync(source, new FormExecutionContext(request.User, page, block, source.ComputeFingerprint(), Parameters: parameters), ct);
+            // The report-level gate only lets someone with no account this far for a block on an open page.
+            if (request.User.Identity?.IsAuthenticated != true && AppBlockContent.ParseReportName(request.ReportName, out _, out _)) await queries.AuthorizeAnonymousAsync(source, context, ct);
+            else await queries.AuthorizeAsync(source, context, ct);
             return RowRestriction.Unrestricted;
         }
         catch (UnauthorizedAccessException) { return RowRestriction.Deny; }

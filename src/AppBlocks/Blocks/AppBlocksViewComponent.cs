@@ -7,13 +7,21 @@ using AppBlocks.Forms;
 
 namespace AppBlocks.Blocks;
 
-/// <param name="Variables">The signed-in person, the time and the query string, which field defaults resolve against.</param>
+/// <param name="MemberId">The signed-in person's key; null for anyone not signed in, admitted or not.</param>
+/// <param name="Variables">The signed-in person, the time and the query string, which field defaults resolve against. Null when page access refused the request; an admitted anonymous visitor has variables with no person in them.</param>
 public sealed record AppBlocksPage(IPublishedContent Page, string? MemberId, AppBindVariables? Variables = null, BlockGridModel? Blocks = null);
 
 /// <param name="HeadingLevel">The level a titled block inside this one uses, so region titles follow the page's outline.</param>
 /// <param name="Variables">What field defaults resolve against; see <see cref="AppBlocksPage"/>.</param>
 public sealed record AppBlockView(IPublishedContent Page, BlockGridItem Block, FormDefinition? Form = null, string? MemberId = null, int HeadingLevel = 2,
-    AppBindVariables? Variables = null);
+    AppBindVariables? Variables = null)
+{
+    /// <summary>The page's access admitted this request: someone signed in, or an anonymous visitor to an open page.</summary>
+    public bool Admitted => MemberId is not null || Variables is not null;
+
+    /// <summary>Admitted with no account, so the block's class or engine decides what they get.</summary>
+    public bool Anonymous => MemberId is null && Variables is not null;
+}
 
 /// <summary>
 /// Blocks placed on one grid: the page itself or one area of a block. <paramref name="Columns"/> is the
@@ -28,18 +36,24 @@ public sealed class AppBlocksViewComponent(AppPageAccess access, AppBindVariable
 {
     public async Task<IViewComponentResult> InvokeAsync(IPublishedContent page)
     {
-        if (await access.UserAsync(page.Key) is not { } member) {
+        if (await access.VisitorAsync(page.Key) is not { } visitor) {
             HttpContext.Response.StatusCode = 403;
             return Content("Sign in with an Umbraco Member or backoffice User account permitted to use this page.");
         }
         HttpContext.Response.Headers.CacheControl = "no-store";
-        HttpContext.User = member;
+        HttpContext.User = visitor;
         // All asynchronously loaded blocks must receive tokens for the same browser cookie.
         antiforgery.GetAndStoreTokens(HttpContext);
         // Field defaults are resolved here, once, from the person page access admitted, so every block sees the same values.
-        return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, ApplicationAccessPolicy.UserKey(member),
-            await variables.ResolveAsync(member, HttpContext.Request.Query)));
+        return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, AppBlockVisitor.Key(visitor),
+            await variables.ResolveAsync(visitor, HttpContext.Request.Query)));
     }
+}
+
+internal static class AppBlockVisitor
+{
+    /// <summary>The key blocks know a signed-in person by; null for an anonymous visitor, who has none.</summary>
+    public static string? Key(System.Security.Claims.ClaimsPrincipal visitor) => visitor.Identity?.IsAuthenticated == true ? ApplicationAccessPolicy.UserKey(visitor) : null;
 }
 
 /// <summary>Ordinary page content is public unless Umbraco routing restricts the page through Public Access.</summary>
@@ -55,11 +69,11 @@ public sealed class WebsiteBlocksViewComponent(AppPageAccess access, AppBindVari
 
         // Both the sign-in notice and the admitted person's defaults depend on this request, not just the content revision.
         HttpContext.Response.Headers.CacheControl = "no-store";
-        var member = await access.UserAsync(page);
-        if (member is null) return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, null));
-        HttpContext.User = member;
+        var visitor = await access.VisitorAsync(page);
+        if (visitor is null) return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, null));
+        HttpContext.User = visitor;
         antiforgery.GetAndStoreTokens(HttpContext);
-        return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, ApplicationAccessPolicy.UserKey(member),
-            await variables.ResolveAsync(member, HttpContext.Request.Query)));
+        return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, AppBlockVisitor.Key(visitor),
+            await variables.ResolveAsync(visitor, HttpContext.Request.Query)));
     }
 }

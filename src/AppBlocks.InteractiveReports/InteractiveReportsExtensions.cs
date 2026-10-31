@@ -64,7 +64,7 @@ public static class InteractiveReportsExtensions
         // Reports must not depend on their saved views: while the store's table cannot be used, reads answer as an empty store.
         var savedStore = services.Last(d => d.ServiceType == typeof(ISavedReportStore));
         services.AddSingleton(sp => new SavedViewStore((ISavedReportStore)Create(sp, savedStore), sp.GetRequiredService<ConnectionCatalog>(),
-            sp.GetRequiredService<IReportConnectionFactory>(), sp.GetRequiredService<ILogger<SavedViewStore>>()));
+            sp.GetRequiredService<IReportConnectionFactory>(), sp.GetRequiredService<ILogger<SavedViewStore>>(), sp.GetService<IHttpContextAccessor>()));
         services.Replace(ServiceDescriptor.Singleton<ISavedReportStore>(sp => sp.GetRequiredService<SavedViewStore>()));
         services.AddSingleton<IDatabaseSetupFeature, SavedViewsDatabaseSetup>();
         // Connections only the report builder has, such as ReportsDb, remain available to forms without making the base depend on reporting.

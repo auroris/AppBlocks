@@ -51,6 +51,19 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
         return user;
     }
 
+    /// <summary>
+    /// The check a public report block's request makes for a visitor with no account. Read groups can name no one here, and
+    /// every policy is still asked, with <see cref="DataSourceUser.Anonymous"/>. A source that binds anything about the
+    /// caller cannot be read at all: <c>:USER_KEY</c> has no value to give it, and SQL such as <c>:USER_NAME IS NULL</c> would otherwise read as everyone's rows.
+    /// </summary>
+    internal async Task AuthorizeAnonymousAsync(DataSourceDefinition definition, FormExecutionContext context, CancellationToken ct)
+    {
+        if (definition.ReadGroups.Count > 0 || runtime.Plan(definition).Plan is not { BindsUser: false }) throw new UnauthorizedAccessException();
+        foreach (var policy in policies)
+            if (!await policy.IsAllowedAsync(new DataSourceRequest(definition.Alias, DataSourceAction.Query, DataSourceUser.Anonymous, context, null, null, null, null), ct))
+                throw new UnauthorizedAccessException();
+    }
+
     public static bool CanRead(DataSourceDefinition definition, DataSourceUser user) => definition.ReadGroups.Count == 0
         || definition.ReadGroups.Concat(definition.WriteGroups).Any(user.IsInMemberGroup);
 

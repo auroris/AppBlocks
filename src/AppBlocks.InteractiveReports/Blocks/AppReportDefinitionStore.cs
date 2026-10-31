@@ -9,6 +9,7 @@ using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Extensions;
 using AppBlocks.InteractiveReports.DataSources;
 using AppBlocks.Blocks;
+using AppBlocks.DataSources;
 
 namespace AppBlocks.InteractiveReports.Blocks;
 
@@ -20,9 +21,20 @@ public sealed class AppReportDefinitionStore(
     ReportDefinitionCompiler compiler,
     PublishedReportCatalog catalog, DataSourceReportBindings bindings, ConnectionCatalog? managed = null,
     AppBlocks.DocumentOutput.IAppDocumentLinks? documents = null,
-    ReportSourcePreviews? previews = null, IHttpContextAccessor? http = null, SavedViewStore? savedViews = null)
+    ReportSourcePreviews? previews = null, IHttpContextAccessor? http = null, SavedViewStore? savedViews = null, AppPageAccess? pages = null)
     : IReportDefinitionStore, IReportDefinitionAuthorizationStore
 {
+    private bool CallerIsAnonymous => http?.HttpContext?.User.Identity?.IsAuthenticated != true;
+
+    /// <summary>
+    /// A block's report-level gate. It keeps its page's Public Access for anyone signed in. An anonymous visitor passes only on
+    /// a page with none, and only when reading the source binds nothing about the caller; otherwise the engine asks them to sign in.
+    /// </summary>
+    private ReportAuthorization BlockAuthorization(IPublishedContent page, DataSourceDefinition source)
+        => CallerIsAnonymous && pages?.IsOpen(page) == true && !catalog.RequiresSignedInReader(source)
+            ? new ReportAuthorization { AllowAnonymous = true }
+            : new ReportAuthorization { Policy = AppPagePolicyProvider.Name(page.Key, null) };
+
     public async ValueTask<ReportDefinitionAuthorization?> FindAuthorization(string name, CancellationToken ct = default)
     {
         if (name.StartsWith(ReportSourcePreviews.Prefix, StringComparison.Ordinal))
@@ -38,16 +50,21 @@ public sealed class AppReportDefinitionStore(
         }
         if (content.Report(name) is not { } instance) return null;
         if (instance.Block.Content.Value<string>("dataSource", culture: instance.Culture) is { Length: > 0 } selection)
-            return catalog.ResolveBlockSource(instance.Block.Content.Key, selection, new List<string>()) is null
-                ? null : new(name, new ReportAuthorization { Policy = AppPagePolicyProvider.Name(instance.Page.Key, null) });
+            return catalog.ResolveBlockSource(instance.Block.Content.Key, selection, new List<string>()) is { } source
+                ? new(name, BlockAuthorization(instance.Page, source)) : null;
         return null;
     }
 
-    /// <summary>A report's definition, without saving among its features while the saved-view table cannot be used. The engine's own administration listing keeps its answer.</summary>
+    /// <summary>
+    /// A report's definition, without saving among its features while the saved-view table cannot be used, or for an anonymous
+    /// visitor to a block, whose saved views would have no owner. The engine's own administration listing keeps its answer.
+    /// </summary>
     public async ValueTask<ReportDefinition?> Find(string name, CancellationToken ct = default)
     {
         var definition = await FindDefinition(name, ct);
-        if (definition is not null && savedViews is not null && !name.StartsWith("__", StringComparison.Ordinal) && !await savedViews.ReadyAsync(ct))
+        if (definition is null) return null;
+        if (CallerIsAnonymous && AppBlockContent.ParseReportName(name, out _, out _)
+            || savedViews is not null && !name.StartsWith("__", StringComparison.Ordinal) && !await savedViews.ReadyAsync(ct))
             definition.Features = ReportFeatures.Resolve(definition).Where(feature => feature != ReportFeatures.SavedReports).ToList();
         return definition;
     }
@@ -78,7 +95,7 @@ public sealed class AppReportDefinitionStore(
         var result = Copy(authored.Definition);
         await bindings.BindAsync(result, authored.DataSource, ct);
         result.SourceName = name;
-        result.Authorization = new ReportAuthorization { Policy = AppPagePolicyProvider.Name(instance.Page.Key, null) };
+        result.Authorization = BlockAuthorization(instance.Page, authored.DataSource);
         if (block.Value<string>("heading") is { Length: > 0 } title) result.Title = title;
         if (block.Value<string>("initialState") is { Length: > 0 } state) result.DefaultState = JsonSerializer.Deserialize<ReportState>(state, IrJson.Options);
         if (block.Value<int?>("pageSize") is > 0 and var size) {
@@ -93,7 +110,8 @@ public sealed class AppReportDefinitionStore(
             result.EditLink = new ReportEditLink { UrlTemplate = url + "?" + Uri.EscapeDataString(parameter) + "={" + column + "}", Label = block.Value<string>("editLabel") };
             result.CreateLink = new ReportCreateLink { Url = url, Label = block.Value<string>("createLabel") };
         }
-        if (documents is not null && block.Value<IPublishedContent>("paperReport") is not null && block.Value<string>("keyColumn") is { Length: > 0 } printKey)
+        // A paper report always renders for a person, so it is no action to offer someone anonymous.
+        if (documents is not null && !CallerIsAnonymous && block.Value<IPublishedContent>("paperReport") is not null && block.Value<string>("keyColumn") is { Length: > 0 } printKey)
             AppBlocks.InteractiveReports.InteractiveReportPrintLinks.AddPrintAction(result, printKey);
         return compiler.CompileManaged(name, result, managed);
     }

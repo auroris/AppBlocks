@@ -227,6 +227,11 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
         {
             throw new AttachmentStoreException($"The attachments connection {name} is not registered. Register it through AddAppBlocks, or leave Attachments:Connection empty to use AppBlocksDb.", error, AttachmentStoreProblem.NotRegistered);
         }
+        catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            // A connection string the provider refuses to parse, or a folder for its file that cannot be made.
+            throw new AttachmentStoreException($"The attachments connection {name} cannot be used: {error.Message}", error, AttachmentStoreProblem.Unavailable);
+        }
         try
         {
             // Nothing is created on a database type the tables have no script for, and it need not be reachable to say so.
