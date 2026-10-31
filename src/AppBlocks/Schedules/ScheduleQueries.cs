@@ -1,8 +1,8 @@
 using System.Security.Claims;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Forms;
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.Schedules;
+namespace AppBlocks.Schedules;
 
 /// <summary>A schedule's source resolved to the data source it reads: the alias an editor wrote and the definition to query.</summary>
 /// <param name="FromReport">True when the alias named a published report definition rather than the data source itself.</param>

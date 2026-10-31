@@ -1,7 +1,7 @@
 using System;
 using Microsoft.AspNetCore.Http;
 
-namespace UmbracoAppHost.Website
+namespace AppBlocks.Publishing
 {
     /// <summary>
     /// Accumulates page freshness metadata during rendering and applies consistent HTTP cache

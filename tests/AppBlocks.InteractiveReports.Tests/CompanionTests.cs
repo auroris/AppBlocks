@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Xml.Linq;
+using AppBlocks.InteractiveReports.Connections;
 using AppBlocks.Connections;
 using AppBlocks.Setup;
 using InteractiveReport.AspNetCore;
@@ -17,9 +18,9 @@ using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core.Composing;
 using Umbraco.Cms.Core.DependencyInjection;
 using Umbraco.Cms.Core.Security;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.Attachments;
-using UmbracoAppHost.DataSources;
+using AppBlocks.Blocks;
+using AppBlocks.Attachments;
+using AppBlocks.DataSources;
 
 namespace AppBlocks.InteractiveReports.Tests;
 
@@ -81,6 +82,11 @@ public sealed class CompanionTests
         Assert.Equal(AppBlockSchema.Key("appReport"), Guid.Parse(report.Attribute("Key")!.Value));
         Assert.Contains(report.Descendants("GenericProperty"), p => p.Element("Alias")!.Value == "dataSource");
         Assert.DoesNotContain(report.Descendants("GenericProperty"), p => p.Element("Alias")!.Value is "reportName" or "sql");
+        // InteractiveReportBlock, AppReportDefinitionStore and the block's view read it; Print itself needs the Documents companion.
+        var paperReport = Assert.Single(report.Descendants("GenericProperty"), p => p.Element("Alias")!.Value == "paperReport");
+        Assert.Equal("19d44ea0-2fc1-9c96-2309-48b710df73a7", paperReport.Element("Key")!.Value);
+        Assert.Equal("ae149b4b-f7e2-c6be-9ea4-58e0c3574f6b", paperReport.Element("Definition")!.Value);
+        Assert.True(files.GetFileInfo("Schema/ContentTypes/reportdefinition.config").Exists);
         Assert.True(files.GetFileInfo("Views/Partials/blockgrid/Components/appReport.cshtml").Exists);
         Assert.True(files.GetFileInfo("Views/Partials/blocklist/Components/appReport.cshtml").Exists);
         Assert.True(files.GetFileInfo("Views/Partials/ApplicationBlocks/InteractiveReport.cshtml").Exists);
@@ -120,12 +126,13 @@ public sealed class CompanionTests
         builder.AddAppBlocksInteractiveReports(reports => reports.AddConnection("Legacy", _ => new SqliteConnection("Data Source=:memory:")));
         var count = services.Count;
         builder.AddAppBlocksInteractiveReports();
-        builder.AddAppBlocks(connections => connections.AddConnection("After", _ => new SqliteConnection("Data Source=:memory:")));
+        builder.AddAppBlocks(connections => connections.AddConnection("After", _ => new SqliteConnection("Data Source=:memory:"))
+            .AddConnection("Declared", _ => new SqliteConnection("Data Source=:memory:"), DatabaseDialect.Oracle11g));
         Assert.Equal(count, services.Count);
         Assert.Equal(2, services.Count(d => d.ServiceType == typeof(AppBlocksSchema)));
         Assert.Single(services, d => d.ServiceType == typeof(IAppBlockPlugin));
         // This storage fixture has no running Umbraco host or virtual-path URL rewriting.
-        services.Remove(services.Single(d => d.ImplementationType == typeof(UmbracoAppHost.Reports.ReportLinksUnderVirtualPath)));
+        services.Remove(services.Single(d => d.ImplementationType == typeof(AppBlocks.InteractiveReports.Reports.ReportLinksUnderVirtualPath)));
         using var provider = services.BuildServiceProvider();
         var compiler = provider.GetRequiredService<ReportDefinitionCompiler>();
         var application = provider.GetRequiredService<IApplicationConnectionFactory>();
@@ -136,6 +143,13 @@ public sealed class CompanionTests
             Assert.Equal(ReportDialect.Sqlite, compiler.Compile(name, new ReportDefinition { Connection = name, Sql = "SELECT 1 AS id" }).Dialect);
         }
         Assert.NotNull(provider.GetRequiredService<DataSourceRuntime>());
+        // Registered before or after the companion, a connection is in the one list and its dialect reaches the engine.
+        var listed = provider.GetRequiredService<ConnectionCatalog>().List();
+        foreach (var name in new[] { "Before", "After" }) Assert.Equal(new ConnectionInfo(name, name, "sqlite", false, true), Assert.Single(listed, c => c.Name == name));
+        Assert.Equal("oracle11g", Assert.Single(listed, c => c.Name == "Declared").Provider);
+        Assert.Equal(ReportDialect.Oracle11g, compiler.Compile("Declared", new ReportDefinition { Connection = "Declared", Sql = "SELECT 1 AS id" }).Dialect);
+        // A connection only the report builder has stays out of it: forms can open it, as above, but the screens do not offer it.
+        Assert.DoesNotContain(listed, c => c.Name == "Legacy");
 
         // Hold the CMS write lock throughout application writes: separate files must not compete for it.
         await using var cms = application.CreateConnection("UmbracoDb");

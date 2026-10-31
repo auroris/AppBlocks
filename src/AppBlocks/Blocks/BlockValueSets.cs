@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Umbraco.Cms.Core.Services;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.Blocks;
 
 /// <summary>Finds native block values, including block properties inside a site's own element types.</summary>
 internal static class BlockValueSets

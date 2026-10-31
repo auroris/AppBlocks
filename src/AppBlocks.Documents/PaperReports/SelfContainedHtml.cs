@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using Microsoft.AspNetCore.StaticFiles;
 
-namespace UmbracoAppHost.PaperReports;
+namespace AppBlocks.Documents.PaperReports;
 
 /// <summary>
 /// Packages a rendered report's stylesheets, images, fonts and scripts into one portable HTML file. Packaging is best

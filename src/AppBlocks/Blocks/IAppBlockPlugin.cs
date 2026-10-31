@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.Blocks;
 
 /// <summary>An optional block supplied by a companion package.</summary>
 public interface IAppBlockPlugin

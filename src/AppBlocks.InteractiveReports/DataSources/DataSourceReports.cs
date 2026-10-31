@@ -5,10 +5,11 @@ using InteractiveReport.Core.Execution;
 using InteractiveReport.Core.Model;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Primitives;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.Forms;
+using AppBlocks.Blocks;
+using AppBlocks.Forms;
+using AppBlocks.DataSources;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.InteractiveReports.DataSources;
 
 internal static class DataSourceReportParameters
 {

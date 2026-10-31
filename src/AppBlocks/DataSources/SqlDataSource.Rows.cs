@@ -4,9 +4,9 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using UmbracoAppHost.Forms;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 /// <summary>The rows that belong to one parent record: those whose <paramref name="Field"/> holds the parent's key, given as text.</summary>
 public sealed record DataSourceScope(string Field, string Value);

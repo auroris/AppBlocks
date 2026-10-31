@@ -5,9 +5,10 @@ using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Cms.Core.Services.Navigation;
 using Umbraco.Cms.Core.Web;
-using UmbracoAppHost.Reports;
+using AppBlocks.InteractiveReports.Reports;
+using AppBlocks.DataSources;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.InteractiveReports.DataSources;
 
 public sealed record PublishedReport(Guid Key, string Alias, ReportDefinition Definition, DataSourceDefinition? DataSource);
 
@@ -40,16 +41,7 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
     public DataSourceDefinition? SourceForReport(string name) => ReportNodes.GetValueOrDefault(name)?.DataSource;
 
     public DataSourceDefinition? ResolveBlockSource(Guid key, string selection, ICollection<string> errors) =>
-        ReportBlockSource.Read(key, selection, IsConnection, errors);
-
-    /// <summary>A connection from Settings → AppBlocks → Connections, or one the site registered in code.</summary>
-    private bool IsConnection(string name)
-    {
-        if (name.Length == 0) return false;
-        if (managed?.List().Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) == true) return true;
-        try { compiler.Compile(name, new ReportDefinition { Connection = name, Sql = "SELECT 1" }); return true; }
-        catch (Exception error) when (error is InvalidOperationException or ArgumentException) { return false; }
-    }
+        ReportBlockSource.Read(key, selection, name => managed?.List().Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) == true, errors);
 
     /// <summary>Builds a report from a block-owned table or SQL query.</summary>
     public PublishedReport? ReadBlockReport(Guid key, Func<string, object?> value, ICollection<string> errors)
@@ -125,7 +117,7 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
         if (errors.Count != start) return null;
         var virtualPath = configuration["Umbraco:CMS:Hosting:ApplicationVirtualPath"]?.Trim('/') ?? "";
         ReportLinksUnderVirtualPath.Apply(report, virtualPath.Length == 0 ? "" : "/" + virtualPath);
-        try { AppBlocks.Connections.ManagedReportCompiler.CompileManaged(compiler, alias, report, managed); }
+        try { AppBlocks.InteractiveReports.Connections.ManagedReportCompiler.CompileManaged(compiler, alias, report, managed); }
         catch (Exception error) when (error is InvalidOperationException or ArgumentException) { errors.Add(error.Message); }
         return errors.Count == start ? new(key, alias, report, source) : null;
 

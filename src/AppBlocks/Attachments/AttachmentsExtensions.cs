@@ -1,8 +1,8 @@
 using AppBlocks.Connections;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using UmbracoAppHost.Blocks;
+using AppBlocks.Blocks;
 
-namespace UmbracoAppHost.Attachments;
+namespace AppBlocks.Attachments;
 
 public static class AttachmentsExtensions
 {

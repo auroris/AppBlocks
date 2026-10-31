@@ -2,10 +2,10 @@ using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Antiforgery;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Forms;
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.Tabular;
+namespace AppBlocks.Tabular;
 
 /// <summary>One change the runtime sends: <c>create</c>, <c>update</c> or <c>delete</c>, the row's key and version for the latter two, and the values.</summary>
 public sealed record TabularChange(string Operation, string? Key, string? Version, JsonElement? Values);

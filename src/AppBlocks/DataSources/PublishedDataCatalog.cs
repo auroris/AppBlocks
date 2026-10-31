@@ -2,7 +2,7 @@ using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Cms.Core.Services.Navigation;
 using Umbraco.Cms.Core.Web;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 public sealed record ListOfValuesDefinition(Guid Key, string Alias, string Name, DataSourceDefinition DataSource,
     string DisplayColumn, string ValueColumn, int MaximumRows = 1000);

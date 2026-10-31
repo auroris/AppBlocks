@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
 
-namespace UmbracoAppHost.Attachments;
+namespace AppBlocks.Attachments;
 
 /// <summary>
 /// <c>/api/attachments/{page}/{block}</c>: the files of the record an Attachments block shows. Every call resolves the

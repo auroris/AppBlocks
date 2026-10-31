@@ -4,14 +4,14 @@ using Umbraco.Cms.Core.Events;
 using Umbraco.Cms.Core.Notifications;
 using Umbraco.Cms.Core.Services;
 using Umbraco.Extensions;
-using UmbracoAppHost.Attachments;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Forms;
-using UmbracoAppHost.PaperReports;
-using UmbracoAppHost.Schedules;
-using UmbracoAppHost.Tabular;
+using AppBlocks.Attachments;
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
+using AppBlocks.DocumentOutput;
+using AppBlocks.Schedules;
+using AppBlocks.Tabular;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.Blocks;
 
 /// <summary>
 /// Validates authored structure without executing a report or invoking a form operation. A form bound to a data

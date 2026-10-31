@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Pressroom.Client;
 using Pressroom.Contracts;
+using AppBlocks.DocumentOutput;
 
 namespace AppBlocks.Documents;
 

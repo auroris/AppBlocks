@@ -3,9 +3,9 @@ using System.Security.Claims;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Identity;
 using Umbraco.Cms.Core.Services;
-using UmbracoAppHost.Authentication;
+using AppBlocks.Authentication;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.Blocks;
 
 /// <summary>
 /// The values a field block's default can name, fixed when the page renders: who is signed in, the time, and the

@@ -1,13 +1,12 @@
 using System.Security.Claims;
-using AppBlocks;
 using InteractiveReport.AspNetCore;
 using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core.Services;
-using UmbracoAppHost.Authentication;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
+using AppBlocks.Authentication;
+using AppBlocks.Blocks;
+using AppBlocks.InteractiveReports.DataSources;
 
-namespace UmbracoAppHost.Reports;
+namespace AppBlocks.InteractiveReports.Reports;
 
 /// <summary>Uses native backoffice groups; member identities never acquire administrator access by matching email.</summary>
 public sealed class DefaultReportAccessPolicy(IUserService users, IOptions<AppBlocksOptions> settings,

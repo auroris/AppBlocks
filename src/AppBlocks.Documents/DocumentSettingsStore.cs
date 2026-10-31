@@ -29,7 +29,7 @@ public sealed class DocumentSettingsStore(IConfiguration configuration, IWebHost
     private readonly IDataProtector protector = protection.CreateProtector("AppBlocks.Documents.Settings.v1");
     private readonly SemaphoreSlim gate = new(1, 1);
     internal static readonly Guid LegacyId = new("3d49f9bd-ec0d-4397-9017-689245984630");
-    private string FilePath => Path.Combine(configuration["AppBlocks:DataRoot"] ?? configuration["UmbracoAppHost:DataRoot"]
+    private string FilePath => Path.Combine(configuration["AppBlocks:DataRoot"]
         ?? environment.ContentRootPath, "App_Data", "AppBlocks", "documents.json");
 
     public PressroomConfigurationList List() => new(ReadConfigurations().Where(c => !string.IsNullOrWhiteSpace(c.Url)).Select(Info).ToArray(), File.Exists(FilePath));

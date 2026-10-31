@@ -1,9 +1,9 @@
 @using Umbraco.Extensions
 @using Umbraco.Cms.Core.Models.PublishedContent
 @using Umbraco.Cms.Core.Strings
-@using UmbracoAppHost.Blocks
-@using UmbracoAppHost.Forms
-@using UmbracoAppHost.DataSources
+@using AppBlocks.Blocks
+@using AppBlocks.Forms
+@using AppBlocks.DataSources
 @model AppBlockView
 @inject FormResourceRegistry Resources
 @inject AppPageAssets Assets
@@ -19,7 +19,7 @@
     string? Text(string property) => block.Value<string>(property) is { } value && !string.IsNullOrWhiteSpace(value) ? value : null;
     var heading = Text("heading");
     var paperReport = block.Value<IPublishedContent>("paperReport");
-    var printUrl = paperReport is null ? null : Context.RequestServices.GetService<AppBlocks.Documents.IAppDocumentLinks>()?.Url(paperReport.Key, Context.Request.PathBase);
+    var printUrl = paperReport is null ? null : Context.RequestServices.GetService<AppBlocks.DocumentOutput.IAppDocumentLinks>()?.Url(paperReport.Key, Context.Request.PathBase);
     var culture = VariationContext.VariationContext?.Culture;
     var apiQuery = culture is not null && Model.Page.Cultures.ContainsKey(culture) ? "?" + AppBlockContent.CultureParameter + "=" + Uri.EscapeDataString(culture) : "";
 }

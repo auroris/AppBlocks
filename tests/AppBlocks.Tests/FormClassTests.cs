@@ -1,6 +1,6 @@
 using System.Text.Json;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.Forms;
+using AppBlocks.Blocks;
+using AppBlocks.Forms;
 
 namespace AppBlocks.Tests;
 

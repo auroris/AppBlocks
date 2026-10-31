@@ -1,6 +1,6 @@
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Development.local.json", optional: true);
-builder.Services.AddScoped<UmbracoAppHost.Forms.IFormResource, DemoTasks>();
+builder.Services.AddScoped<AppBlocks.Forms.IFormResource, DemoTasks>();
 builder.CreateUmbracoBuilder().AddBackOffice().AddWebsite().AddComposers()
     .AddNotificationAsyncHandler<Umbraco.Cms.Core.Notifications.UmbracoApplicationStartedNotification, DemoSeed>().Build();
 await using var app = builder.Build();

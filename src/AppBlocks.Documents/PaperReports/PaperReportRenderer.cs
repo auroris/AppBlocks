@@ -8,12 +8,11 @@ using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Pressroom.Contracts;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Cms.Core.Services;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Forms;
-using AppBlocks.Documents;
+using AppBlocks.Blocks;
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.PaperReports;
+namespace AppBlocks.Documents.PaperReports;
 
 public sealed record PaperReportDocument(string Html, string FileName, RenderOptions Options);
 

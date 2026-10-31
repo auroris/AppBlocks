@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Data.Common;
 using AppBlocks.Connections;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 /// <summary>
 /// What every data source shares: the application connections and dialects, the plan cache, the create

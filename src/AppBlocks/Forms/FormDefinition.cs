@@ -3,10 +3,10 @@ using System.Text.Json;
 using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Extensions;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
+using AppBlocks.Blocks;
+using AppBlocks.DataSources;
 
-namespace UmbracoAppHost.Forms;
+namespace AppBlocks.Forms;
 
 public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block, IPublishedElement Interface,
     IFormResource Resource, IReadOnlyList<BlockGridItem> Fields)

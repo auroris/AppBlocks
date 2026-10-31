@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AppBlocks.Databases;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
@@ -15,17 +17,24 @@ public sealed record SaveConnection(string Name, string Provider, string? Connec
 internal sealed record StoredConnection(string Name, string Provider, string ProtectedValue, string Revision);
 internal sealed record ConnectionMaterial(string Provider, string Value, string Revision, bool LocalDefault = false);
 
-/// <summary>Credentials belong to the installation, never to content or a schema export.</summary>
-public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvironment environment, IDataProtectionProvider protection)
+/// <summary>
+/// Credentials belong to the installation, never to content or a schema export. A connection registered in code has
+/// no material here: <see cref="Find"/> does not know it, and <see cref="List"/> and <see cref="Openable"/> go to its factory.
+/// </summary>
+public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvironment environment, IDataProtectionProvider protection,
+    AppBlocksBuilder? registered = null, IServiceProvider? services = null)
 {
     public const string UmbracoConnection = "UmbracoDb";
     public const string ApplicationConnection = "AppBlocksDb";
     public const string ApplicationDatabaseFile = "AppBlocks.sqlite.db";
     public const string AttachmentsConnection = "AttachmentsDb";
     public const string AttachmentsDatabaseFile = "Attachments.sqlite.db";
+    /// <summary>The provider of a registered connection that neither declares a dialect nor can be recognized without opening it.</summary>
+    public const string UnknownProvider = "unknown";
+    private readonly ConcurrentDictionary<string, string> detectedProviders = new(StringComparer.OrdinalIgnoreCase);
     private readonly IDataProtector protector = protection.CreateProtector("AppBlocks.Connections.v1");
     private readonly SemaphoreSlim gate = new(1, 1);
-    private string FilePath => Path.Combine(configuration["AppBlocks:DataRoot"] ?? configuration["UmbracoAppHost:DataRoot"]
+    private string FilePath => Path.Combine(configuration["AppBlocks:DataRoot"]
         ?? environment.ContentRootPath, "App_Data", "AppBlocks", "connections.json");
 
     public IReadOnlyList<ConnectionInfo> List()
@@ -44,6 +53,9 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
             result.TryAdd(item.Key, new(item.Key, item.Key, Provider(configuration[$"ConnectionStrings:{item.Key}_ProviderName"] ?? "sqlServer"), false, true));
         }
         foreach (var item in Read()) result.TryAdd(item.Name, new(item.Name, item.Name, item.Provider, false, false));
+        // After the saved connections, because a saved connection is what a name shared with a registration opens.
+        foreach (var name in registered?.ConnectionNames ?? [])
+            if (!result.ContainsKey(name)) result[name] = new(name, name, RegisteredProvider(name), false, true);
         return result.Values.OrderByDescending(c => c.IsDefault).ThenBy(c => c.Label).ToArray();
     }
 
@@ -70,8 +82,32 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
 
     internal string Revision(string name) => Find(name) is { } material ? Revision(material) : "";
     internal static string Revision(ConnectionMaterial material) => material.Provider + ":" + material.Revision;
-    public DbConnection Openable(string name) => Find(name) is { } material ? Create(material)
+    /// <summary>A connection for use, so opening an application database ensures its schema. <see cref="TestAsync"/> alone leaves that out.</summary>
+    public DbConnection Openable(string name) => Find(name) is { } material ? ForUse(name, material)
+        : registered?.Connections.ContainsKey(name) == true ? registered.CreateRegistered(name, services!)
         : throw new ArgumentException("Choose an available connection.", nameof(name));
+
+    internal DbConnection ForUse(string name, ConnectionMaterial material)
+        => registered is null ? Create(material) : registered.Create(name, () => Create(material), services!);
+
+    internal bool IsApplicationDatabase(string name) => registered?.Schemas.ContainsKey(name) == true;
+
+    /// <summary>What a registration's own factory makes, without the schema of an application database.</summary>
+    private DbConnection? Registered(string name) => registered?.Connections.TryGetValue(name, out var factory) == true ? factory(services!) : null;
+
+    /// <summary>The declared dialect, or else what an unopened connection's type says, as <see cref="ApplicationConnections"/> decides a dialect.</summary>
+    private string RegisteredProvider(string name)
+    {
+        if (registered!.Dialects.TryGetValue(name, out var declared)) return Provider(declared.ToString());
+        if (detectedProviders.TryGetValue(name, out var known)) return known;
+        try
+        {
+            using var connection = Registered(name)!;
+            return detectedProviders[name] = Provider(ApplicationDatabase.Dialect(connection));
+        }
+        // One registration that cannot be built or recognized must not take the list with it; opening it says why.
+        catch (Exception) { return UnknownProvider; }
+    }
 
     public async Task SaveAsync(SaveConnection request, CancellationToken ct)
     {
@@ -108,14 +144,16 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
         finally { gate.Release(); }
     }
 
+    /// <summary>Says whether a database can be reached and changes nothing in it, so an application database's schema is not ensured here.</summary>
     public async Task TestAsync(SaveConnection request, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(10));
         var material = string.IsNullOrWhiteSpace(request.ConnectionString)
-            ? Find(request.Name) ?? throw new ArgumentException("Choose an available connection.")
+            ? Find(request.Name)
             : new ConnectionMaterial(Provider(request.Provider), Expand(request.ConnectionString), "");
-        await using var connection = Create(material.Provider, material.Value);
+        await using var connection = material is not null ? Create(material.Provider, material.Value)
+            : Registered(request.Name) ?? throw new ArgumentException("Choose an available connection.");
         // Testing a SQLite path must not create a new database as a side effect.
         if (connection is SqliteConnection sqlite)
         {

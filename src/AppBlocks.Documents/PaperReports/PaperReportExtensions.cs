@@ -6,12 +6,11 @@ using Umbraco.Cms.Core.Events;
 using Umbraco.Cms.Core.Notifications;
 using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Core.Web;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
+using AppBlocks.Blocks;
+using AppBlocks.DataSources;
 using Microsoft.AspNetCore.Mvc.ViewEngines;
-using AppBlocks.Documents;
 
-namespace UmbracoAppHost.PaperReports;
+namespace AppBlocks.Documents.PaperReports;
 
 public static class PaperReportExtensions
 {

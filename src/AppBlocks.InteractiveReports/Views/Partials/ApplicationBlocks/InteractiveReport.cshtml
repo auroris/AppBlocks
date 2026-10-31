@@ -1,4 +1,4 @@
-@using UmbracoAppHost.Blocks
+@using AppBlocks.Blocks
 @model AppBlockView
 @inject IVariationContextAccessor VariationContext
 @{
@@ -9,7 +9,7 @@
     string? Text(string property) => block.Value<string>(property) is { } value && !string.IsNullOrWhiteSpace(value) ? value : null;
     var heading = Text("heading");
     var paperReport = block.Value<IPublishedContent>("paperReport");
-    var printUrl = paperReport is null ? null : Context.RequestServices.GetService<AppBlocks.Documents.IAppDocumentLinks>()?.Url(paperReport.Key, Context.Request.PathBase);
+    var printUrl = paperReport is null ? null : Context.RequestServices.GetService<AppBlocks.DocumentOutput.IAppDocumentLinks>()?.Url(paperReport.Key, Context.Request.PathBase);
     var culture = VariationContext.VariationContext?.Culture;
     var apiQuery = culture is not null && Model.Page.Cultures.ContainsKey(culture) ? "?" + AppBlockContent.CultureParameter + "=" + Uri.EscapeDataString(culture) : "";
 }

@@ -3,12 +3,13 @@ using System.Text.Json;
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Core.Execution;
 using InteractiveReport.Core.Model;
+using AppBlocks.Connections;
 
-namespace AppBlocks.Connections;
+namespace AppBlocks.InteractiveReports.Connections;
 
 internal sealed class ManagedConnectionFactory(IReportConnectionFactory inner, ConnectionCatalog catalog) : IReportConnectionFactory
 {
-    public DbConnection CreateConnection(string name) => catalog.Find(name) is { } item ? ConnectionCatalog.Create(item) : inner.CreateConnection(name);
+    public DbConnection CreateConnection(string name) => catalog.Find(name) is { } item ? catalog.ForUse(name, item) : inner.CreateConnection(name);
     public void SetDetectedDialect(string name, ReportDialect dialect) => inner.SetDetectedDialect(name, dialect);
 }
 
@@ -30,6 +31,8 @@ internal static class ManagedReportCompiler
         // Definitions returned to clients never include the material used to resolve that identifier.
         compiled.DataSource = null;
         compiled.Provider = null;
+        // The engine opens what this name resolves to, and only the managed factory knows an application database's schema.
+        if (catalog.IsApplicationDatabase(definition.Connection!)) compiled.Connection = definition.Connection!;
         return compiled;
     }
 }

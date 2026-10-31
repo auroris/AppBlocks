@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Authentication;
 using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Services;
 
-namespace UmbracoAppHost.Authentication;
+namespace AppBlocks.Authentication;
 
 /// <summary>Allows current backoffice Administrators to use the application without a member account.</summary>
 public sealed class ApplicationAccessPolicy(IUserService users)

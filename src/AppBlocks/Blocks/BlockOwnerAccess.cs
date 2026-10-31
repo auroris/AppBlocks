@@ -3,11 +3,11 @@ using System.Security.Claims;
 using System.Text.Json;
 using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Cms.Core.Models.PublishedContent;
-using UmbracoAppHost.Authentication;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Forms;
+using AppBlocks.Authentication;
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.Blocks;
 
 /// <summary>
 /// One request's standing with a block that follows a record, such as Attachments or a tabular form: who is calling,

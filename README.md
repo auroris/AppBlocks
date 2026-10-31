@@ -8,9 +8,9 @@ This is an unpublished alpha targeting Umbraco **18.3** and **.NET 10**. The rep
 
 ## Add it to a site
 
-Install the locally built `AppBlocks` package, or reference `src/AppBlocks/AppBlocks.csproj` during development. Its Umbraco composer registers services, management screens and routes automatically. AppBlocks installs its embedded element and data type definitions directly through Umbraco's services on startup, preserving existing site definitions and their stable keys. Installation needs no synchronization package or import configuration. Missing definitions and their folders are installed in one transaction, so a failed installation can be retried on the next startup. Install `AppBlocks.InteractiveReports` when the site needs interactive reports; NuGet brings in AppBlocks as its required dependency. Its composer adds report services and routes, and its schema migration preserves legacy report bindings. See the [companion guide](src/AppBlocks.InteractiveReports/README.md).
+Install the locally built `AppBlocks` package, or reference `src/AppBlocks/AppBlocks.csproj` during development. Its Umbraco composer registers services, management screens and routes automatically. AppBlocks installs its embedded element and data type definitions directly through Umbraco's services on startup, preserving existing site definitions and their stable keys. Installation needs no synchronization package or import configuration. Missing definitions and their folders are installed in one transaction, so a failed installation can be retried on the next startup. A site whose types came from an earlier schema also gets the properties added since, in the same transaction; their other settings stay as the site has them. Data types and document/element types are grouped under **AppBlocks** in their respective backoffice trees, with subfolders for Forms, Data sources and Interactive Reports. Existing package definitions in the tree root or their old Application folders move into these folders on startup. Built-in and site-created definitions, and package definitions placed in custom folders, stay where they are. Install `AppBlocks.InteractiveReports` when the site needs interactive reports; NuGet brings in AppBlocks as its required dependency. Its composer adds report services and routes, and its schema migration preserves legacy report bindings. See the [companion guide](src/AppBlocks.InteractiveReports/README.md).
 
-1. In **Settings → Data Types**, add **Forms container** (and **Interactive Report** when its companion is installed) to the allowed blocks of your existing Block Grid or Block List.
+1. In **Settings → Data Types**, add **Forms container** (and **Interactive Report** when its companion is installed) to the allowed blocks of your existing Block Grid or Block List. **HTML**, **CSS** and **JavaScript** are installed too, and offered nowhere until a site adds them to a grid of its own, because they run whatever an editor writes.
 2. Configure application data sources in **Settings → AppBlocks → Connections** and create your application tables. **AppBlocks database** is available as `AppBlocksDb` by default.
 3. Register a C# class implementing `IFormResource` with dependency injection (`AddScoped<IFormResource, YourFormClass>()`). Add a **Forms container** to any page, add a Form, and select the **Form class** in Form Interface. Field pickers use that class's fields; the class owns persistence, validation and authorization.
 4. With `AppBlocks.InteractiveReports` installed, add an **Interactive Report** and choose **Table** or **SQL query**. Tables are listed as `DataSourceName.TableName` (including the schema where applicable). For SQL, select a configured data source and enter a SELECT query. Configure the starting view to save columns, sorting, filters, paging and presentation on that block. No data-source content nodes or report definition in `appsettings.json` are needed.
@@ -29,7 +29,7 @@ The native blocks include their required assets and inherit ordinary site typogr
 
 Use this separate database for application work. SQLite permits only one writer per database, so keeping form submissions and uploads out of Umbraco's file avoids competing with CMS saves. `UmbracoDb` remains available for sources that specifically read CMS data. AppBlocks opens its own connections; it does not share Umbraco's scope or transaction.
 
-If Umbraco has no file-backed SQLite database, the default file is under `App_Data` in `AppBlocks:DataRoot`, `UmbracoAppHost:DataRoot`, or the site's content root, in that order. A configured `ConnectionStrings:AppBlocksDb` and `ConnectionStrings:AppBlocksDb_ProviderName` override the default file and provider. Back up the application database as well as Umbraco's database, using a SQLite-aware backup when the application is running.
+If Umbraco has no file-backed SQLite database, the default file is under `App_Data` in `AppBlocks:DataRoot`, or the site's content root when that is not set. A configured `ConnectionStrings:AppBlocksDb` and `ConnectionStrings:AppBlocksDb_ProviderName` override the default file and provider. Back up the application database as well as Umbraco's database, using a SQLite-aware backup when the application is running.
 
 Uploads can use their own store by setting:
 
@@ -49,7 +49,9 @@ Administrators can add, edit and test extra SQL Server, SQLite, PostgreSQL, **Or
 
 Connection strings entered here are protected with ASP.NET Core Data Protection and stored in `App_Data/AppBlocks/connections.json`; they are never stored in blocks, returned by the listing API or included in content exports. Keep that file and the site's Data Protection keys together when backing up or moving an installation. Multiple application instances need a shared, durable file/key store; concurrent administration across multiple instances is not yet coordinated.
 
-Named connections already supplied by the site configuration are read-only in this screen. Register shared business connections with `AddAppBlocks(connections => connections.AddConnection(...))`. The companion also supports legacy Interactive Reports registrations through `AddAppBlocksInteractiveReports`.
+Register a site's business connections with `AddAppBlocks(connections => connections.AddConnection(...))`, or `AddApplicationDatabase` for a database with its own schema. Connections registered this way and those supplied by the site configuration are read-only in this screen, and forms, data sources and the report source picker offer them like any other. A registered connection has no connection string to show: its database type is the dialect passed to `AddConnection`, or else what its unopened connection's type says, and `unknown` for a custom connection type that declares no dialect. A saved connection of the same name keeps precedence and stays editable.
+
+Connections added directly to Interactive Reports' builder through the companion's `AddAppBlocksInteractiveReports` are outside this list. Configured reports, report definition nodes and forms can still open one by name, but this screen does not show it and a report block refuses it.
 
 **Oracle 11.2** and **Oracle 12+** are Oracle SQL compatibility modes shared with Interactive Reports. The choice controls the SQL generated for the connection. Both modes use the bundled `Oracle.ManagedDataAccess.Core` driver. For configured connections, set `ConnectionStrings:<name>_ProviderName` to `oracle11g` for Oracle 11.2 mode or `oracle` for Oracle 12+ mode; existing `Oracle.ManagedDataAccess.Client` and `Oracle.ManagedDataAccess.Core` provider names still work. Code registrations can pass `DatabaseDialect.Oracle11g` or `DatabaseDialect.Oracle` to `AddConnection`. Oracle 12+ mode also detects pre-12 server versions on first use and switches to Oracle 11.2 mode, as Interactive Reports does.
 
@@ -76,6 +78,7 @@ dotnet run --project samples/AppBlocks.Demo --urls http://localhost:5079
 dotnet pack src/AppBlocks -c Release -o artifacts/packages
 dotnet pack src/AppBlocks.InteractiveReports -c Release -o artifacts/packages
 dotnet pack src/AppBlocks.Documents -c Release -o artifacts/packages
+pwsh -NoProfile -File tests/clean-install/Invoke-CleanInstall.ps1
 ```
 
 The demo references the reports companion, which brings in AppBlocks. The optional demo seed is website code, outside the package. Enable `AppBlocksDemo:SeedContent` in the demo's ignored `appsettings.Development.local.json` on a local SQLite installation to create a sample table and an ordinary article with a Block List and a Block Grid. Its own template uses both native rendering helpers. The companion's HTTP acceptance test can verify that running demo:
@@ -87,6 +90,8 @@ dotnet run --project tests/AppBlocks.InteractiveReports.Tests -- -noLogo
 
 The seed and HTTP test are intended only for this disposable local demo. The local settings file is excluded from publishing. The test uses the unattended demo account from that file.
 
+The [clean-install acceptance test](tests/clean-install/README.md) builds actual NuGet packages, installs them into fresh official Umbraco sites without uSync or other CMS plugins, and verifies installation, browser editing, data operations and restart behavior. Each run uses empty databases and its own package cache.
+
 ## Documents companion
 
 Install `AppBlocks.Documents` for template-based HTML/PDF documents. It depends on AppBlocks and
@@ -95,8 +100,40 @@ works without Interactive Reports. Administrators configure the optional Pressro
 service failures fall back to HTML and are logged through Umbraco. Document actions open a new
 window/tab. See [Documents configuration, authoring and integration](src/AppBlocks.Documents/README.md).
 
+## Who owns the definitions
+
+The `Schema/` folders of AppBlocks and its companions are the only source of their element and data types, the data source types and the report definition type. Change them there. A site installs a new definition at its next start, and a property added to an existing type needs a line in a migration (`SchemaProperties.AddMissingAsync`, as `DataSourceSchemaMigration` and `ReportBlockMigration` do), because the installer otherwise leaves existing types alone.
+
+A site that imports definitions with a synchronization tool should call `SchemaInstaller.EnsureAsync`, which is resolvable from dependency injection and safe to run repeatedly, before its import starts: the installer's own startup notification can come after the import. UmbracoAppHost does that for uSync, and refuses to import copies of these definitions except the two it widens on purpose, listed in its `AppBlocksDefinitions.HostOwned`.
+
 ## Extraction compatibility
 
-UmbracoAppHost consumes AppBlocks and the optional companions it needs. Its SSO, site shells and sample content remain in AppHost. Existing content keys, routes, editor aliases and `UmbracoAppHost.*` C# namespaces are retained where needed for migration; new package APIs use `AppBlocks.*`. Legacy configured reports and report-definition content continue to run, while new reports are configured directly on blocks.
+UmbracoAppHost consumes AppBlocks and the optional companions it needs. Its SSO, site shells and sample content remain in AppHost. Existing content keys, routes, element and editor aliases (including the `AppHost.*` editor UI aliases in stored definitions), configuration keys and table names are retained so a site's data keeps working. `AppBlockSchema.Key` still hashes the `UmbracoAppHost.Blocks.v1:` seed, because every stored key derives from it. Legacy configured reports and report-definition content continue to run, while new reports are configured directly on blocks.
 
 AppBlocks includes forms, attachments, tabular editing and the schedule runtime. Interactive reports live in `AppBlocks.InteractiveReports`, which depends on AppBlocks. Existing callbacks typed as `Action<InteractiveReportBuilder>` move from `AddAppBlocks` to `AddAppBlocksInteractiveReports`; report definitions move from `PublishedDataCatalog` to the companion's `PublishedReportCatalog`. Public publishing, broader provider acceptance testing and API stabilization remain release work.
+
+### Namespaces
+
+Every C# namespace in this repository is `AppBlocks.*`, and no namespace spans two assemblies. Code written against the extracted packages under the old names changes as follows. A name in the third column moved separately from the rest of its old namespace.
+
+| Old namespace | New namespace | Moved separately |
+| --- | --- | --- |
+| `UmbracoAppHost.Attachments` | `AppBlocks.Attachments` | |
+| `UmbracoAppHost.Authentication` (`AdministratorPublicAccessChecker`, `ApplicationAccessPolicy`) | `AppBlocks.Authentication` | AppHost's own types stay in `UmbracoAppHost.Authentication` |
+| `UmbracoAppHost.Blocks` | `AppBlocks.Blocks` | `AppReportDefinitionStore`, `ConfiguredReportStore`: `AppBlocks.InteractiveReports.Blocks` |
+| `UmbracoAppHost.Databases` | `AppBlocks.Databases` | `ReportApplicationDatabases` is gone: register with `AppBlocksBuilder.AddApplicationDatabase` |
+| `UmbracoAppHost.DataSources` | `AppBlocks.DataSources` | `PublishedReport`, `PublishedReportCatalog`, `PublishedReportValidator`, `DataSourceReportAccess`, `DataSourceReportBindings`, `DataSourceContextParameters`, `OriginalContextParameters`: `AppBlocks.InteractiveReports.DataSources` |
+| `UmbracoAppHost.Forms` | `AppBlocks.Forms` | |
+| `UmbracoAppHost.PaperReports` | `AppBlocks.Documents.PaperReports` | `PaperReportLinks`: `AppBlocks.DocumentOutput` |
+| `UmbracoAppHost.Reports` | `AppBlocks.InteractiveReports.Reports` | AppHost's own `ReportAccessPolicy` stays in `UmbracoAppHost.Reports` |
+| `UmbracoAppHost.Schedules` | `AppBlocks.Schedules` | |
+| `UmbracoAppHost.Tabular` | `AppBlocks.Tabular` | |
+| `UmbracoAppHost.Website` (`PageUpdateExtensions`, `PageCacheResponseFilter`, `ProtectedPageCacheHeaders`) | `AppBlocks.Publishing` | AppHost's own types, such as `SiteMenu`, stay in `UmbracoAppHost.Website` |
+| `AppBlocks.Documents`, base assembly (`IAppDocumentLinks`, `IDocumentOutputService`, `DocumentRequest` and the other output types) | `AppBlocks.DocumentOutput` | The `AppBlocks.Documents` assembly's own types stay in `AppBlocks.Documents` |
+| `AppBlocks`, companion assembly (`AppBlocksOptions`) | `AppBlocks.InteractiveReports` | The base assembly's `AppBlocksExtensions` stays in `AppBlocks` |
+
+Also when updating a host of UmbracoAppHost:
+
+- Razor views compile at run time there, so a build does not catch an old name. A start does not rewrite a host's `Views/_ViewImports.cshtml`. Change its `@inject UmbracoAppHost.Blocks.AppPageAssets PageAssets` to `@inject AppBlocks.Blocks.AppPageAssets PageAssets` and add `@using AppBlocks.Authentication` and `@using AppBlocks.Publishing`. Check every view of its own too, paper report views especially: `@using UmbracoAppHost.PaperReports` becomes `@using AppBlocks.Documents.PaperReports`.
+- Connections go through `AppBlocksBuilder`. `IUmbracoAppHost.ConfigureReports` is now `ConfigureConnections(WebApplicationBuilder, AppBlocksBuilder)`, the callback of `AddUmbracoAppHost` takes an `AppBlocksBuilder`, and `TestSiteOptions.ConfigureReports` is `ConfigureConnections`. A `reports.AddApplicationDatabase(...)` call becomes `connections.AddApplicationDatabase(...)` with the same arguments. A host that also set other report options there moves them to a composer that calls `AddAppBlocksInteractiveReports`.
+- `UmbracoAppHost:DataRoot` no longer applies to AppBlocks. AppHost sets `AppBlocks:DataRoot` to the same folder, unless a host has configured `AppBlocks:DataRoot` itself. A test or tool that configures AppBlocks services directly sets `AppBlocks:DataRoot`.

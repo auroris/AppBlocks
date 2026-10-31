@@ -1,3 +1,5 @@
+using AppBlocks.DocumentOutput;
+
 namespace AppBlocks.Documents;
 
 public sealed record PressroomConfigurationInfo(Guid Id, string Name, string Url, bool HasApiKey, string Output, double TimeoutSeconds);

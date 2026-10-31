@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using UmbracoAppHost.Blocks;
+using AppBlocks.Blocks;
 
-namespace UmbracoAppHost.Tabular;
+namespace AppBlocks.Tabular;
 
 public static class TabularExtensions
 {

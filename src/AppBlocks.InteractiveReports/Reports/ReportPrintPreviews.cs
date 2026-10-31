@@ -1,4 +1,4 @@
-using AppBlocks.Documents;
+using AppBlocks.DocumentOutput;
 using Microsoft.Extensions.Caching.Memory;
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Core.Model;

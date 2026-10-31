@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Http;
 
-namespace AppBlocks.Documents;
+namespace AppBlocks.DocumentOutput;
 
 /// <summary>
 /// Optional document capability. Forms and companions resolve it with GetService; when it is absent,

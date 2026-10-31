@@ -1,9 +1,9 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Identity;
 using Umbraco.Cms.Core.Services;
-using UmbracoAppHost.Authentication;
+using AppBlocks.Authentication;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 /// <summary>
 /// The signed-in person as a data source sees them: the facts its bind variables expose and its group checks use.

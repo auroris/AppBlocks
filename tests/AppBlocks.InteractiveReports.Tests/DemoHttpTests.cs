@@ -5,7 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
-using UmbracoAppHost.Blocks;
+using AppBlocks.Blocks;
 
 namespace AppBlocks.InteractiveReports.Tests;
 

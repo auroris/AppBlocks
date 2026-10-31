@@ -1,5 +1,5 @@
 using Umbraco.Cms.Core.Services;
-using UmbracoAppHost.Blocks;
+using AppBlocks.Blocks;
 
 namespace AppBlocks.Setup;
 

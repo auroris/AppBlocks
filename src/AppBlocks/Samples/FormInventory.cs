@@ -1,8 +1,8 @@
 using System.Text.Json;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Services;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.Forms;
+using AppBlocks.Blocks;
+using AppBlocks.Forms;
 
 namespace AppBlocks.Samples;
 

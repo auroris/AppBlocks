@@ -28,7 +28,7 @@
     {
       "type": "propertyEditorUi", "alias": "AppBlocks.TablePicker", "name": "AppBlocks table",
       "element": "/App_Plugins/AppBlocks/table-picker.js",
-      "meta": { "label": "Database table", "icon": "icon-table", "group": "AppBlocks", "propertyEditorSchemaAlias": "Umbraco.TextBox" }
+      "meta": { "label": "Table or SELECT", "icon": "icon-table", "group": "AppBlocks", "propertyEditorSchemaAlias": "Umbraco.TextArea" }
     }
   ]
 }

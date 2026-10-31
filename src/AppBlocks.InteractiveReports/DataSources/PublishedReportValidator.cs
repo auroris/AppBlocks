@@ -1,7 +1,7 @@
 using Umbraco.Cms.Core.Events;
 using Umbraco.Cms.Core.Notifications;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.InteractiveReports.DataSources;
 
 public sealed class PublishedReportValidator(PublishedReportCatalog catalog) : INotificationHandler<ContentPublishingNotification>
 {

@@ -6,7 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
-using UmbracoAppHost.DataSources;
+using AppBlocks.DataSources;
 
 namespace AppBlocks.Tests;
 
@@ -160,6 +160,124 @@ public sealed class ConnectionRuntimeTests
         Assert.Equal(1L, await read.ExecuteScalarAsync());
         Assert.False(File.Exists(Path.Combine(root, "cms.db")));
         Assert.Throws<InvalidOperationException>(() => connections.CreateConnection("Missing"));
+    }
+
+    [Fact]
+    public async Task Code_registered_connections_are_listed_read_only_and_open_without_exposing_material()
+    {
+        var root = Directory.CreateTempSubdirectory("appblocks-registered-").FullName;
+        try
+        {
+            var config = new ConfigurationBuilder().Build();
+            var file = Path.Combine(root, "registered-file.db");
+            var created = 0;
+            var builder = new AppBlocksBuilder()
+                .AddConnection("Business", _ => { created++; return new SqliteConnection($"Data Source={file};Pooling=False"); })
+                // A declared dialect says what the factory would otherwise be asked for, and this one could not answer.
+                .AddConnection("Declared", _ => throw new InvalidOperationException("Not while listing."), DatabaseDialect.Oracle11g)
+                .AddConnection("Broken", _ => throw new InvalidOperationException(OracleConnectionString))
+                .AddConnection(ConnectionCatalog.ApplicationConnection, _ => throw new InvalidOperationException("The built-in entry comes first."));
+            using var services = new ServiceCollection().BuildServiceProvider();
+            var catalog = new ConnectionCatalog(config, new Environment(root), new EphemeralDataProtectionProvider(), builder, services);
+
+            var listed = catalog.List();
+            var business = Assert.Single(listed, c => c.Name == "Business");
+            Assert.Equal(new ConnectionInfo("Business", "Business", "sqlite", false, true), business);
+            Assert.Equal(new ConnectionInfo("Declared", "Declared", "oracle11g", false, true), Assert.Single(listed, c => c.Name == "Declared"));
+            // One that cannot be built is still listed, and takes neither the list nor its secret with it.
+            Assert.Equal(new ConnectionInfo("Broken", "Broken", ConnectionCatalog.UnknownProvider, false, true), Assert.Single(listed, c => c.Name == "Broken"));
+            Assert.Equal("AppBlocks database", Assert.Single(listed, c => c.Name == ConnectionCatalog.ApplicationConnection).Label);
+            var json = System.Text.Json.JsonSerializer.Serialize(listed);
+            Assert.DoesNotContain("registered-file", json);
+            Assert.DoesNotContain("oracle-test-secret", json);
+            Assert.Equal(1, created); // The type is looked at once, and nothing was opened.
+            catalog.List();
+            Assert.Equal(1, created);
+            Assert.False(File.Exists(file));
+
+            // There is no material to find, and the catalog does not make one up.
+            Assert.Null(catalog.Find("Business"));
+            Assert.Equal("", catalog.Revision("Business"));
+            await Assert.ThrowsAsync<ArgumentException>(() => catalog.SaveAsync(new("Business", "sqlite", "Data Source=:memory:"), default));
+
+            // A missing file stays missing when tested, as for any SQLite connection.
+            await Assert.ThrowsAsync<SqliteException>(() => catalog.TestAsync(new("Business", "sqlite", null), default));
+            Assert.False(File.Exists(file));
+            await using (var connection = catalog.Openable("business"))
+            {
+                await connection.OpenAsync();
+                using var command = connection.CreateCommand();
+                command.CommandText = "CREATE TABLE Tasks (id INTEGER PRIMARY KEY)";
+                await command.ExecuteNonQueryAsync();
+            }
+            await catalog.TestAsync(new("Business", "sqlite", null), default);
+            var tables = new ConnectionTables(catalog);
+            Assert.Equal("Tasks", Assert.Single(await tables.ListAsync("Business", default)).Name);
+
+            // A registration that cannot be built fails its own table list, which the settings endpoint answers with its fixed message.
+            await Assert.ThrowsAsync<InvalidOperationException>(() => tables.ListAsync("Broken", default));
+            Assert.Throws<ArgumentException>(() => catalog.Openable("Missing"));
+            await Assert.ThrowsAsync<ArgumentException>(() => catalog.TestAsync(new("Missing", "sqlite", null), default));
+            await Assert.ThrowsAsync<ArgumentException>(() => tables.ListAsync("Missing", default));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void A_registered_connection_is_listed_with_the_provider_its_type_says()
+    {
+        var builder = new AppBlocksBuilder()
+            .AddConnection("Server", _ => new Microsoft.Data.SqlClient.SqlConnection())
+            .AddConnection("Postgres", _ => new Npgsql.NpgsqlConnection())
+            .AddConnection("Oracle", _ => new Oracle.ManagedDataAccess.Client.OracleConnection())
+            // A wrapper's type says nothing, which is what declaring a dialect is for.
+            .AddConnection("Wrapped", _ => new Wrapper())
+            .AddConnection("Declared", _ => new Wrapper(), DatabaseDialect.Postgres);
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var listed = new ConnectionCatalog(new ConfigurationBuilder().Build(), new Environment(Path.GetTempPath()), new EphemeralDataProtectionProvider(), builder, services).List();
+        string Provider(string name) => Assert.Single(listed, c => c.Name == name).Provider;
+        Assert.Equal("sqlServer", Provider("Server"));
+        Assert.Equal("postgres", Provider("Postgres"));
+        Assert.Equal("oracle", Provider("Oracle"));
+        Assert.Equal(ConnectionCatalog.UnknownProvider, Provider("Wrapped"));
+        Assert.Equal("postgres", Provider("Declared"));
+    }
+
+    private sealed class Wrapper : System.Data.Common.DbConnection
+    {
+        [System.Diagnostics.CodeAnalysis.AllowNull]
+        public override string ConnectionString { get; set; } = "";
+        public override string Database => "";
+        public override string DataSource => "";
+        public override string ServerVersion => "";
+        public override System.Data.ConnectionState State => System.Data.ConnectionState.Closed;
+        public override void ChangeDatabase(string databaseName) => throw new NotSupportedException();
+        public override void Close() { }
+        public override void Open() => throw new NotSupportedException();
+        protected override System.Data.Common.DbTransaction BeginDbTransaction(System.Data.IsolationLevel isolationLevel) => throw new NotSupportedException();
+        protected override System.Data.Common.DbCommand CreateDbCommand() => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task A_saved_connection_keeps_its_name_when_a_registration_later_shares_it()
+    {
+        var root = Directory.CreateTempSubdirectory("appblocks-registered-").FullName;
+        try
+        {
+            var config = new ConfigurationBuilder().Build();
+            var protection = new EphemeralDataProtectionProvider();
+            await new ConnectionCatalog(config, new Environment(root), protection).SaveAsync(new("Business", "oracle", OracleConnectionString), default);
+            var builder = new AppBlocksBuilder().AddConnection("Business", _ => new SqliteConnection("Data Source=:memory:"));
+            using var services = new ServiceCollection().BuildServiceProvider();
+            var catalog = new ConnectionCatalog(config, new Environment(root), protection, builder, services);
+
+            // The list says what opening the name does, so the administrator can still edit what is in use.
+            Assert.Equal(new ConnectionInfo("Business", "Business", "oracle", false, false), Assert.Single(catalog.List(), c => c.Name == "Business"));
+            using var connection = catalog.Openable("Business");
+            Assert.IsType<Oracle.ManagedDataAccess.Client.OracleConnection>(connection);
+            await catalog.SaveAsync(new("Business", "oracle11g", null), default);
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     [Theory]

@@ -1,9 +1,9 @@
 using System.Globalization;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Extensions;
-using UmbracoAppHost.Forms;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.Tabular;
+namespace AppBlocks.Tabular;
 
 /// <summary>
 /// What an editor sets on a Tabular form block: the child data source and the field of it that holds the parent's

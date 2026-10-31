@@ -2,7 +2,8 @@ using AppBlocks.Setup;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Umbraco.Cms.Core.Composing;
 using Umbraco.Cms.Web.Common.ApplicationBuilder;
-using UmbracoAppHost.PaperReports;
+using AppBlocks.Documents.PaperReports;
+using AppBlocks.DocumentOutput;
 
 namespace AppBlocks.Documents;
 

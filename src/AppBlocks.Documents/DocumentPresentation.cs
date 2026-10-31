@@ -1,4 +1,5 @@
 using Umbraco.Cms.Core.Models.PublishedContent;
+using AppBlocks.DocumentOutput;
 
 namespace AppBlocks.Documents;
 

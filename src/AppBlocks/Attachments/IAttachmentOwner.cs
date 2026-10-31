@@ -1,6 +1,6 @@
-using UmbracoAppHost.Forms;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.Attachments;
+namespace AppBlocks.Attachments;
 
 /// <summary>
 /// A form resource that decides who may add, replace and remove the files of its records. Whoever may read a

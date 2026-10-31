@@ -3,7 +3,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace UmbracoAppHost.Forms;
+namespace AppBlocks.Forms;
 
 public sealed record FormChoice(string Value, string Label);
 public sealed record FormField(string Key, string Label, string Kind, bool Required = false,

@@ -1,4 +1,4 @@
-namespace AppBlocks.Documents;
+namespace AppBlocks.DocumentOutput;
 
 /// <summary>
 /// Optional server-side document gateway, registered by AppBlocks.Documents. Callers authorize access

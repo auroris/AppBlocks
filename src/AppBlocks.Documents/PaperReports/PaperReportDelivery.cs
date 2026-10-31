@@ -1,9 +1,8 @@
 using System.Globalization;
 using System.Net.Http.Headers;
-using AppBlocks.Documents;
 using Pressroom.Contracts;
 
-namespace UmbracoAppHost.PaperReports;
+namespace AppBlocks.Documents.PaperReports;
 
 /// <summary>HTTP adapter over the shared document gateway. GET requests only return files.</summary>
 public sealed class PaperReportDelivery(IConfiguration configuration, IHttpClientFactory clients, ILogger<PaperReportDelivery> logger,

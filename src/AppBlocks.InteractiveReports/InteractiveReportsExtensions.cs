@@ -1,3 +1,4 @@
+using AppBlocks.InteractiveReports.Connections;
 using AppBlocks.Connections;
 using AppBlocks.Setup;
 using AppBlocks.InteractiveReports.Reports;
@@ -10,9 +11,9 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Umbraco.Cms.Core.Composing;
 using Umbraco.Cms.Core.Notifications;
 using Umbraco.Cms.Web.Common.ApplicationBuilder;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Reports;
+using AppBlocks.InteractiveReports.Blocks;
+using AppBlocks.Blocks;
+using AppBlocks.InteractiveReports.DataSources;
 
 namespace AppBlocks.InteractiveReports;
 
@@ -42,6 +43,7 @@ public static class InteractiveReportsExtensions
         services.AddControllersWithViews().AddApplicationPart(typeof(InteractiveReportsExtensions).Assembly);
         services.AddSingleton(new AppBlocksSchema(typeof(InteractiveReportsExtensions).Assembly));
         services.AddScoped<IAppBlocksSchemaMigration, ReportBlockMigration>();
+        services.AddScoped<IAppBlocksSchemaMigration, ReportDefinitionChildMigration>();
         services.AddScoped<IAppBlockPlugin, InteractiveReportBlock>();
         services.AddScoped<IAppBlocksCatalogueContributor, ReportCatalogueContributor>();
         services.AddSingleton<ReportPrintPreviews>();
@@ -49,16 +51,7 @@ public static class InteractiveReportsExtensions
 
         builder.AddInteractiveReportsSite(builder.Config, reports =>
         {
-            var connections = (AppBlocksBuilder)services.Single(d => d.ServiceType == typeof(AppBlocksBuilder)).ImplementationInstance!;
-            void Register(string name)
-            {
-                if (connections.Dialects.TryGetValue(name, out var dialect))
-                    reports.AddConnection(name, connections.Connections[name], ReportConnectionBridge.ToReportDialect(dialect));
-                else reports.AddConnection(name, connections.Connections[name]);
-            }
-            foreach (var name in connections.ConnectionNames) Register(name);
-            // Hosts can add connections after composers have run.
-            connections.ConnectionAdded += Register;
+            reports.AddConnectionsFrom((AppBlocksBuilder)services.Single(d => d.ServiceType == typeof(AppBlocksBuilder)).ImplementationInstance!);
             configure?.Invoke(reports);
             services.AddSingleton(new Registration(reports));
         });
@@ -68,7 +61,7 @@ public static class InteractiveReportsExtensions
                 options.SavedReports.Connection = ConnectionCatalog.ApplicationConnection;
         });
         Decorate<IReportConnectionFactory>(services, (sp, inner) => new ManagedConnectionFactory(inner, sp.GetRequiredService<ConnectionCatalog>()));
-        // Legacy report registrations remain available to forms without making the base depend on reporting.
+        // Connections only the report builder has, such as ReportsDb, remain available to forms without making the base depend on reporting.
         Decorate<IApplicationConnectionFactory>(services, (sp, inner) => new ReportConnectionBridge(inner,
             sp.GetRequiredService<AppBlocksBuilder>(), sp.GetRequiredService<ConnectionCatalog>(),
             sp.GetRequiredService<IReportConnectionFactory>(), sp.GetRequiredService<ReportDefinitionCompiler>()));
@@ -76,7 +69,7 @@ public static class InteractiveReportsExtensions
         services.AddSingleton(sp => new ConfiguredReportStore((IReportDefinitionStore)Create(sp, configuredStore)));
         services.Replace(ServiceDescriptor.Scoped<IReportDefinitionStore, AppReportDefinitionStore>());
         services.AddScoped<PublishedReportCatalog>();
-        services.AddScoped<UmbracoAppHost.Schedules.IScheduleSourceProvider, ReportScheduleSources>();
+        services.AddScoped<AppBlocks.Schedules.IScheduleSourceProvider, ReportScheduleSources>();
         services.AddScoped<DataSourceReportBindings>();
         services.AddScoped<DataSourceReportAccess>();
         var original = services.Last(d => d.ServiceType == typeof(IContextParameterResolver));
@@ -90,6 +83,21 @@ public static class InteractiveReportsExtensions
             PostMapEndpoints = endpoints => endpoints.MapAppBlocksInteractiveReports(),
         }));
         return builder;
+    }
+
+    /// <summary>Gives the report engine a builder's connections, now and as they are added.</summary>
+    public static InteractiveReportBuilder AddConnectionsFrom(this InteractiveReportBuilder reports, AppBlocksBuilder connections)
+    {
+        void Register(string name)
+        {
+            if (connections.Dialects.TryGetValue(name, out var dialect))
+                reports.AddConnection(name, provider => connections.CreateRegistered(name, provider), ReportConnectionBridge.ToReportDialect(dialect));
+            else reports.AddConnection(name, provider => connections.CreateRegistered(name, provider));
+        }
+        foreach (var name in connections.ConnectionNames) Register(name);
+        // Hosts can add connections after composers have run.
+        connections.ConnectionAdded += Register;
+        return reports;
     }
 
     public static void MapAppBlocksInteractiveReports(this IEndpointRouteBuilder endpoints)

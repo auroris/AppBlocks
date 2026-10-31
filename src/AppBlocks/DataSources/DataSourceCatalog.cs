@@ -5,9 +5,9 @@ using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Core.Services.Navigation;
 using Umbraco.Cms.Core.Strings;
 using Umbraco.Cms.Core.Web;
-using UmbracoAppHost.Forms;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 /// <summary>
 /// The published data sources, beside the C# resources in <see cref="FormResourceRegistry"/>: every published

@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Text;
-using UmbracoAppHost.DataSources;
+using AppBlocks.DataSources;
 
-namespace UmbracoAppHost.Schedules;
+namespace AppBlocks.Schedules;
 
 /// <summary>One column of the table: a day or an hour.</summary>
 public sealed record ScheduleColumn(int Index, DateTime Start, bool IsWeekend, bool IsToday);

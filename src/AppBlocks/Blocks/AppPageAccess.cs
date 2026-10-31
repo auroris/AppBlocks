@@ -4,9 +4,9 @@ using Microsoft.AspNetCore.Identity;
 using System.Security.Claims;
 using Umbraco.Cms.Core.Security;
 using Umbraco.Cms.Core.Models.PublishedContent;
-using UmbracoAppHost.Authentication;
+using AppBlocks.Authentication;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.Blocks;
 
 public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker access, IHttpContextAccessor http,
     ApplicationAccessPolicy applicationAccess)

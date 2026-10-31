@@ -1,10 +1,7 @@
-using System.Net;
 using System.Xml.Linq;
-using Microsoft.Extensions.FileProviders;
 using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Events;
 using Umbraco.Cms.Core.Models;
-using Umbraco.Cms.Core.Models.Entities;
 using Umbraco.Cms.Core.Notifications;
 using Umbraco.Cms.Core.PropertyEditors;
 using Umbraco.Cms.Core.Scoping;
@@ -14,18 +11,24 @@ using Umbraco.Cms.Core.Strings;
 
 namespace AppBlocks.Setup;
 
-/// <summary>Adds missing package definitions. Existing site definitions are never replaced on startup.</summary>
+/// <summary>
+/// Adds missing package definitions, then runs the migrations, which add to an existing definition only what they name.
+/// Existing site definitions are never replaced on startup. Runs when the application has started, and a site that
+/// imports definitions from elsewhere first calls <see cref="EnsureAsync"/> itself, as UmbracoAppHost does for uSync.
+/// </summary>
 public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeService dataTypes,
     IContentTypeContainerService contentFolders, IDataTypeContainerService dataFolders,
     PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer, IShortStringHelper strings,
     ICoreScopeProvider scopes, ILogger<SchemaInstaller> logger, IEnumerable<AppBlocksSchema> schemas,
-    IEnumerable<IAppBlocksSchemaMigration> migrations)
+    IEnumerable<IAppBlocksSchemaMigration> migrations, SchemaProperties properties, IRuntimeState runtime)
     : INotificationAsyncHandler<UmbracoApplicationStartedNotification>
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
 
     public Task HandleAsync(UmbracoApplicationStartedNotification notification, CancellationToken cancellationToken)
-        => EnsureAsync(cancellationToken);
+        // The installation wizard starts the application before a database exists. Direct callers still decide
+        // when to call EnsureAsync themselves, including hosts installing definitions before a schema import.
+        => runtime.Level == RuntimeLevel.Run ? EnsureAsync(cancellationToken) : Task.CompletedTask;
 
     public async Task EnsureAsync(CancellationToken ct)
     {
@@ -44,11 +47,13 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
                 var editorAlias = Value(info, "EditorAlias");
                 var editor = editors.FirstOrDefault(e => e.Alias == editorAlias)
                     ?? throw new InvalidOperationException($"AppBlocks data type '{Value(info, "Name")}' requires missing editor '{editorAlias}'.");
-                var type = new DataType(editor, serializer, await FolderAsync(dataFolders, Value(info, "Folder")))
+                var type = new DataType(editor, serializer, (await SchemaFolders.EnsureAsync(dataFolders, Value(info, "Folder")))?.Id ?? -1)
                 {
                     Key = key,
                     Name = Value(info, "Name"),
                     EditorUiAlias = Value(info, "EditorUIAlias"),
+                    // Stored as the editor stores it, as a site's own data types are; the type's default is long text whatever the editor.
+                    DatabaseType = ValueTypes.ToStorageType(editor.GetValueEditor().ValueType),
                     ConfigurationData = editor.GetConfigurationEditor().FromDatabase(Value(definition, "Config"), serializer),
                 };
                 var result = await dataTypes.CreateAsync(type, Constants.Security.SuperUserKey);
@@ -99,16 +104,7 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
         finally { Gate.Release(); }
     }
 
-    private IEnumerable<XElement> Definitions(string kind)
-    {
-        foreach (var schema in schemas.DistinctBy(s => s.Assembly))
-        foreach (var file in new ManifestEmbeddedFileProvider(schema.Assembly).GetDirectoryContents("Schema/" + kind)
-            .Where(f => !f.IsDirectory).OrderBy(f => f.Name, StringComparer.Ordinal))
-        {
-            using var stream = file.CreateReadStream();
-            yield return XElement.Load(stream);
-        }
-    }
+    private IEnumerable<XElement> Definitions(string kind) => schemas.DistinctBy(s => s.Assembly).SelectMany(schema => schema.Definitions(kind));
 
     private async Task<IContentType> ContentTypeAsync(XElement definition)
     {
@@ -118,7 +114,7 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
         if (info.Element("Compositions")!.HasElements || info.Element("AllowedTemplates")!.HasElements
             || Value(info, "DefaultTemplate").Length > 0)
             throw new InvalidOperationException($"AppBlocks schema '{definition.Attribute("Alias")!.Value}' must not declare site templates or compositions.");
-        var type = new ContentType(strings, await FolderAsync(contentFolders, Value(info, "Folder")))
+        var type = new ContentType(strings, (await SchemaFolders.EnsureAsync(contentFolders, Value(info, "Folder")))?.Id ?? -1)
         {
             Key = Guid.Parse(definition.Attribute("Key")!.Value),
             Alias = definition.Attribute("Alias")!.Value,
@@ -140,60 +136,12 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
                 KeepLatestVersionPerDayForDays = OptionalInt(cleanup, "KeepLatestVersionPerDayForDays"),
             };
         foreach (var tab in definition.Element("Tabs")!.Elements("Tab"))
-            type.PropertyGroups.Add(new PropertyGroup(true)
-            {
-                Key = Guid.Parse(Value(tab, "Key")),
-                Name = Value(tab, "Caption"),
-                Alias = Value(tab, "Alias"),
-                Type = Enum.Parse<PropertyGroupType>(Value(tab, "Type")),
-                SortOrder = (int)tab.Element("SortOrder")!,
-            });
+            type.PropertyGroups.Add(SchemaProperties.Group(tab));
         foreach (var property in definition.Element("GenericProperties")!.Elements("GenericProperty"))
-        {
-            var dataTypeKey = Guid.Parse(Value(property, "Definition"));
-            var dataType = await dataTypes.GetAsync(dataTypeKey)
-                ?? throw new InvalidOperationException($"AppBlocks property '{type.Alias}.{Value(property, "Alias")}' requires missing data type '{dataTypeKey}'.");
-            var propertyType = new PropertyType(strings, dataType)
-            {
-                Key = Guid.Parse(Value(property, "Key")),
-                Alias = Value(property, "Alias"),
-                Name = Value(property, "Name"),
-                Description = Value(property, "Description"),
-                SortOrder = (int)property.Element("SortOrder")!,
-                Mandatory = (bool)property.Element("Mandatory")!,
-                MandatoryMessage = Value(property, "MandatoryMessage"),
-                ValidationRegExp = Value(property, "Validation"),
-                ValidationRegExpMessage = Value(property, "ValidationRegExpMessage"),
-                LabelOnTop = (bool)property.Element("LabelOnTop")!,
-                Variations = Enum.Parse<ContentVariation>(Value(property, "Variations")),
-            };
-            var group = (string?)property.Element("Tab")?.Attribute("Alias");
-            if (string.IsNullOrEmpty(group)) type.AddPropertyType(propertyType);
-            else type.AddPropertyType(propertyType, group);
-        }
+            SchemaProperties.Add(type, await properties.PropertyAsync(type.Alias, property), (string?)property.Element("Tab")?.Attribute("Alias"));
         return type;
     }
 
-    private static async Task<int> FolderAsync<T>(IEntityTypeContainerService<T> folders, string path) where T : ITreeEntity
-    {
-        EntityContainer? parent = null;
-        var level = 1;
-        foreach (var segment in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var name = WebUtility.UrlDecode(segment);
-            var folder = (await folders.GetAsync(name, level++)).FirstOrDefault(f => f.ParentId == (parent?.Id ?? -1));
-            if (folder is null)
-            {
-                var result = await folders.CreateAsync(null, name, parent?.Key, Constants.Security.SuperUserKey);
-                if (!result.Success || result.Result is null)
-                    throw new InvalidOperationException($"AppBlocks could not create schema folder '{path}': {result.Status}.");
-                folder = result.Result;
-            }
-            parent = folder;
-        }
-        return parent?.Id ?? -1;
-    }
-
-    private static string Value(XElement element, string name) => element.Element(name)?.Value.Trim() ?? "";
+    private static string Value(XElement element, string name) => SchemaProperties.Value(element, name);
     private static int? OptionalInt(XElement element, string name) => Value(element, name) is { Length: > 0 } value ? int.Parse(value) : null;
 }

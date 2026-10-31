@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AppBlocks.InteractiveReports.Connections;
 using AppBlocks.Connections;
 using AppBlocks.InteractiveReports.Reports;
 using InteractiveReport.AspNetCore;
@@ -6,10 +7,10 @@ using InteractiveReport.Core.Definitions;
 using InteractiveReport.Core.Model;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Extensions;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Reports;
+using AppBlocks.InteractiveReports.DataSources;
+using AppBlocks.Blocks;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.InteractiveReports.Blocks;
 
 /// <summary>Retains normal configured reports and resolves published block instances on demand.</summary>
 public sealed class ConfiguredReportStore(IReportDefinitionStore value) { public IReportDefinitionStore Value { get; } = value; }
@@ -18,7 +19,7 @@ public sealed class AppReportDefinitionStore(
     ConfiguredReportStore configured, AppBlockContent content,
     ReportDefinitionCompiler compiler,
     PublishedReportCatalog catalog, DataSourceReportBindings bindings, ConnectionCatalog? managed = null,
-    AppBlocks.Documents.IAppDocumentLinks? documents = null,
+    AppBlocks.DocumentOutput.IAppDocumentLinks? documents = null,
     ReportSourcePreviews? previews = null, IHttpContextAccessor? http = null)
     : IReportDefinitionStore, IReportDefinitionAuthorizationStore
 {

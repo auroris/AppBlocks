@@ -1,14 +1,16 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Antiforgery;
 using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Cms.Core.Web;
-using UmbracoAppHost.Authentication;
+using AppBlocks.Authentication;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.Blocks;
 
 /// <summary>Renders one native Block Grid/List item inside the site's own page and layout.</summary>
 [ViewComponent(Name = "AppBlocksBlock")]
-public sealed class NativeAppBlockViewComponent(AppPageAccess access, AppBindVariableResolver variables, IUmbracoContextAccessor contexts) : ViewComponent
+public sealed class NativeAppBlockViewComponent(AppPageAccess access, AppBindVariableResolver variables, IUmbracoContextAccessor contexts,
+    IAntiforgery antiforgery) : ViewComponent
 {
     public async Task<IViewComponentResult> InvokeAsync(BlockGridItem? block = null, BlockListItem? listItem = null, IPublishedContent? page = null)
     {
@@ -17,7 +19,12 @@ public sealed class NativeAppBlockViewComponent(AppPageAccess access, AppBindVar
         if (page is null || block is null) return Content("");
         HttpContext.Response.Headers.CacheControl = "no-store";
         var user = await access.UserAsync(page);
-        if (user is not null) HttpContext.User = user;
+        if (user is not null) {
+            HttpContext.User = user;
+            // Establish one cookie in the page response before parallel block loads request their tokens.
+            // Otherwise each first GET can issue a different cookie, invalidating the other blocks' tokens.
+            antiforgery.GetAndStoreTokens(HttpContext);
+        }
         var model = new AppBlocksPage(page, user is null ? null : ApplicationAccessPolicy.UserKey(user),
             user is null ? null : await variables.ResolveAsync(user, HttpContext.Request.Query), new BlockGridModel([block], 12));
         return View("~/Views/Shared/Components/AppBlocks/Native.cshtml", model);

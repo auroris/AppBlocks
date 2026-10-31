@@ -12,7 +12,7 @@ Configurations have stable IDs and apply immediately. Several configurations can
 
 Existing template-document links use the first PDF configuration. With none, or with `?format=html`, they open self-contained HTML. These GET requests never submit to a printer. PDF failures fall back to HTML and are logged through Umbraco's `ILogger` pipeline. Printer failures are reported separately and are never retried or silently converted to a different output.
 
-Settings are kept in `App_Data/AppBlocks/documents.json` beneath `AppBlocks:DataRoot`, or `UmbracoAppHost:DataRoot`, or the site's content root. API keys are protected with the site's Data Protection keys and never returned by the settings API. Back up those keys with the settings file. As with AppBlocks connections, this file store is intended for a single application instance.
+Settings are kept in `App_Data/AppBlocks/documents.json` beneath `AppBlocks:DataRoot`, or the site's content root when that is not set. API keys are protected with the site's Data Protection keys and never returned by the settings API. Back up those keys with the settings file. As with AppBlocks connections, this file store is intended for a single application instance.
 
 Until settings are saved in the backoffice, configuration under `AppBlocks:Documents:Pressroom` (`Url`, `ApiKey`, `TimeoutSeconds`) supplies a **Pressroom PDF** configuration. Legacy `Pressroom:*` settings and the previous single-configuration JSON file are supported, preserving their protected key. The first edit writes the versioned collection. Deleting all configurations persists an empty collection; configuration-file defaults do not reappear. An old saved blank URL remains disabled.
 
@@ -26,13 +26,13 @@ Register `IDocumentPresentationProvider` to provide a theme name and optional pr
 
 ## Companion integration
 
-`IAppDocumentLinks` lives in the base AppBlocks assembly, in the `AppBlocks.Documents` namespace. Resolve it optionally with `GetService<IAppDocumentLinks>()`. If absent, omit document actions. If present, `Url(documentKey, request.PathBase)` supplies the endpoint. Append the record parameters and use `target="_blank" rel="noopener"` on links, or `window.open(url, "_blank", "noopener")` synchronously inside a user action. The endpoint rechecks authorization; knowing a document URL grants no access.
+`IAppDocumentLinks` lives in the base AppBlocks assembly, in the `AppBlocks.DocumentOutput` namespace. Resolve it optionally with `GetService<IAppDocumentLinks>()`. If absent, omit document actions. If present, `Url(documentKey, request.PathBase)` supplies the endpoint. Append the record parameters and use `target="_blank" rel="noopener"` on links, or `window.open(url, "_blank", "noopener")` synchronously inside a user action. The endpoint rechecks authorization; knowing a document URL grants no access.
 
 Interactive Reports' UI, authorization and report-state handling belong to that companion. Documents owns all Pressroom HTTP interactions, configuration and credentials. Documents never references Interactive Reports. The settings screen contributes a Documents view through `AppBlocksDashboardPage`; the base dashboard discovers installed companions.
 
 ### Shared output service
 
-The stable optional contract is [`IDocumentOutputService`](../AppBlocks/Documents/IDocumentOutputService.cs), in the **base AppBlocks assembly**, namespace `AppBlocks.Documents`. Consumers need no dependency on Pressroom or the Documents implementation assembly. Resolve it with `GetService<IDocumentOutputService>()`; omit the output/Print UI when it is absent or `GetDestinations()` returns no destinations.
+The stable optional contract is [`IDocumentOutputService`](../AppBlocks/DocumentOutput/IDocumentOutputService.cs), in the **base AppBlocks assembly**, namespace `AppBlocks.DocumentOutput`. Consumers need no dependency on Pressroom or the Documents implementation assembly. Resolve it with `GetService<IDocumentOutputService>()`; omit the output/Print UI when it is absent or `GetDestinations()` returns no destinations.
 
 - `GetDestinations()` returns `DocumentDestination(Id, Name, Output, Printer)`. `Id` is a GUID; `Output` is `DocumentOutputKind.Pdf` or `Printer`. These descriptors contain no service URLs or credentials.
 - `SubmitAsync(configurationId, new DocumentRequest(html, fileName, options), cancellationToken)` sends the complete self-contained HTML to the selected configuration. `DocumentRenderOptions` and its page-size, margins and readiness records belong to AppBlocks. Do not send client-supplied arbitrary HTML or rows without the consuming application's own validation and authorization.
@@ -65,7 +65,7 @@ The administrator-only management API is under `/umbraco/management/api/v1/appbl
 
 ## Build
 
-Source builds use sibling `../Pressroom` when available, overridable with `PressroomRoot`. Set `UsePressroomSource=false` to resolve `Pressroom.Client` 0.1.0 from a package feed. No browser or PDF engine is installed in the Umbraco process.
+Source builds use sibling `../Pressroom` when available, overridable with `PressroomRoot`. Set `UsePressroomSource=false` to resolve `Pressroom.Client` 0.1.0 from a package feed; a checkout that is simply not found falls back to it with warning APPBLOCKS002. No browser or PDF engine is installed in the Umbraco process.
 
 ```powershell
 dotnet build src/AppBlocks.Documents

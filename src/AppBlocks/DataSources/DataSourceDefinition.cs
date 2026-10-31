@@ -3,9 +3,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using UmbracoAppHost.Forms;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 /// <summary>Aliases of the data source document types and their properties, shared by the export, the reader and the docs.</summary>
 public static class DataSourceSchema

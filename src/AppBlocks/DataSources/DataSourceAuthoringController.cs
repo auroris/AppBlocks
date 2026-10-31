@@ -10,7 +10,7 @@ using Umbraco.Cms.Core.Security.Authorization;
 using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Web.Common.Authorization;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 public sealed record DataSourceTestRequest(Guid? Key, Guid? ParentKey, Dictionary<string, JsonElement> Values,
     Dictionary<string, JsonElement>? Samples = null);

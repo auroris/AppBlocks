@@ -1,8 +1,8 @@
 using System.Data.Common;
 using System.Globalization;
-using UmbracoAppHost.Forms;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 public sealed record DataSourceQueryColumn(string Name, string Field, string Kind);
 public sealed record DataSourceQueryResult(IReadOnlyList<DataSourceQueryColumn> Columns, IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows);

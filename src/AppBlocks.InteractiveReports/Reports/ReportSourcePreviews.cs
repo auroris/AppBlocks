@@ -1,5 +1,5 @@
 using System.Security.Claims;
-using UmbracoAppHost.DataSources;
+using AppBlocks.InteractiveReports.DataSources;
 
 namespace AppBlocks.InteractiveReports.Reports;
 

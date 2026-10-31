@@ -3,11 +3,11 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Primitives;
 using Pressroom.Contracts;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Forms;
+using AppBlocks.Blocks;
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.PaperReports;
+namespace AppBlocks.Documents.PaperReports;
 
 public sealed record PaperReportDefinition(Guid DataSourceKey, IReadOnlyDictionary<string, string> Parameters,
     RenderOptions Options, string FileName, string Culture, int MaximumRows)

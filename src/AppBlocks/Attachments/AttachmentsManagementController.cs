@@ -3,9 +3,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Umbraco.Cms.Api.Management.Controllers;
 using Umbraco.Cms.Api.Management.Routing;
-using UmbracoAppHost.Authentication;
+using AppBlocks.Authentication;
 
-namespace UmbracoAppHost.Attachments;
+namespace AppBlocks.Attachments;
 
 /// <summary>What an administrator asks the purge for: how many days a removed file must have been gone. Empty means the configured retention.</summary>
 public sealed record AttachmentPurgeRequest(int? RetentionDays);

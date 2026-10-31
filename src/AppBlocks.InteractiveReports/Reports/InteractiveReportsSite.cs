@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Authorization;
 using Umbraco.Cms.Core;
 
-namespace UmbracoAppHost.Reports;
+namespace AppBlocks.InteractiveReports.Reports;
 
 /// <summary>Registers Interactive Reports with the site's databases and Umbraco-backed authorization.</summary>
 public static class InteractiveReportsSite
@@ -34,7 +34,7 @@ public static class InteractiveReportsSite
     public const string BackOfficeDownloadRoute = "/umbraco/report-download";
 
     /// <summary>The embedded definitions of the reports every site gets.</summary>
-    private const string BuiltInReportsResource = "UmbracoAppHost.Reports.umbraco-reports.json";
+    private const string BuiltInReportsResource = "AppBlocks.InteractiveReports.Reports.umbraco-reports.json";
 
     private static readonly PathString[] BackOfficeReportPaths = [BackOfficeReportsRoute, BackOfficeDownloadRoute];
     private static readonly PathString[] ReportPaths = [ReportsRoute, DownloadRoute, ..BackOfficeReportPaths];
@@ -59,8 +59,8 @@ public static class InteractiveReportsSite
     /// <summary>
     /// Registers the package: an optional separate report store under <c>App_Data</c>, the
     /// <see cref="UmbracoConnection"/>, the built-in audit reports, the JSON and download clients,
-    /// the authorization bridge, and the virtual-path link fix. <paramref name="configure"/> adds a
-    /// site's own connections through the same builder.
+    /// the authorization bridge, and the virtual-path link fix. <paramref name="configure"/> customizes
+    /// the report engine through the same builder.
     /// </summary>
     public static IUmbracoBuilder AddInteractiveReportsSite(
         this IUmbracoBuilder builder,
@@ -81,7 +81,7 @@ public static class InteractiveReportsSite
             .UseRowRestrictions((request, cancellationToken) =>
                 request.RequestServices.GetRequiredService<RecentPagesReport>().RestrictAsync(request, cancellationToken))
             .UseRowRestrictions((request, cancellationToken) =>
-                request.RequestServices.GetRequiredService<UmbracoAppHost.DataSources.DataSourceReportAccess>().RestrictAsync(request, cancellationToken))
+                request.RequestServices.GetRequiredService<AppBlocks.InteractiveReports.DataSources.DataSourceReportAccess>().RestrictAsync(request, cancellationToken))
             .UseAuthorization((request, cancellationToken) =>
                 request.RequestServices.GetRequiredService<IReportAccessPolicy>().AuthorizeAsync(request, cancellationToken));
         configure?.Invoke(reports);
@@ -177,8 +177,7 @@ public static class InteractiveReportsSite
 
     /// <summary>Absolute path of a SQLite file under the site's <c>App_Data</c> folder.</summary>
     public static string DataFile(IServiceProvider provider, string fileName)
-        => (provider.GetRequiredService<IConfiguration>()["AppBlocks:DataRoot"]
-            ?? provider.GetRequiredService<IConfiguration>()["UmbracoAppHost:DataRoot"]) is { Length: > 0 } root
+        => provider.GetRequiredService<IConfiguration>()["AppBlocks:DataRoot"] is { Length: > 0 } root
             ? Path.Combine(root, "App_Data", fileName)
             : DataFile(provider.GetRequiredService<IWebHostEnvironment>(), fileName);
 

@@ -1,6 +1,7 @@
 using System.Text.Json;
+using AppBlocks.DataSources;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.InteractiveReports.DataSources;
 
 /// <summary>A report's own row source. Only a connection name is stored in content.</summary>
 internal static class ReportBlockSource

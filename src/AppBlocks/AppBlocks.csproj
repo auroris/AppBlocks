@@ -26,11 +26,9 @@
     <InternalsVisibleTo Include="AppBlocks.Tests" />
     <InternalsVisibleTo Include="AppBlocks.InteractiveReports" />
     <InternalsVisibleTo Include="AppBlocks.InteractiveReports.Tests" />
-    <InternalsVisibleTo Include="UmbracoAppHost" />
-    <InternalsVisibleTo Include="UmbracoAppHost.Tests" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Umbraco.Cms" Version="18.3.0" />
+    <PackageReference Include="Umbraco.Cms" Version="$(AppBlocksUmbracoVersion)" />
     <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.14" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
@@ -38,7 +36,7 @@
     <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.26.300" ExcludeAssets="runtime" GeneratePathProperty="true" />
     <Content Include="$(PkgOracle_ManagedDataAccess_Core)/lib/net8.0/Oracle.ManagedDataAccess.dll" Link="oracle/Oracle.ManagedDataAccess.dll"
              CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
-             PackagePath="contentFiles/any/any/oracle/" PackageCopyToOutput="true" />
+             PackagePath="contentFiles/any/$(TargetFramework)/oracle/" PackageCopyToOutput="true" />
   </ItemGroup>
   <ItemGroup>
     <None Include="../../README.md" Pack="true" PackagePath="/" />
@@ -46,5 +44,7 @@
     <EmbeddedResource Include="../../docs/business-rules.md" LogicalName="AppBlocks.BusinessRules.md" />
     <EmbeddedResource Include="Views/**/*.cshtml;Schema/**/*.config;Attachments/Schema/**/*.sql" />
     <Content Update="**/*.cshtml;appsettings-schema*.json;umbraco-package-schema.json" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <!-- Embedded above, so a site's project must not receive them as well. -->
+    <Content Update="Schema/**/*.config;appsettings-schema*.json;umbraco-package-schema.json" Pack="false" />
   </ItemGroup>
 </Project>

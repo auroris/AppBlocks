@@ -3,7 +3,7 @@ using System.Data.Common;
 using System.Text;
 using AppBlocks.Connections;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 /// <summary>PostgreSQL metadata, RETURNING keys and row locks, using the connection's normal search path.</summary>
 public sealed class PostgreSqlDialect : SqlDialect

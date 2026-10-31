@@ -1,4 +1,4 @@
-namespace UmbracoAppHost.Schedules;
+namespace AppBlocks.Schedules;
 
 /// <summary>
 /// Packs the bars of one row into sub-rows, called lanes, so bars that overlap in time stay individually visible:

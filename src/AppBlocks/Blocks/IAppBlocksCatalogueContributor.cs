@@ -1,6 +1,6 @@
 using System.Security.Claims;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.Blocks;
 
 /// <summary>Adds companion-specific choices to the backoffice block catalogue.</summary>
 public interface IAppBlocksCatalogueContributor

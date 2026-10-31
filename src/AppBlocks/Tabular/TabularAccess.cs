@@ -1,9 +1,9 @@
 using System.Security.Claims;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Forms;
+using AppBlocks.Blocks;
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.Tabular;
+namespace AppBlocks.Tabular;
 
 /// <summary>
 /// One request's standing with a Tabular form block: the block, the person, the child data source and the scope (the

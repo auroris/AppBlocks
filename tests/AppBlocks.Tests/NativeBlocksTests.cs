@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Xml.Linq;
 using AppBlocks.Samples;
 using Microsoft.Extensions.FileProviders;
-using UmbracoAppHost.Blocks;
+using AppBlocks.Blocks;
 
 namespace AppBlocks.Tests;
 
@@ -51,6 +51,33 @@ public sealed class NativeBlocksTests
         }
         Assert.Equal("true", types.Single(t => (string?)t.Attribute("Alias") == AppBlockSchema.FormsContainerAlias).Element("Info")!.Element("IsElement")!.Value);
         Assert.DoesNotContain(types, t => (string?)t.Attribute("Alias") == "appReport");
+        string[] Properties(string alias) => [.. types.Single(t => (string?)t.Attribute("Alias") == alias).Descendants("GenericProperty").Select(p => p.Element("Alias")!.Value)];
+        // Everything the data source engine and the block views read. A site's content sets these, and uSync no longer brings them.
+        Assert.Contains("paperReport", Properties("appForm"));
+        Assert.Contains("sql", Properties("listOfValues"));
+        Assert.Contains("connection", Properties("listOfValues"));
+        foreach (var property in new[] { "connection", "source", "keyColumns", "mapping", "rowRestriction", "insertDefaults", "auditColumns", "keySequences", "customStatements" })
+            Assert.Contains(property, Properties("sqlDataSource"));
+        var source = types.Single(type => (string?)type.Attribute("Alias") == "sqlDataSource")
+            .Descendants("GenericProperty").Single(property => property.Element("Alias")!.Value == "source");
+        Assert.Equal("64d2fba9-1cb2-490b-9de9-37211a072cf4", source.Element("Definition")!.Value);
+        using (var stream = files.GetFileInfo("Schema/DataTypes/AppBlocksTable.config").CreateReadStream()) {
+            var picker = XElement.Load(stream);
+            Assert.Equal("Umbraco.TextArea", picker.Element("Info")!.Element("EditorAlias")!.Value);
+            Assert.Equal("AppBlocks.TablePicker", picker.Element("Info")!.Element("EditorUIAlias")!.Value);
+        }
+        // The content blocks Block.cshtml renders. Raw HTML and script stay out of the Forms container's grid: a site offers them by adding them to its own.
+        var grid = files.GetDirectoryContents("Schema/DataTypes").Single(f => f.Name == "ApplicationApplicationBlocks.config");
+        using (var gridStream = grid.CreateReadStream())
+        {
+            var gridConfig = XElement.Load(gridStream).Element("Config")!.Value;
+            foreach (var alias in new[] { AppBlockSchema.HtmlAlias, AppBlockSchema.CssAlias, AppBlockSchema.ScriptAlias })
+            {
+                var type = types.Single(t => (string?)t.Attribute("Alias") == alias);
+                Assert.Equal("true", type.Element("Info")!.Element("IsElement")!.Value);
+                Assert.DoesNotContain(type.Attribute("Key")!.Value, gridConfig);
+            }
+        }
         Assert.DoesNotContain(typeof(AppBlocksExtensions).Assembly.GetReferencedAssemblies(), a => a.Name!.StartsWith("InteractiveReport"));
         Assert.False(files.GetFileInfo("Views/Partials/blockgrid/Components/appReport.cshtml").Exists);
         foreach (var file in files.GetDirectoryContents("Schema/DataTypes").Where(f => !f.IsDirectory)) {

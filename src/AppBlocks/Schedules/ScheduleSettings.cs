@@ -2,7 +2,7 @@ using System.Globalization;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Extensions;
 
-namespace UmbracoAppHost.Schedules;
+namespace AppBlocks.Schedules;
 
 /// <summary>Whether a column of the schedule is a day or an hour.</summary>
 public enum ScheduleScale { Days, Hours }

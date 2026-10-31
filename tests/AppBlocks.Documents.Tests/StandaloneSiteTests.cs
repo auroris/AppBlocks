@@ -15,6 +15,7 @@ using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Core.Sync;
 using Umbraco.Extensions;
+using AppBlocks.DocumentOutput;
 
 namespace AppBlocks.Documents.Tests;
 
@@ -40,8 +41,6 @@ public sealed class StandaloneSiteTests
             ["Umbraco:CMS:Global:Id"] = Guid.NewGuid().ToString(), ["Umbraco:CMS:Global:UseHttps"] = "false",
             ["Umbraco:CMS:ModelsBuilder:ModelsMode"] = "Nothing",
             ["Umbraco:CMS:TypeFinder:AdditionalAssemblyExclusionEntries:0"] = "xunit.",
-            // The database SDK is not an Umbraco extension; scanning it loads optional Oracle cloud assemblies.
-            ["Umbraco:CMS:TypeFinder:AdditionalAssemblyExclusionEntries:1"] = "Oracle.",
             ["Umbraco:CMS:Unattended:InstallUnattended"] = "true", ["Umbraco:CMS:Unattended:UpgradeUnattended"] = "true",
             ["Umbraco:CMS:Unattended:UnattendedUserName"] = "Documents test",
             ["Umbraco:CMS:Unattended:UnattendedUserEmail"] = "documents@example.test",

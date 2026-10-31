@@ -1,10 +1,10 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Antiforgery;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
+using AppBlocks.Blocks;
+using AppBlocks.DataSources;
 
-namespace UmbracoAppHost.Forms;
+namespace AppBlocks.Forms;
 
 public sealed record FormSubmission(string DefinitionVersion, string? Version, JsonElement Values, string? SubmissionKey);
 

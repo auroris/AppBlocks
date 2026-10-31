@@ -3,7 +3,7 @@ using System.Data.Common;
 using System.Text;
 using AppBlocks.Connections;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 /// <summary>Oracle 12c and 11g: named binds, RETURNING INTO, sequence keys and FOR UPDATE row locks.</summary>
 public sealed class OracleDialect : SqlDialect

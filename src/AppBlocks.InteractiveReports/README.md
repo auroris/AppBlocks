@@ -8,7 +8,7 @@ dotnet add package AppBlocks.InteractiveReports --version 0.1.0-alpha.1
 
 This is an unpublished alpha. Use the locally built packages until a public release is available.
 
-The Umbraco composer registers the companion automatically. On startup, AppBlocks installs its missing report element and data type definitions alongside the base schema. Add **Interactive Report** to an existing Block Grid or Block List, choose **Table** or **SQL query**, and configure the block's starting view. The site retains its page types, templates and layout.
+The Umbraco composer registers the companion automatically. On startup, AppBlocks installs its missing report element and data type definitions alongside the base schema, and the companion lets report definition nodes sit under the Data sources root. Add **Interactive Report** to an existing Block Grid or Block List, choose **Table** or **SQL query**, and configure the block's starting view. The site retains its page types, templates and layout.
 
 The table dropdown lists tables and views from **Settings → AppBlocks → Connections** as `DataSourceName.TableName`, including schema names where needed. SQL mode selects a configured data source and accepts a SELECT query, with optional `:PARAM.name` and signed-in user bind variables such as `:USER_KEY`. Connection credentials stay in AppBlocks configuration. The source and starting view are saved directly on the block; no configuration content nodes are required. Administrators can preview an unpublished source to configure its view; previews are private to their creator and expire after ten minutes.
 
@@ -18,7 +18,7 @@ Report requests use AppBlocks page access and registered data-source policies. T
 
 **Actions → Download → HTML** downloads the same self-contained HTML that the default print preview prepares for Documents/Pressroom, using all matching rows, A4 portrait, and the current report's filters, columns, labels, masks, sorting and totals. Documents and Pressroom configurations are not required: the original `InteractiveReport.Client.FileDownload` package generates the HTML, and the companion reuses its `HtmlReportPresentation` renderer for printing. Like CSV, HTML follows the `download` control and server export authorization. The file is served as an attachment by `POST /api/download/{name}/html` (also `/umbraco/report-download/{name}/html`), and never submits a print job. Truncated or oversized results return an error instead of an incomplete file. CSV remains available alongside HTML.
 
-**Actions → Print** uses the optional `AppBlocks.Documents.IDocumentOutputService` contract in the base AppBlocks assembly. Install `AppBlocks.Documents` and add Pressroom configurations in its backoffice settings. The menu is absent when the service is missing or there are no configured PDF/printer destinations; it also follows the report's `download` control and export authorization. InteractiveReports has no package dependency on Documents or Pressroom and never handles Pressroom URLs, API keys, or printer discovery.
+**Actions → Print** uses the optional `AppBlocks.DocumentOutput.IDocumentOutputService` contract in the base AppBlocks assembly. Install `AppBlocks.Documents` and add Pressroom configurations in its backoffice settings. The menu is absent when the service is missing or there are no configured PDF/printer destinations; it also follows the report's `download` control and export authorization. InteractiveReports has no package dependency on Documents or Pressroom and never handles Pressroom URLs, API keys, or printer discovery.
 
 The dialog offers the configured destinations, all matching rows (default) or the current page, paper size, orientation, and a preview. It prints the authorized server query's columns, labels, masks, filtering, sorting, grouped/pivot rows, breaks and totals. Charts print their underlying data table; interactive renderers become text. The current-page footer identifies aggregates that cover all matching rows. Export limits produce an error rather than silently printing an incomplete report.
 
@@ -59,11 +59,11 @@ using AppBlocks.InteractiveReports;
 
 umbraco.AddAppBlocksInteractiveReports(reports =>
 {
-    // Interactive Reports authorization, context parameters, or legacy connections.
+    // Interactive Reports authorization, row restrictions, context parameters or logging.
 });
 ```
 
-Both registration calls are idempotent. Shared connections added before or after the companion are available to reports, and legacy connections registered through the report builder remain available to forms. Move existing `AddAppBlocks(Action<InteractiveReportBuilder>)` callbacks to `AddAppBlocksInteractiveReports` when upgrading; ordinary connection-only callbacks can stay with `AddAppBlocks`.
+Both registration calls are idempotent. Connections added to `AddAppBlocks` before or after the companion are available to reports, appear read-only in Settings → AppBlocks → Connections, and can be chosen by a report block. A connection added directly to the report builder is available to configured reports, report definition nodes and forms, but it is not listed and a report block refuses it, so register a site's connections with `AddAppBlocks`. Move existing `AddAppBlocks(Action<InteractiveReportBuilder>)` callbacks to `AddAppBlocksInteractiveReports` when upgrading; ordinary connection-only callbacks stay with `AddAppBlocks(Action<AppBlocksBuilder>)`. `ReportApplicationDatabases` is gone: `AddApplicationDatabase` is on `AppBlocksBuilder`. To hand a builder's connections to a report engine composed without the companion, call `reports.AddConnectionsFrom(connections)`.
 
 The existing `AppBlocks:ReportAdministratorGroups` and `AppBlocks:IncludeBackOfficeReports` settings remain supported. Configured report definitions remain in the `InteractiveReport` configuration section. Report definition APIs now live in `PublishedReportCatalog`; the base `PublishedDataCatalog` supplies sources and lists of values.
 
@@ -74,4 +74,4 @@ dotnet pack src/AppBlocks.InteractiveReports -c Release -o artifacts/packages
 dotnet run --project tests/AppBlocks.InteractiveReports.Tests -- -noLogo
 ```
 
-Source development uses a sibling `../Interactive-Reports` checkout when present. Override `InteractiveReportsRoot`, or set `UseInteractiveReportsSource=false` to consume its NuGet packages. The core AppBlocks project builds independently of that checkout.
+Source development uses a sibling `../Interactive-Reports` checkout when present. Override `InteractiveReportsRoot`, or set `UseInteractiveReportsSource=false` to consume its NuGet packages; a checkout that is simply not found falls back to them with warning APPBLOCKS001. The core AppBlocks project builds independently of that checkout.

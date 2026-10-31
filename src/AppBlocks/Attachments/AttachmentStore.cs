@@ -4,9 +4,9 @@ using System.Globalization;
 using System.Security.Cryptography;
 using AppBlocks.Connections;
 using Microsoft.Extensions.Options;
-using UmbracoAppHost.Databases;
+using AppBlocks.Databases;
 
-namespace UmbracoAppHost.Attachments;
+namespace AppBlocks.Attachments;
 
 /// <summary>The record a file belongs to: a form resource's alias and the record's key, as the form endpoints know them.</summary>
 public sealed record AttachmentOwner(string Alias, string Key);

@@ -10,8 +10,8 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.Forms;
+using AppBlocks.Blocks;
+using AppBlocks.Forms;
 
 namespace AppBlocks.Tests;
 

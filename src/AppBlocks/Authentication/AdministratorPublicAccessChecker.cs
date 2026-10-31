@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Umbraco.Cms.Core.Security;
 
-namespace UmbracoAppHost.Authentication;
+namespace AppBlocks.Authentication;
 
 /// <summary>
 /// Where Umbraco's Public Access learns the application's rule, which stays in

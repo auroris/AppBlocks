@@ -2,8 +2,7 @@ using Asp.Versioning;
 using Microsoft.AspNetCore.Mvc;
 using Umbraco.Cms.Api.Management.Controllers;
 using Umbraco.Cms.Api.Management.Routing;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Reports;
+using AppBlocks.InteractiveReports.DataSources;
 
 namespace AppBlocks.InteractiveReports.Reports;
 

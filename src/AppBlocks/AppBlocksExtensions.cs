@@ -5,13 +5,13 @@ using Umbraco.Cms.Core.Composing;
 using Umbraco.Cms.Core.Notifications;
 using Umbraco.Cms.Core.Security;
 using Umbraco.Cms.Web.Common.ApplicationBuilder;
-using UmbracoAppHost.Authentication;
-using UmbracoAppHost.Attachments;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Forms;
-using UmbracoAppHost.Schedules;
-using UmbracoAppHost.Tabular;
+using AppBlocks.Authentication;
+using AppBlocks.Attachments;
+using AppBlocks.Blocks;
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
+using AppBlocks.Schedules;
+using AppBlocks.Tabular;
 
 namespace AppBlocks;
 
@@ -38,11 +38,17 @@ public static class AppBlocksExtensions
         configure?.Invoke(connections);
         services.AddSingleton<IApplicationConnectionFactory, ApplicationConnections>();
         services.AddSingleton(new Setup.AppBlocksSchema(typeof(AppBlocksExtensions).Assembly));
+        services.AddScoped<Setup.SchemaProperties>();
+        services.AddScoped<Setup.IAppBlocksSchemaMigration, Setup.SchemaFolderMigration>();
         services.AddScoped<Setup.IAppBlocksSchemaMigration, Setup.FormClassMigration>();
+        services.AddScoped<Setup.IAppBlocksSchemaMigration, Setup.DataSourceSchemaMigration>();
+        services.AddScoped<Setup.IAppBlocksSchemaMigration, Setup.RowSourceSchemaMigration>();
         services.AddDataProtection();
         services.AddSingleton<ConnectionCatalog>();
         services.AddScoped<ConnectionTables>();
         services.AddScoped<Samples.FormInventory>();
+        // Also resolvable on its own, so a site's import tool can install the definitions before it imports what uses them.
+        services.AddTransient<Setup.SchemaInstaller>();
         builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, Setup.SchemaInstaller>();
         services.TryAddScoped<ApplicationAccessPolicy>();
         services.AddControllersWithViews().AddApplicationPart(typeof(AppBlocksExtensions).Assembly);
@@ -62,7 +68,7 @@ public static class AppBlocksExtensions
         services.AddScoped<AppPageAssets>();
         services.AddTransient<Microsoft.AspNetCore.Razor.TagHelpers.ITagHelperComponent, AppPageAssetsTagHelperComponent>();
         services.AddScoped<AppBindVariableResolver>();
-        builder.AddNotificationAsyncHandler<RoutingRequestNotification, UmbracoAppHost.Website.ProtectedPageCacheHeaders>();
+        builder.AddNotificationAsyncHandler<RoutingRequestNotification, AppBlocks.Publishing.ProtectedPageCacheHeaders>();
         services.Configure<UmbracoPipelineOptions>(options => options.AddFilter(new UmbracoPipelineFilter("AppBlocks")
         {
             PostMapEndpoints = endpoints => endpoints.MapAppBlocks(),

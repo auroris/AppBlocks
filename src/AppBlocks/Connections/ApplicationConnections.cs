@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using System.Data.Common;
-using UmbracoAppHost.Databases;
+using AppBlocks.Databases;
 
 namespace AppBlocks.Connections;
 
@@ -18,6 +18,8 @@ public sealed class AppBlocksBuilder
 {
     internal Dictionary<string, Func<IServiceProvider, DbConnection>> Connections { get; } = new(StringComparer.OrdinalIgnoreCase);
     internal Dictionary<string, DatabaseDialect> Dialects { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>The application databases, apart from their factories: a configured or saved connection string never runs its factory.</summary>
+    internal Dictionary<string, ApplicationSchema> Schemas { get; } = new(StringComparer.OrdinalIgnoreCase);
     internal event Action<string>? ConnectionAdded;
     public IEnumerable<string> ConnectionNames => Connections.Keys;
 
@@ -27,10 +29,17 @@ public sealed class AppBlocksBuilder
         ArgumentNullException.ThrowIfNull(factory);
         Connections[name] = factory;
         Dialects.Remove(name);
+        Schemas.Remove(name);
         if (dialect is { } declared) Dialects[name] = declared;
         ConnectionAdded?.Invoke(name);
         return this;
     }
+
+    /// <summary>A connection to <paramref name="name"/> for use, which ensures the schema when it opens if the name is an application database.</summary>
+    internal DbConnection Create(string name, Func<DbConnection> create, IServiceProvider provider)
+        => Schemas.TryGetValue(name, out var schema) ? ApplicationDatabase.EnsureOnOpen(create(), create, name, schema, provider) : create();
+
+    internal DbConnection CreateRegistered(string name, IServiceProvider provider) => Create(name, () => Connections[name](provider), provider);
 }
 
 internal sealed class ApplicationConnections(IServiceProvider provider, AppBlocksBuilder builder, ConnectionCatalog catalog) : IApplicationConnectionFactory
@@ -38,8 +47,8 @@ internal sealed class ApplicationConnections(IServiceProvider provider, AppBlock
     private readonly ConcurrentDictionary<string, (DatabaseDialect Dialect, string Revision)> detected = new(StringComparer.OrdinalIgnoreCase);
 
     public DbConnection CreateConnection(string name) => catalog.Find(name) is { } material
-        ? ConnectionCatalog.Create(material)
-        : builder.Connections.TryGetValue(name, out var factory) ? factory(provider)
+        ? builder.Create(name, () => ConnectionCatalog.Create(material), provider)
+        : builder.Connections.ContainsKey(name) ? builder.CreateRegistered(name, provider)
         : throw new InvalidOperationException($"The connection {name} is not registered with AppBlocks.");
 
     public DatabaseDialect Dialect(string name)

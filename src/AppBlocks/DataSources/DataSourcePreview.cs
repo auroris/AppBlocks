@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
-using UmbracoAppHost.Forms;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 public sealed record DataSourcePreviewColumn(string Field, string Column, string Kind, bool ReadOnly, bool Required);
 public sealed record DataSourcePreviewResult(IReadOnlyList<DataSourcePreviewColumn> Columns,

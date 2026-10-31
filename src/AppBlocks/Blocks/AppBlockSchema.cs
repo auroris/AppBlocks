@@ -3,7 +3,7 @@ using System.Text;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Models.PublishedContent;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.Blocks;
 
 /// <summary>Stable identities shared by the embedded schema catalogue and block rendering.</summary>
 public static class AppBlockSchema
@@ -62,5 +62,6 @@ public static class AppBlockSchema
     /// </summary>
     public const string TabularAlias = "appTabular";
 
+    // The seed is older than the namespace rename. Every stored content key derives from it, so it does not change.
     public static Guid Key(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes("UmbracoAppHost.Blocks.v1:" + value))[..16]);
 }

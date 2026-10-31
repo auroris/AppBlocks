@@ -1,7 +1,7 @@
 using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Extensions;
 
-namespace UmbracoAppHost.Attachments;
+namespace AppBlocks.Attachments;
 
 /// <summary>
 /// The <c>Attachments</c> configuration section: the connection whose database keeps the files, and the limits

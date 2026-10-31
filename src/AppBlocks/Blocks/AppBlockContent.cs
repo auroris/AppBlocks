@@ -3,7 +3,7 @@ using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Cms.Core.Web;
 using Umbraco.Extensions;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.Blocks;
 
 public sealed class AppBlockContent(IUmbracoContextFactory contexts, IHttpContextAccessor http)
 {

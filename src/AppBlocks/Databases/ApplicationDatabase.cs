@@ -8,7 +8,7 @@ using AppBlocks.Connections;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 
-namespace UmbracoAppHost.Databases;
+namespace AppBlocks.Databases;
 
 /// <summary>
 /// An application's own database: a connection registered with AppBlocks by name, whose schema is ensured
@@ -30,27 +30,31 @@ public static class ApplicationDatabase
     }
 
     /// <summary>
-    /// Registers connection <paramref name="name"/> with AppBlocks. The connection string is
-    /// <c>ConnectionStrings:&lt;name&gt;</c> with <c>ConnectionStrings:&lt;name&gt;_ProviderName</c> (Microsoft.Data.Sqlite, or
+    /// Registers connection <paramref name="name"/> with AppBlocks. The connection string is a connection saved under that
+    /// name, or <c>ConnectionStrings:&lt;name&gt;</c> with <c>ConnectionStrings:&lt;name&gt;_ProviderName</c> (Microsoft.Data.Sqlite, or
     /// Microsoft.Data.SqlClient, the default when a connection string is set without a provider, as Umbraco does), read
     /// from the provider's configuration when a connection is created. Without a connection string it is a SQLite file
     /// <paramref name="defaultFile"/> (default <c>&lt;name&gt;.sqlite.db</c>) in the instance data folder, resolved as
     /// <see cref="ApplicationDatabase.DataFile(IServiceProvider, string)"/> resolves it, with its folder created.
-    /// The first time a connection to a given connection string opens in this process, the schema is ensured on a
-    /// separate connection to the same database before the caller proceeds; a failed ensure fails that open and the
-    /// next open tries again.
+    /// The first time a connection to a given connection string opens in this process, wherever that string came from, the
+    /// schema is ensured on a separate connection to the same database before the caller proceeds; a failed ensure fails
+    /// that open and the next open tries again. Testing the connection in the backoffice opens it without ensuring anything.
     /// </summary>
     public static AppBlocksBuilder AddApplicationDatabase(this AppBlocksBuilder connections, string name, ApplicationSchema? schema = null,
         string? defaultFile = null)
-        => connections.AddConnection(name, provider => CreateApplicationConnection(provider, name, schema, defaultFile));
-
-    internal static DbConnection CreateApplicationConnection(IServiceProvider provider, string name, ApplicationSchema? schema, string? defaultFile)
     {
-        var connection = Create(provider, name, defaultFile);
+        connections.AddConnection(name, provider => Create(provider, name, defaultFile));
+        if (schema is not null) connections.Schemas[name] = schema;
+        return connections;
+    }
+
+    /// <summary>Ensures the schema when <paramref name="connection"/> opens, on another connection from <paramref name="create"/>.</summary>
+    internal static DbConnection EnsureOnOpen(DbConnection connection, Func<DbConnection> create, string name, ApplicationSchema schema, IServiceProvider provider)
+    {
         // Startup validation creates and disposes a connection without opening it, so nothing happens before an open.
-        if (schema is not null) connection.StateChange += (sender, change) => {
+        connection.StateChange += (sender, change) => {
             if (change.CurrentState != ConnectionState.Open || sender is not DbConnection opened || IsEnsured(opened, schema)) return;
-            using var separate = Create(provider, name, defaultFile);
+            using var separate = create();
             separate.Open();
             if (EnsureOnceAsync(separate, schema, sync: true, default).GetAwaiter().GetResult() is { } scripts)
                 provider.GetService<ILoggerFactory>()?.CreateLogger(typeof(ApplicationDatabase)).LogInformation(
@@ -105,8 +109,7 @@ public static class ApplicationDatabase
 
     /// <summary>Absolute path of a SQLite file under the site's <c>App_Data</c> folder.</summary>
     public static string DataFile(IServiceProvider provider, string fileName)
-        => (provider.GetRequiredService<IConfiguration>()["AppBlocks:DataRoot"]
-            ?? provider.GetRequiredService<IConfiguration>()["UmbracoAppHost:DataRoot"]) is { Length: > 0 } root
+        => provider.GetRequiredService<IConfiguration>()["AppBlocks:DataRoot"] is { Length: > 0 } root
             ? Path.Combine(root, "App_Data", fileName)
             : DataFile(provider.GetRequiredService<IWebHostEnvironment>(), fileName);
 

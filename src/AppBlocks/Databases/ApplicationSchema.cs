@@ -2,7 +2,7 @@ using System.Data.Common;
 using System.Reflection;
 using Microsoft.Extensions.FileProviders;
 
-namespace UmbracoAppHost.Databases;
+namespace AppBlocks.Databases;
 
 /// <summary>
 /// The idempotent schema of an application database: one folder per dialect (<c>sqlite</c>, <c>sqlserver</c>,

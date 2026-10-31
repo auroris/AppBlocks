@@ -1,4 +1,4 @@
-namespace UmbracoAppHost.PaperReports;
+namespace AppBlocks.DocumentOutput;
 
 public static class PaperReportLinks
 {

@@ -11,7 +11,7 @@ using Umbraco.Cms.Core.PropertyEditors;
 using Umbraco.Cms.Core.Serialization;
 using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Core.Strings;
-using UmbracoAppHost.Blocks;
+using AppBlocks.Blocks;
 
 /// <summary>Optional, demo-only website content. The AppBlocks package supplies no page type or template.</summary>
 public sealed class DemoSeed(IConfiguration configuration, IServiceProvider services, IContentTypeService types, IDataTypeService dataTypes,

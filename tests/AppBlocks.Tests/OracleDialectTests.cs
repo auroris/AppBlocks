@@ -4,7 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using AppBlocks.Connections;
 using Microsoft.Extensions.Logging.Abstractions;
 using Oracle.ManagedDataAccess.Client;
-using UmbracoAppHost.DataSources;
+using AppBlocks.DataSources;
 
 namespace AppBlocks.Tests;
 

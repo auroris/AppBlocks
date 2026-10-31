@@ -1,0 +1,6 @@
+@model AppBlocks.Documents.PaperReports.PaperReportModel
+@{ Layout = null; }
+<!doctype html><html><head><title>Clean document</title></head><body>
+<h1>Clean installation document</h1>
+@foreach (var row in Model.Rows) { <p>@row["title"]</p> }
+</body></html>

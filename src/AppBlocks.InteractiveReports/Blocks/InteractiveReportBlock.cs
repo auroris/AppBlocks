@@ -2,14 +2,15 @@ using System.Text.Json;
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Core.Model;
 using Umbraco.Cms.Core.Services;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.PaperReports;
+using AppBlocks.Blocks;
+using AppBlocks.InteractiveReports.DataSources;
+using AppBlocks.DataSources;
+using AppBlocks.DocumentOutput;
 
 namespace AppBlocks.InteractiveReports;
 
 public sealed class InteractiveReportBlock(ReportDefinitionCompiler compiler,
-    PublishedReportCatalog definitions, IContentService contents, Connections.ConnectionCatalog managed) : IAppBlockPlugin
+    PublishedReportCatalog definitions, IContentService contents, AppBlocks.Connections.ConnectionCatalog managed) : IAppBlockPlugin
 {
     public string Alias => "appReport";
     public string ViewPath => "~/Views/Partials/ApplicationBlocks/InteractiveReport.cshtml";
@@ -38,7 +39,7 @@ public sealed class InteractiveReportBlock(ReportDefinitionCompiler compiler,
             definition.DefaultState = JsonSerializer.Deserialize<ReportState>(state, IrJson.Options) ?? throw new JsonException("Starting view must be a report document.");
             if (definition.DefaultState.Tables?.Values.Any(t => t.Schema is { Count: > 0 }) == true) errors.Add("Capture the starting view without its transient schema cache.");
         }
-        AppBlocks.Connections.ManagedReportCompiler.CompileManaged(compiler, sourceName, definition, managed);
+        AppBlocks.InteractiveReports.Connections.ManagedReportCompiler.CompileManaged(compiler, sourceName, definition, managed);
     }
 
 

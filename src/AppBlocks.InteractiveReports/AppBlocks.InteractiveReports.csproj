@@ -26,8 +26,6 @@
     <Using Include="Umbraco.Cms.Core.DependencyInjection" />
     <Using Include="Umbraco.Extensions" />
     <InternalsVisibleTo Include="AppBlocks.InteractiveReports.Tests" />
-    <InternalsVisibleTo Include="UmbracoAppHost" />
-    <InternalsVisibleTo Include="UmbracoAppHost.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../AppBlocks/AppBlocks.csproj" />
@@ -47,7 +45,14 @@
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />
     <EmbeddedResource Include="Views/**/*.cshtml;Schema/**/*.config" />
-    <EmbeddedResource Include="Reports/umbraco-reports.json" LogicalName="UmbracoAppHost.Reports.umbraco-reports.json" />
+    <EmbeddedResource Include="Reports/umbraco-reports.json" LogicalName="AppBlocks.InteractiveReports.Reports.umbraco-reports.json" />
     <Content Update="**/*.cshtml;appsettings-schema*.json;umbraco-package-schema.json" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <!-- Embedded above, so a site's project must not receive them as well. -->
+    <Content Update="Schema/**/*.config;Reports/umbraco-reports.json;appsettings-schema*.json;umbraco-package-schema.json" Pack="false" />
   </ItemGroup>
+  <!-- UseInteractiveReportsSource stays empty only when nobody chose and the checkout was not found. -->
+  <Target Name="WarnInteractiveReportsFromPackages" BeforeTargets="CollectPackageReferences;ResolveProjectReferences"
+          Condition="'$(UseInteractiveReportsSource)' == '' and '$(DesignTimeBuild)' != 'true'">
+    <Warning Code="APPBLOCKS001" Text="No Interactive-Reports checkout at '$(InteractiveReportsRoot)', so AppBlocks.InteractiveReports uses the InteractiveReport NuGet packages instead of source. Set InteractiveReportsRoot to the checkout, or UseInteractiveReportsSource=false to choose the packages." />
+  </Target>
 </Project>

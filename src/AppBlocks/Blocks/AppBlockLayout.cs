@@ -1,7 +1,7 @@
 using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Extensions;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.Blocks;
 
 /// <summary>
 /// The column arithmetic of the layout blocks. Umbraco's grid stylesheet places each area from the

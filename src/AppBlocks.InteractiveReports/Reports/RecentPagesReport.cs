@@ -8,7 +8,7 @@ using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Models.Membership;
 using Umbraco.Cms.Core.Services;
 
-namespace UmbracoAppHost.Reports;
+namespace AppBlocks.InteractiveReports.Reports;
 
 /// <summary>Limits the Welcome report to the content available to the current backoffice user.</summary>
 public sealed class RecentPagesReport(IUserService users, IEntityService entities, AppCaches caches)

@@ -1,4 +1,4 @@
-namespace AppBlocks;
+namespace AppBlocks.InteractiveReports;
 
 public sealed class AppBlocksOptions
 {

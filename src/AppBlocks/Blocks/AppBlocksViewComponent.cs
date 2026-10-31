@@ -1,10 +1,11 @@
 using Microsoft.AspNetCore.Mvc;
-using UmbracoAppHost.Authentication;
+using Microsoft.AspNetCore.Antiforgery;
+using AppBlocks.Authentication;
 using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Cms.Core.Models.PublishedContent;
-using UmbracoAppHost.Forms;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.Blocks;
+namespace AppBlocks.Blocks;
 
 /// <param name="Variables">The signed-in person, the time and the query string, which field defaults resolve against.</param>
 public sealed record AppBlocksPage(IPublishedContent Page, string? MemberId, AppBindVariables? Variables = null, BlockGridModel? Blocks = null);
@@ -23,7 +24,7 @@ public sealed record AppBlockItems(IPublishedContent Page, IEnumerable<BlockGrid
     FormDefinition? Form = null, string? MemberId = null, int HeadingLevel = 2, AppBindVariables? Variables = null);
 
 [ViewComponent(Name = "AppBlocks")]
-public sealed class AppBlocksViewComponent(AppPageAccess access, AppBindVariableResolver variables) : ViewComponent
+public sealed class AppBlocksViewComponent(AppPageAccess access, AppBindVariableResolver variables, IAntiforgery antiforgery) : ViewComponent
 {
     public async Task<IViewComponentResult> InvokeAsync(IPublishedContent page)
     {
@@ -33,6 +34,8 @@ public sealed class AppBlocksViewComponent(AppPageAccess access, AppBindVariable
         }
         HttpContext.Response.Headers.CacheControl = "no-store";
         HttpContext.User = member;
+        // All asynchronously loaded blocks must receive tokens for the same browser cookie.
+        antiforgery.GetAndStoreTokens(HttpContext);
         // Field defaults are resolved here, once, from the person page access admitted, so every block sees the same values.
         return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, ApplicationAccessPolicy.UserKey(member),
             await variables.ResolveAsync(member, HttpContext.Request.Query)));
@@ -41,7 +44,8 @@ public sealed class AppBlocksViewComponent(AppPageAccess access, AppBindVariable
 
 /// <summary>Ordinary page content is public unless Umbraco routing restricts the page through Public Access.</summary>
 [ViewComponent(Name = "WebsiteBlocks")]
-public sealed class WebsiteBlocksViewComponent(AppPageAccess access, AppBindVariableResolver variables, IEnumerable<IAppBlockPlugin> plugins) : ViewComponent
+public sealed class WebsiteBlocksViewComponent(AppPageAccess access, AppBindVariableResolver variables, IEnumerable<IAppBlockPlugin> plugins,
+    IAntiforgery antiforgery) : ViewComponent
 {
     public async Task<IViewComponentResult> InvokeAsync(IPublishedContent page)
     {
@@ -54,6 +58,7 @@ public sealed class WebsiteBlocksViewComponent(AppPageAccess access, AppBindVari
         var member = await access.UserAsync(page);
         if (member is null) return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, null));
         HttpContext.User = member;
+        antiforgery.GetAndStoreTokens(HttpContext);
         return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, ApplicationAccessPolicy.UserKey(member),
             await variables.ResolveAsync(member, HttpContext.Request.Query)));
     }

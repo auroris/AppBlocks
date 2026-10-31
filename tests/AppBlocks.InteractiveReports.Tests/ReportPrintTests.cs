@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Json;
-using AppBlocks.Documents;
+using AppBlocks.DocumentOutput;
 using AppBlocks.InteractiveReports.Reports;
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Client.FileDownload;

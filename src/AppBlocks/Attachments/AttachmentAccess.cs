@@ -4,12 +4,12 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Cms.Core.Models.PublishedContent;
-using UmbracoAppHost.Authentication;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Forms;
+using AppBlocks.Authentication;
+using AppBlocks.Blocks;
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.Attachments;
+namespace AppBlocks.Attachments;
 
 /// <summary>
 /// One request's standing with an Attachments block: who is calling, whose files the block shows, and what the

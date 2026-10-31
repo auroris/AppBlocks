@@ -1,6 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
-using AppBlocks.Documents;
+using AppBlocks.DocumentOutput;
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Client.FileDownload;
 using InteractiveReport.Core.Model;

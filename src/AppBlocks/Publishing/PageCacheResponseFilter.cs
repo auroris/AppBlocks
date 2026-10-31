@@ -2,10 +2,10 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.WebUtilities;
 
-namespace UmbracoAppHost.Website;
+namespace AppBlocks.Publishing;
 
 /// <summary>Prevents Razor output from reaching the server when a layout returns Not Modified.</summary>
-internal sealed class PageCacheResponseFilter : IAsyncResultFilter
+public sealed class PageCacheResponseFilter : IAsyncResultFilter
 {
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {

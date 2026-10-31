@@ -1,6 +1,6 @@
 using System.Security.Claims;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.Reports;
+using AppBlocks.Blocks;
+using AppBlocks.InteractiveReports.Reports;
 
 namespace AppBlocks.InteractiveReports;
 

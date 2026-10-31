@@ -2,7 +2,7 @@ using System.Data;
 using System.Data.Common;
 using System.Text;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 /// <summary>The bind variables of a data source (design section 4.3), APEX's <c>:APP_USER</c> and friends in Umbraco terms.</summary>
 public enum BindVariableKind

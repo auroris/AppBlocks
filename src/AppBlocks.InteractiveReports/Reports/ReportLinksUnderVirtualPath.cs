@@ -2,7 +2,7 @@ using InteractiveReport.AspNetCore;
 using Microsoft.Extensions.Options;
 using IHostingEnvironment = Umbraco.Cms.Core.Hosting.IHostingEnvironment;
 
-namespace UmbracoAppHost.Reports;
+namespace AppBlocks.InteractiveReports.Reports;
 
 /// <summary>
 /// Keeps the URLs that report definitions emit inside <c>Umbraco:CMS:Hosting:ApplicationVirtualPath</c>.

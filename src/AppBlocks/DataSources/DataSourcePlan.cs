@@ -2,9 +2,9 @@ using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text;
 using AppBlocks.Connections;
-using UmbracoAppHost.Forms;
+using AppBlocks.Forms;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 /// <summary>A column of the row source as a form field: its alias and presentation, its rules, and the table column it writes.</summary>
 /// <param name="Column">The row source's name for it, which reads use.</param>

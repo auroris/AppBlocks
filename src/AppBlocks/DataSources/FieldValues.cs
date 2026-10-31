@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 /// <summary>The field kinds the form blocks know, as <see cref="Forms.FormField.Kind"/> spells them.</summary>
 public static class FieldKinds

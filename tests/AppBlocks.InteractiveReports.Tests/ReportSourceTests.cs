@@ -12,10 +12,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Forms;
-using UmbracoAppHost.Reports;
+using AppBlocks.InteractiveReports.Blocks;
+using AppBlocks.InteractiveReports.DataSources;
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
 
 namespace AppBlocks.InteractiveReports.Tests;
 
@@ -53,6 +53,8 @@ public sealed class ReportSourceTests
 
     [Theory]
     [InlineData("{\"kind\":\"sql\",\"connection\":\"Missing\",\"source\":\"SELECT 1\"}")]
+    // The report engine can compile this one, but the picker does not offer it.
+    [InlineData("{\"kind\":\"sql\",\"connection\":\"ReportOnly\",\"source\":\"SELECT 1\"}")]
     [InlineData("{\"kind\":\"sql\",\"connection\":\"Business\",\"source\":\"DELETE FROM Orders\"}")]
     [InlineData("{\"kind\":\"sql\",\"connection\":\"Business\",\"source\":\"SELECT 1; DELETE FROM Orders\"}")]
     [InlineData("{\"kind\":\"table\",\"connection\":\"Business\",\"source\":\"SELECT 1\"}")]
@@ -68,6 +70,39 @@ public sealed class ReportSourceTests
         var errors = new List<string>();
         Assert.Null(site.Catalog.ReadBlockReport(Guid.NewGuid(), property => property == "dataSource" ? selection : null, errors));
         Assert.NotEmpty(errors);
+    }
+
+    [Fact]
+    public async Task A_code_registered_connection_passes_the_validation_a_picker_choice_gets()
+    {
+        using var site = new Fixture();
+        var listed = Assert.Single(site.Connections.List(), c => c.Name == "Registered");
+        Assert.True(listed.ReadOnly);
+        Assert.Equal("sqlite", listed.Provider);
+        var table = Assert.Single(await new ConnectionTables(site.Connections).ListAsync("Registered", default));
+        Assert.Equal("Registered.Items", table.Name);
+
+        // The picker's own value for that table, then what publishing, rendering and a preview all read.
+        var key = Guid.NewGuid();
+        var errors = new List<string>();
+        var selection = JsonSerializer.Serialize(new { kind = "table", connection = "Registered", source = table.Value });
+        var report = site.Catalog.ReadBlockReport(key, property => property == "dataSource" ? selection : null, errors);
+        Assert.Empty(errors);
+        Assert.Equal("Registered", report!.Definition.Connection);
+        Assert.Null(report.Definition.DataSource);
+        Assert.DoesNotContain("registered.db", JsonSerializer.Serialize(report.Definition));
+        var row = Assert.Single((await site.Queries.QueryAsync(report.DataSource!, new(site.User, Guid.NewGuid(), key, "1"))).Rows);
+        Assert.Equal("From code", row["title"]);
+
+        var previews = new ReportSourcePreviews();
+        var http = new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = site.User } };
+        var store = new AppReportDefinitionStore(null!, null!, site.Compiler, site.Catalog, new DataSourceReportBindings(site.Runtime, new Users(), http), site.Connections, previews: previews, http: http);
+        var preview = await store.Find(previews.Add(report, site.User));
+        Assert.Equal("Registered", preview!.Connection);
+        Assert.Equal(InteractiveReport.Core.Model.ReportDialect.Sqlite, preview.Dialect);
+        Assert.Null(preview.DataSource);
+        using var engine = site.Services.GetRequiredService<InteractiveReport.Core.Execution.IReportConnectionFactory>().CreateConnection("Registered");
+        Assert.IsType<SqliteConnection>(engine);
     }
 
     [Fact]
@@ -136,18 +171,26 @@ public sealed class ReportSourceTests
                 ["ConnectionStrings:Business"] = "Data Source=" + Path.Combine(root, "business.db") + ";Pooling=False",
                 ["ConnectionStrings:Business_ProviderName"] = "sqlite",
             }).Build();
-            Connections = new(configuration, new Environment(root), new EphemeralDataProtectionProvider());
+            var registered = new AppBlocksBuilder().AddConnection("Registered", _ => new SqliteConnection("Data Source=" + Path.Combine(root, "registered.db") + ";Pooling=False"));
+            var services = new ServiceCollection(); services.AddLogging(); services.AddSingleton<IConfiguration>(configuration);
+            services.AddInteractiveReports(configuration).AddConnectionsFrom(registered)
+                .AddConnection("ReportOnly", _ => new SqliteConnection("Data Source=:memory:"));
+            Services = services.BuildServiceProvider();
+            Connections = new(configuration, new Environment(root), new EphemeralDataProtectionProvider(), registered, Services);
             using (var connection = Connections.Openable("Business"))
             {
                 connection.Open(); using var command = connection.CreateCommand();
                 command.CommandText = "CREATE TABLE \"Order.Items\" (id INTEGER PRIMARY KEY, title TEXT NOT NULL, owner TEXT NOT NULL); INSERT INTO \"Order.Items\" VALUES (1, 'O''Brien', 'reader'), (2, 'Other', 'other');";
                 command.ExecuteNonQuery();
             }
-            var services = new ServiceCollection(); services.AddLogging(); services.AddSingleton<IConfiguration>(configuration);
-            services.AddInteractiveReports(configuration);
-            Services = services.BuildServiceProvider();
+            using (var connection = Connections.Openable("Registered"))
+            {
+                connection.Open(); using var command = connection.CreateCommand();
+                command.CommandText = "CREATE TABLE \"Registered.Items\" (id INTEGER PRIMARY KEY, title TEXT NOT NULL); INSERT INTO \"Registered.Items\" VALUES (1, 'From code');";
+                command.ExecuteNonQuery();
+            }
             Compiler = Services.GetRequiredService<ReportDefinitionCompiler>();
-            Runtime = new(new ApplicationConnections(Services, new AppBlocksBuilder(), Connections), NullLogger<DataSourceRuntime>.Instance, managed: Connections);
+            Runtime = new(new ApplicationConnections(Services, registered, Connections), NullLogger<DataSourceRuntime>.Instance, managed: Connections);
             Queries = new(Runtime, new Users(), []);
             Catalog = new(null!, null!, null!, Services.GetRequiredService<IOptionsMonitor<InteractiveReportOptions>>(), configuration,
                 Runtime, Compiler, null!, NullLogger<PublishedReportCatalog>.Instance, Connections);

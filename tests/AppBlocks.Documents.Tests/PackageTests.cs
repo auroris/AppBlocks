@@ -1,6 +1,7 @@
 using System.Xml.Linq;
 using Microsoft.Extensions.FileProviders;
-using UmbracoAppHost.PaperReports;
+using AppBlocks.Documents.PaperReports;
+using AppBlocks.DocumentOutput;
 
 namespace AppBlocks.Documents.Tests;
 

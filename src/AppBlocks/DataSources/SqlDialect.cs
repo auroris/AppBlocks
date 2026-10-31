@@ -4,7 +4,7 @@ using System.Globalization;
 using System.Text;
 using AppBlocks.Connections;
 
-namespace UmbracoAppHost.DataSources;
+namespace AppBlocks.DataSources;
 
 /// <summary>A table or view as the database's catalog names it.</summary>
 public sealed record TableName(string? Schema, string Name)

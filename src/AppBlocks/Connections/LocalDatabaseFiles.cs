@@ -12,7 +12,7 @@ internal static class LocalDatabaseFiles
     private static readonly ConcurrentDictionary<string, bool> Initialized = new(PathComparer);
 
     internal static string FallbackPath(IConfiguration configuration, IWebHostEnvironment environment, string fileName)
-        => Path.GetFullPath(Path.Combine(configuration["AppBlocks:DataRoot"] ?? configuration["UmbracoAppHost:DataRoot"]
+        => Path.GetFullPath(Path.Combine(configuration["AppBlocks:DataRoot"]
             ?? environment.ContentRootPath, "App_Data", fileName));
 
     internal static string? UmbracoFile(IConfiguration configuration)

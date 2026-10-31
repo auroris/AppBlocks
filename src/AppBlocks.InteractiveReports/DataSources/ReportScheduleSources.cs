@@ -1,5 +1,5 @@
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.Schedules;
+using AppBlocks.InteractiveReports.DataSources;
+using AppBlocks.Schedules;
 
 namespace AppBlocks.InteractiveReports;
 

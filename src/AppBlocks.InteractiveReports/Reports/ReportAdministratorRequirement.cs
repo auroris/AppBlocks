@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 
-namespace UmbracoAppHost.Reports;
+namespace AppBlocks.InteractiveReports.Reports;
 
 public sealed class ReportAdministratorRequirement : IAuthorizationRequirement
 {

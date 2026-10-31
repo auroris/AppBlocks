@@ -2,7 +2,7 @@ using Umbraco.Cms.Core.Events;
 using Umbraco.Cms.Core.Notifications;
 using Umbraco.Cms.Core.Services;
 
-namespace UmbracoAppHost.Website;
+namespace AppBlocks.Publishing;
 
 /// <summary>Public Access responses depend on the caller, including a login or denied page at the protected URL.</summary>
 public sealed class ProtectedPageCacheHeaders(IPublicAccessService access, IHttpContextAccessor http)

@@ -12,9 +12,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using Pressroom.Contracts;
-using UmbracoAppHost.Blocks;
-using UmbracoAppHost.DataSources;
-using UmbracoAppHost.PaperReports;
+using AppBlocks.Blocks;
+using AppBlocks.DataSources;
+using AppBlocks.Documents.PaperReports;
 
 namespace AppBlocks.Documents.Tests;
 
