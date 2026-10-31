@@ -1,4 +1,5 @@
 using AppBlocks.Connections;
+using AppBlocks.Databases;
 using Asp.Versioning;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -13,7 +14,7 @@ namespace AppBlocks.Management;
 [VersionedApiBackOfficeRoute("appblocks")]
 [ApiExplorerSettings(GroupName = "AppBlocks")]
 public sealed class AppBlocksSettingsController(ConnectionCatalog connections, ConnectionTables tables,
-    IBackOfficeSecurityAccessor security) : ManagementApiControllerBase
+    IBackOfficeSecurityAccessor security, IEnumerable<IDatabaseSetupFeature> setup) : ManagementApiControllerBase
 {
     private bool Admin => security.BackOfficeSecurity?.CurrentUser?.IsAdmin() == true;
 
@@ -39,6 +40,26 @@ public sealed class AppBlocksSettingsController(ConnectionCatalog connections, C
         try { return Ok(await tables.ListAsync(connection, ct)); }
         catch (Exception error) when (error is not OperationCanceledException)
         { return Problem("The database tables could not be read. Check the connection and its database permissions.", statusCode: 422); }
+    }
+
+    /// <summary>Where each feature's own tables stand. Looking changes nothing in any database.</summary>
+    [HttpGet("database-setup")]
+    public async Task<IActionResult> DatabaseSetup(CancellationToken ct)
+    {
+        if (!Admin) return Forbid();
+        Response.Headers.CacheControl = "no-store";
+        var statuses = new List<DatabaseFeatureStatus>();
+        foreach (var feature in setup) statuses.Add(await feature.StatusAsync(ct));
+        return Ok(statuses);
+    }
+
+    [HttpGet("database-setup/{feature}/script")]
+    public async Task<IActionResult> DatabaseSetupScript(string feature, CancellationToken ct)
+    {
+        if (!Admin) return Forbid();
+        Response.Headers.CacheControl = "no-store";
+        return setup.FirstOrDefault(item => item.Alias.Equals(feature, StringComparison.OrdinalIgnoreCase)) is { } found && await found.ScriptAsync(ct) is { } script
+            ? Content(script, "text/plain; charset=utf-8") : NotFound();
     }
 
     [HttpPost("connections")]

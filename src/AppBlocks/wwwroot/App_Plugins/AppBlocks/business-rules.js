@@ -22,6 +22,8 @@ export default class BusinessRulesHelp extends UmbLitElement {
         article h2 { font-size:26px; line-height:1.3; margin:0 0 20px; }
         article h3 { font-size:20px; line-height:1.4; margin:36px 0 12px; padding-top:8px; border-top:1px solid var(--uui-color-border); scroll-margin-top:24px; }
         article p { margin:0 0 18px; } article li { margin:6px 0; }
+        article table { width:100%; border-collapse:collapse; margin:20px 0; }
+        article th, article td { padding:10px 12px; border-bottom:1px solid var(--uui-color-border); text-align:left; vertical-align:top; }
         code { font:0.9em/1.6 ui-monospace,SFMono-Regular,Consolas,monospace; }
         :not(pre) > code { padding:2px 5px; border-radius:3px; background:var(--uui-color-surface-alt); }
         .example { margin:22px 0; border:1px solid var(--uui-color-border); border-radius:var(--uui-border-radius,4px); overflow:hidden; }
@@ -60,7 +62,7 @@ export default class BusinessRulesHelp extends UmbLitElement {
                 pre.tabIndex = 0;
                 const example = document.createElement("div"); example.className = "example";
                 const toolbar = document.createElement("div"); toolbar.className = "code-toolbar";
-                const label = document.createElement("span"); label.textContent = pre.querySelector(".language-csharp") ? "C#" : "Code example";
+                const label = document.createElement("span"); label.textContent = pre.querySelector(".language-csharp") ? "C#" : pre.querySelector(".language-json") ? "JSON" : "Code example";
                 const copy = document.createElement("button"); copy.type = "button"; copy.dataset.copy = ""; copy.textContent = "Copy code";
                 toolbar.append(label, copy); pre.replaceWith(example); example.append(toolbar, pre);
             });

@@ -169,6 +169,17 @@ function mountAttachments(root) {
         list.replaceChildren(); list.setAttribute("aria-busy", "false");
         if (form && !recordKey) { message.textContent = "Save the record before adding files."; if (upload) upload.hidden = true; return; }
         if (!state) return;
+        // No file storage is not an error of this page: a plain notice, and for an administrator the way to the setup screen.
+        if (state.storage) {
+            if (upload) upload.hidden = true;
+            message.textContent = state.storage.message;
+            if (state.storage.setupUrl) {
+                const setup = document.createElement("a");
+                setup.href = state.storage.setupUrl; setup.textContent = "Open database setup";
+                message.append(" ", setup);
+            }
+            return;
+        }
         const canWrite = state.canWrite && !readOnly;
         if (upload) upload.hidden = !canWrite;
         message.textContent = state.items.length ? "" : "No files yet.";

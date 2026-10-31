@@ -1,4 +1,5 @@
 using AppBlocks.Connections;
+using AppBlocks.Databases;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using AppBlocks.Blocks;
 
@@ -14,13 +15,14 @@ public static class AttachmentsExtensions
         // Shared with the Tabular form block, so either feature works without the other.
         builder.Services.TryAddScoped<BlockOwnerAccess>();
         builder.Services.AddScoped<AttachmentAccess>();
+        builder.Services.AddSingleton<IDatabaseSetupFeature, AttachmentDatabaseSetup>();
         return builder;
     }
 
     /// <summary>
     /// Registers the optional <c>AttachmentsDb</c> store. Uploads use <c>AppBlocksDb</c> by default;
     /// <c>Attachments:Connection</c> can select this separate file or another named connection.
-    /// The attachment tables are created in the selected database on first use.
+    /// The attachment tables are created in the selected database on first use, when its account may; see the README's database setup.
     /// </summary>
     public static AppBlocksBuilder AddAttachmentsDatabase(this AppBlocksBuilder connections, IConfiguration configuration)
     {

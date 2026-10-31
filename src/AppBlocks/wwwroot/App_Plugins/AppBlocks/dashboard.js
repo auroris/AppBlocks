@@ -5,11 +5,16 @@ import "@umbraco-cms/backoffice/components";
 import { request, download, pathBase } from "./api.js";
 import "./business-rules.js";
 
+const providers = { sqlite: "SQLite", sqlServer: "SQL Server", postgres: "PostgreSQL", oracle11g: "Oracle 11.2", oracle: "Oracle 12+", unknown: "Unknown" };
+const featureStates = { ready: "Ready", automatic: "Created on first use", action: "Needs setup", unsupported: "Not supported here", unreachable: "Cannot connect", siteManaged: "Managed by the site" };
+const tableStates = { ready: "In place", missing: "Not found", noAccess: "No read and write access" };
+
 export default class AppBlocksDashboard extends UmbLitElement {
     static properties = {
         companionPages: { state: true }, companionView: { state: true }, tab: { state: true }, forms: { state: true }, connections: { state: true }, issues: { state: true },
         error: { state: true }, message: { state: true }, busy: { state: true }, loading: { state: true },
         editing: { state: true }, sample: { state: true }, selectedForm: { state: true }, search: { state: true },
+        setup: { state: true }, setupLoading: { state: true }, script: { state: true },
     };
     static styles = css`
         :host { display:block; height:100%; min-height:0; color:var(--uui-color-text); container-type:inline-size; }
@@ -41,11 +46,14 @@ export default class AppBlocksDashboard extends UmbLitElement {
         .error, .notice { padding:14px 18px; border-left:3px solid; background:var(--uui-color-surface); margin-bottom:18px; line-height:1.5; } .error { color:var(--uui-color-danger); } .notice { color:var(--uui-color-positive); }
         .form { max-width:680px; } label { display:block; margin:18px 0 6px; font-weight:600; } .hint { margin-top:6px; font-size:12px; }
         .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:22px; } pre { overflow:auto; padding:24px; background:#202331; color:#e6e8f0; border-radius:8px; font:12px/1.65 ui-monospace,monospace; tab-size:4; max-height:65vh; }
+        .setup { display:grid; gap:var(--uui-size-space-5); } .setup-facts { display:grid; grid-template-columns:max-content 1fr; gap:6px 16px; margin:0 0 16px; } .setup-facts dt { font-weight:600; } .setup-facts dd { margin:0; }
+        .setup .table { margin-bottom:16px; } .setup summary { cursor:pointer; font-weight:600; margin-bottom:12px; } .setup pre { margin:8px 0 0; padding:16px; } .setup h3 { margin-top:20px; } .setup .actions { margin-top:10px; }
+        .badge.ready { background:var(--uui-color-positive); color:var(--uui-color-positive-contrast); } .badge.action, .badge.unsupported, .badge.unreachable { background:var(--uui-color-warning); color:var(--uui-color-warning-contrast); }
         .steps { display:grid; gap:20px; max-width:800px; } .steps article { display:grid; grid-template-columns:30px 1fr; gap:15px; } .step { width:28px; height:28px; display:grid; place-items:center; border-radius:50%; background:var(--uui-color-surface-alt); color:var(--uui-color-text); }
         @container(max-width:760px) { .header small, uui-tab umb-icon { display:none; } uui-tab-group { max-width:65cqw; overflow-x:auto; } .summary { grid-template-columns:1fr; } }
     `;
     constructor() {
-        super(); this.companionPages = []; this.tab = "forms"; this.forms = []; this.connections = []; this.issues = []; this.search = ""; this.loading = true;
+        super(); this.companionPages = []; this.tab = new URLSearchParams(location.search).get("tab") === "setup" ? "setup" : "forms"; this.setup = []; this.forms = []; this.connections = []; this.issues = []; this.search = ""; this.loading = true;
         this.consumeContext(UMB_AUTH_CONTEXT, auth => { if (auth) { this.auth = auth; this.load(); } });
     }
     async load() {
@@ -56,6 +64,30 @@ export default class AppBlocksDashboard extends UmbLitElement {
         if (results[2].status === "fulfilled") this.companionPages = results[2].value;
         this.error = results.filter(r => r.status === "rejected").map(r => r.reason.message).join(" ") || undefined;
         this.loading = false;
+        if (this.tab === "setup") await this.loadSetup();
+    }
+    // Only when the tab is open: looking is read-only, but it does connect to each feature's database.
+    async loadSetup() {
+        this.setupLoading = true;
+        try { this.setup = await request(this.auth, "database-setup"); }
+        catch (error) { this.error = error.message; }
+        finally { this.setupLoading = false; }
+    }
+    async scriptOf(feature) {
+        if (this.script?.alias === feature.alias) return this.script.text;
+        return request(this.auth, `database-setup/${feature.alias}/script`, undefined, true);
+    }
+    async showScript(feature) {
+        this.busy = true; this.error = undefined;
+        try { this.script = { alias: feature.alias, text: await this.scriptOf(feature) }; }
+        catch (error) { this.error = error.message; }
+        finally { this.busy = false; }
+    }
+    async downloadScript(feature) {
+        this.busy = true; this.error = undefined;
+        try { download(await this.scriptOf(feature), `appblocks-${feature.alias}-${feature.provider}.sql`, "application/sql"); }
+        catch (error) { this.error = error.message; }
+        finally { this.busy = false; }
     }
     async showCompanion(page) {
         this.tab = page.alias; this.error = undefined; this.message = undefined; this.companionView = undefined;
@@ -66,6 +98,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
     }
     selectTab(tab) {
         this.tab = tab; this.error = undefined; this.message = undefined;
+        if (tab === "setup") this.loadSetup();
     }
     async showSample(form) {
         this.busy = true; this.error = undefined;
@@ -108,7 +141,24 @@ export default class AppBlocksDashboard extends UmbLitElement {
             <label for="connection">Connection string</label><input id="connection" name="connectionString" type="password" autocomplete="new-password" ?required=${!this.editing.existing} placeholder=${this.editing.existing ? "Leave blank to keep the saved connection string" : "Enter the database connection string"}>
             <p class="hint">Stored encrypted for this installation. Excluded from content exports. <a href="https://www.connectionstrings.com/" target="_blank" rel="noopener noreferrer">Connection string examples ↗</a></p>
             <div class="actions"><button type="submit" class="primary" ?disabled=${this.busy}>Save connection</button><button type="button" ?disabled=${this.busy} @click=${() => this.saveConnection(true)}>Test connection</button><button type="button" ?disabled=${this.busy} @click=${() => this.editing = undefined}>Cancel</button></div></form></uui-box>`;
-        return html`<uui-box class="panel"><div class="toolbar"><div><h2>Database connections</h2><p>Use the AppBlocks database for forms, reports and uploads. It keeps application work separate from Umbraco’s SQLite database.</p></div><button class="primary" @click=${() => this.edit()}>Add connection</button></div><div class="table"><table><thead><tr><th>Connection</th><th>Database type</th><th>Managed by</th><th></th></tr></thead><tbody>${this.connections.map(connection => html`<tr><td><strong>${connection.label}</strong> ${connection.isDefault ? html`<span class="badge">Default</span>` : ""}</td><td>${({sqlite:"SQLite",sqlServer:"SQL Server",postgres:"PostgreSQL",oracle11g:"Oracle 11.2",oracle:"Oracle 12+"})[connection.provider] ?? connection.provider}</td><td>${connection.readOnly ? "Site configuration" : "AppBlocks"}</td><td>${connection.readOnly ? "" : html`<button @click=${() => this.edit(connection)}>Edit connection</button>`}</td></tr>`)}</tbody></table></div></uui-box>`;
+        return html`<uui-box class="panel"><div class="toolbar"><div><h2>Database connections</h2><p>Use the AppBlocks database for forms, reports and uploads. It keeps application work separate from Umbraco’s SQLite database.</p></div><button class="primary" @click=${() => this.edit()}>Add connection</button></div><div class="table"><table><thead><tr><th>Connection</th><th>Database type</th><th>Managed by</th><th></th></tr></thead><tbody>${this.connections.map(connection => html`<tr><td><strong>${connection.label}</strong> ${connection.isDefault ? html`<span class="badge">Default</span>` : ""}</td><td>${providers[connection.provider] ?? connection.provider}</td><td>${connection.readOnly ? "Site configuration" : "AppBlocks"}</td><td>${connection.readOnly ? "" : html`<button @click=${() => this.edit(connection)}>Edit connection</button>`}</td></tr>`)}</tbody></table></div></uui-box>`;
+    }
+    renderSetup() {
+        return html`<div class="setup"><p>AppBlocks keeps a few tables of its own. It creates them on first use when the database account may. If it may not, grant the permission or run the script: either works without a restart, and everything else keeps working in the meantime.</p>
+            ${this.setupLoading && !this.setup.length ? html`<p role="status">Checking the databases…</p>` : this.setup.map(feature => this.renderFeature(feature))}</div>`;
+    }
+    renderFeature(feature) {
+        const needed = feature.state !== "ready" && feature.state !== "automatic";
+        const remedies = feature.grantText || feature.hasScript ? html`<details ?open=${needed}><summary>${needed ? "How to set this up" : "Setting this up by hand"}</summary>
+            ${feature.grantText ? html`<h3>Option 1: let AppBlocks create the tables</h3><p>${feature.grantText}</p>${feature.grantSql ? html`<pre tabindex="0"><code>${feature.grantSql}</code></pre>` : ""}` : ""}
+            ${feature.hasScript ? html`<h3>Option 2: create the tables yourself</h3><p>Run this script, made from what AppBlocks itself would run. The account then needs no right to create anything.</p>
+                <div class="actions"><button ?disabled=${this.busy} @click=${() => this.showScript(feature)}>View script</button><button ?disabled=${this.busy} @click=${() => this.downloadScript(feature)}>Download script</button></div>
+                ${this.script?.alias === feature.alias ? html`<pre tabindex="0" aria-label="Script"><code>${this.script.text}</code></pre>` : ""}` : ""}
+            </details>` : "";
+        return html`<uui-box class="panel" data-feature=${feature.alias}><div class="toolbar"><div><h2>${feature.title}</h2><p>${feature.summary}</p></div><span class="badge ${feature.state}">${featureStates[feature.state] ?? feature.state}</span></div>
+            <dl class="setup-facts"><dt>Connection</dt><dd>${feature.connection}</dd><dt>Database type</dt><dd>${providers[feature.provider] ?? feature.provider}</dd></dl>
+            ${feature.tables.length ? html`<div class="table"><table><thead><tr><th>Table</th><th>State</th></tr></thead><tbody>${feature.tables.map(table => html`<tr><td><strong>${table.name}</strong>${table.required ? "" : html`<small>Used only by the saved report administration page.</small>`}</td><td>${tableStates[table.state] ?? table.state}</td></tr>`)}</tbody></table></div>` : ""}
+            <p>${feature.lost}</p>${remedies}</uui-box>`;
     }
     renderHelp() {
         return html`<uui-box class="panel"><p class="eyebrow">Build your first form</p><h2>From database to working page</h2><p>Simple forms use the built-in data-source engine. Custom behaviour can use a C# resource.</p><div class="steps">
@@ -118,7 +168,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
         return html`<umb-body-layout>
             <div slot="header" class="header"><umb-icon name="icon-box" aria-hidden="true"></umb-icon><div><h1>AppBlocks</h1><small>Forms and reports</small></div></div>
             <uui-tab-group slot="navigation" aria-label="AppBlocks views">
-                ${[["forms","Forms","icon-document"],["connections","Connections","icon-server"],["help","Getting started","icon-help"],["business-rules","Business rules","icon-book-alt"]].map(([key,label,icon]) => html`<uui-tab label=${label} ?active=${this.tab === key} @click=${() => this.selectTab(key)}><umb-icon slot="icon" name=${icon} aria-hidden="true"></umb-icon>${label}</uui-tab>`)}
+                ${[["forms","Forms","icon-document"],["connections","Connections","icon-server"],["setup","Database setup","icon-settings"],["help","Getting started","icon-help"],["business-rules","Business rules","icon-book-alt"]].map(([key,label,icon]) => html`<uui-tab label=${label} ?active=${this.tab === key} @click=${() => this.selectTab(key)}><umb-icon slot="icon" name=${icon} aria-hidden="true"></umb-icon>${label}</uui-tab>`)}
                 ${this.companionPages.map(page => html`<uui-tab label=${page.label} ?active=${this.tab === page.alias} @click=${() => this.showCompanion(page)}><umb-icon slot="icon" name="icon-document" aria-hidden="true"></umb-icon>${page.label}</uui-tab>`)}
             </uui-tab-group>
             ${this.tab !== "business-rules" ? html`<div class="intro"><p>Forms and reports, connected to your data.</p><uui-button look="secondary" label="Refresh" ?disabled=${this.loading} @click=${this.load}><umb-icon name="icon-refresh" aria-hidden="true"></umb-icon> Refresh</uui-button></div>
@@ -129,7 +179,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
             </div>
             ` : ""}
             <div aria-live="polite">${this.error ? html`<div class="error" role="alert">${this.error}</div>` : ""}${this.message ? html`<div class="notice">${this.message}</div>` : ""}</div>
-            ${this.loading ? html`<p role="status">Loading AppBlocks…</p>` : this.tab === "forms" ? this.renderForms() : this.tab === "connections" ? this.renderConnections() : this.tab === "help" ? this.renderHelp() : this.tab === "business-rules" ? html`<appblocks-business-rules></appblocks-business-rules>` : this.companionView}
+            ${this.loading ? html`<p role="status">Loading AppBlocks…</p>` : this.tab === "forms" ? this.renderForms() : this.tab === "connections" ? this.renderConnections() : this.tab === "setup" ? this.renderSetup() : this.tab === "help" ? this.renderHelp() : this.tab === "business-rules" ? html`<appblocks-business-rules></appblocks-business-rules>` : this.companionView}
         </umb-body-layout>`;
     }
 }

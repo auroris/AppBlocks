@@ -186,13 +186,13 @@ public sealed class StandaloneSiteTests
             using var accountScope = app.Services.CreateScope();
             var users = accountScope.ServiceProvider.GetRequiredService<IUserService>();
             const string editorEmail = "document.editor@example.test";
-            var created = await users.CreateAsync(Constants.Security.SuperUserKey, new UserCreateModel {
+            var editorCreated = await users.CreateAsync(Constants.Security.SuperUserKey, new UserCreateModel {
                 UserName = editorEmail, Email = editorEmail, Name = "Document editor", Kind = UserKind.Default,
                 UserGroupKeys = new HashSet<Guid> { Constants.Security.EditorGroupKey },
             }, approveUser: true);
-            Assert.True(created.Success, created.Status.ToString());
+            Assert.True(editorCreated.Success, editorCreated.Status.ToString());
             var manager = accountScope.ServiceProvider.GetRequiredService<IBackOfficeUserManager>();
-            var identity = (await manager.FindByIdAsync(created.Result.CreatedUser!.Key.ToString()))!;
+            var identity = (await manager.FindByIdAsync(editorCreated.Result.CreatedUser!.Key.ToString()))!;
             var reset = await manager.ChangePasswordWithResetAsync(identity.Id, await manager.GeneratePasswordResetTokenAsync(identity), password);
             Assert.True(reset.Succeeded);
             using var editor = await Administrator(address, password, editorEmail);
@@ -209,6 +209,15 @@ public sealed class StandaloneSiteTests
             Assert.Equal(HttpStatusCode.Forbidden, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
             Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
             applicationRule.Allow = account => account.IsMember;
+            Assert.Equal(HttpStatusCode.Forbidden, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
+
+            // Member Public Access is a separate site rule, never bypassed by a User Group.
+            applicationRule.Allow = _ => true;
+            var reportContent = accountScope.ServiceProvider.GetRequiredService<IContentService>().GetById(key)!;
+            var publicAccess = accountScope.ServiceProvider.GetRequiredService<IPublicAccessService>();
+            publicAccess.Save(new PublicAccessEntry(reportContent, reportContent, reportContent, []));
+            Assert.True(publicAccess.IsProtected(reportContent.Path).Success);
             Assert.Equal(HttpStatusCode.Forbidden, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
         }

@@ -65,7 +65,7 @@ test('business rules opens inside AppBlocks with every section, exact code, navi
         await article.getByRole('heading', {name:heading, exact:true}).waitFor();
         assert.equal(await page.getByRole('navigation', {name:'Business rules sections'}).getByRole('link', {name:heading, exact:true}).count(), 1);
     }
-    const snippets = [...markdown.matchAll(/```csharp\r?\n([\s\S]*?)```/g)].map(match => match[1].replaceAll('\r\n', '\n'));
+    const snippets = [...markdown.matchAll(/```[^\r\n]*\r?\n([\s\S]*?)```/g)].map(match => match[1].replaceAll('\r\n', '\n'));
     assert.equal(await article.locator('pre code').count(), snippets.length);
     for (let i=0; i<snippets.length; i++) assert.equal(await article.locator('pre code').nth(i).textContent(), snippets[i]);
     await article.getByRole('button', {name:'Copy code', exact:true}).first().click();

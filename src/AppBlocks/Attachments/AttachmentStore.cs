@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Data;
 using System.Data.Common;
 using System.Globalization;
@@ -28,11 +29,18 @@ public sealed record AttachmentPurge(int Links, int Files, long Bytes);
 /// The two attachment tables, in whichever registered connection <see cref="AttachmentSettings.Connection"/> names.
 /// Every method takes the owner and checks it in SQL: a file id that is not the current revision, or an earlier
 /// revision, of one of that owner's live links is simply not found, so a readable record can never be paired with
-/// another record's file. SQLite and SQL Server are supported.
+/// another record's file. SQLite and SQL Server are supported. Every way the database can refuse the store surfaces as an
+/// <see cref="AttachmentStoreException"/>, and a problem that needs an administrator is logged once, with what to do, until it goes away.
 /// </summary>
 public sealed class AttachmentStore(IApplicationConnectionFactory connections, IOptions<AttachmentSettings> settings, ILogger<AttachmentStore> logger)
 {
     public static readonly ApplicationSchema Schema = ApplicationSchema.FromEmbedded(typeof(AttachmentStore).Assembly, "Attachments/Schema");
+
+    /// <summary>The tables the store reads and writes, which an administrator can also create from the schema's script.</summary>
+    public static readonly IReadOnlyList<string> Tables = ["APP_ATTACHMENT", "APP_ATTACHMENT_LINK"];
+
+    /// <summary>Which problem has been logged per connection name, because a request's store does not outlive the request.</summary>
+    private static readonly ConcurrentDictionary<string, AttachmentStoreProblem> Reported = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The chain of revisions behind every live link of an owner: depth 0 is the current file.</summary>
     private const string Chain = """
@@ -44,14 +52,14 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
             WHERE a.REPLACES IS NOT NULL)
         """;
 
-    public async Task<IReadOnlyList<AttachmentItem>> ListAsync(AttachmentOwner owner, CancellationToken ct)
+    public Task<IReadOnlyList<AttachmentItem>> ListAsync(AttachmentOwner owner, CancellationToken ct) => GuardAsync(write: false, async () =>
     {
         await using var connection = await OpenAsync(ct);
         return await ListAsync(connection, null, owner, null, ct);
-    }
+    });
 
     /// <summary>The current file or an earlier revision of one of the owner's live links, with its bytes; null when it is not one.</summary>
-    public async Task<AttachmentContent?> ReadAsync(AttachmentOwner owner, long id, CancellationToken ct)
+    public Task<AttachmentContent?> ReadAsync(AttachmentOwner owner, long id, CancellationToken ct) => GuardAsync<AttachmentContent?>(write: false, async () =>
     {
         await using var connection = await OpenAsync(ct);
         await using var command = Command(connection, null, Chain + """
@@ -61,10 +69,10 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
             """ + Recursion(connection), ("@alias", owner.Alias), ("@key", owner.Key), ("@id", id));
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return null;
-        return new(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3), reader.GetString(4), (byte[])reader.GetValue(5));
-    }
+        return new AttachmentContent(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3), reader.GetString(4), (byte[])reader.GetValue(5));
+    });
 
-    public async Task<AttachmentItem> AddAsync(AttachmentOwner owner, AttachmentUpload file, string? purpose, string? label, string? notes, string by, CancellationToken ct)
+    public Task<AttachmentItem> AddAsync(AttachmentOwner owner, AttachmentUpload file, string? purpose, string? label, string? notes, string by, CancellationToken ct) => GuardAsync(write: true, async () =>
     {
         await using var connection = await OpenAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -78,13 +86,13 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
         var item = (await ListAsync(connection, transaction, owner, id, ct)).Single();
         await transaction.CommitAsync(ct);
         return item;
-    }
+    });
 
     /// <summary>
     /// A new revision of the file whose current id is <paramref name="id"/>, or new metadata for it, or both. A metadata
     /// value that is null is kept; an empty string clears it. Null when the id is not an owner's current file.
     /// </summary>
-    public async Task<AttachmentItem?> ReplaceAsync(AttachmentOwner owner, long id, AttachmentUpload? file, string? purpose, string? label, string? notes, string by, CancellationToken ct)
+    public Task<AttachmentItem?> ReplaceAsync(AttachmentOwner owner, long id, AttachmentUpload? file, string? purpose, string? label, string? notes, string by, CancellationToken ct) => GuardAsync<AttachmentItem?>(write: true, async () =>
     {
         await using var connection = await OpenAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -105,10 +113,10 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
         var item = (await ListAsync(connection, transaction, owner, current, ct)).Single();
         await transaction.CommitAsync(ct);
         return item;
-    }
+    });
 
     /// <summary>Removes the link whose current file is <paramref name="id"/>: it leaves the lists, and its rows stay for the purge. False when it is not an owner's current file.</summary>
-    public async Task<bool> RemoveAsync(AttachmentOwner owner, long id, string by, CancellationToken ct)
+    public Task<bool> RemoveAsync(AttachmentOwner owner, long id, string by, CancellationToken ct) => GuardAsync(write: true, async () =>
     {
         await using var connection = await OpenAsync(ct);
         await using var command = Command(connection, null, """
@@ -116,10 +124,10 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
             WHERE OWNER_ALIAS = @alias AND OWNER_KEY = @key AND ATTACHMENT_ID = @id AND REMOVED_AT IS NULL
             """, ("@by", by), ("@now", DateTime.UtcNow), ("@alias", owner.Alias), ("@key", owner.Key), ("@id", id));
         return await command.ExecuteNonQueryAsync(ct) == 1;
-    }
+    });
 
     /// <summary>Deletes the links removed before <paramref name="removedBefore"/> with every revision behind them. Earlier revisions of live links stay.</summary>
-    public async Task<AttachmentPurge> PurgeAsync(DateTime removedBefore, CancellationToken ct)
+    public Task<AttachmentPurge> PurgeAsync(DateTime removedBefore, CancellationToken ct) => GuardAsync(write: true, async () =>
     {
         await using var connection = await OpenAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -152,8 +160,8 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
         }
         await transaction.CommitAsync(ct);
         if (links.Count > 0) logger.LogInformation("Purged {Links} removed attachment link(s) and {Files} file(s), {Bytes} bytes.", links.Count, files, bytes);
-        return new(links.Count, files, bytes);
-    }
+        return new AttachmentPurge(links.Count, files, bytes);
+    });
 
     /// <summary>The owner's items (one when <paramref name="current"/> names a current file), newest first, each with its revisions.</summary>
     private async Task<IReadOnlyList<AttachmentItem>> ListAsync(DbConnection connection, DbTransaction? transaction, AttachmentOwner owner, long? current, CancellationToken ct)
@@ -217,21 +225,62 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
         try { connection = connections.CreateConnection(name); }
         catch (InvalidOperationException error)
         {
-            throw new AttachmentStoreException($"The attachments connection {name} is not registered. Register it through AddAppBlocks, or leave Attachments:Connection empty to use AppBlocksDb.", error);
+            throw new AttachmentStoreException($"The attachments connection {name} is not registered. Register it through AddAppBlocks, or leave Attachments:Connection empty to use AppBlocksDb.", error, AttachmentStoreProblem.NotRegistered);
         }
         try
         {
+            // Nothing is created on a database type the tables have no script for, and it need not be reachable to say so.
+            if (ApplicationDatabase.Dialect(connection) is not ("sqlite" or "sqlserver"))
+                throw new AttachmentStoreException($"The attachments connection {name} is not SQLite or SQL Server, the only databases uploads run on.", null, AttachmentStoreProblem.Unsupported);
             await connection.OpenAsync(ct);
-            // The two tables are created in whichever database the connection opens, once per process.
-            await ApplicationDatabase.EnsureAsync(connection, Schema, ct);
+            // The two tables are created in whichever database the connection opens, once per process, or found there already made by hand.
+            await ApplicationDatabase.EnsureOrAcceptAsync(connection, Schema, Tables, ct);
             return connection;
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
             await connection.DisposeAsync();
             if (error is AttachmentStoreException) throw;
-            throw new AttachmentStoreException($"The attachments database through connection {name} is not available: {error.Message}", error);
+            throw new AttachmentStoreException($"The attachments database through connection {name} is not available: {error.Message}", error,
+                DatabaseInspector.Refusal(error) == DatabaseRefusal.None ? AttachmentStoreProblem.Unavailable : AttachmentStoreProblem.NotSetUp);
         }
+    }
+
+    /// <summary>Runs one store operation, so a refusal in its SQL reads like one on opening, and keeps the log to one line per problem.</summary>
+    private async Task<T> GuardAsync<T>(bool write, Func<Task<T>> work)
+    {
+        var name = settings.Value.ConnectionName;
+        try
+        {
+            var result = await work();
+            // A read says nothing about a refused write, so only a write clears that one.
+            if (Reported.TryGetValue(name, out var known) && (write || known != AttachmentStoreProblem.WritesRefused) && Reported.TryRemove(name, out _))
+                logger.LogInformation("File uploads work again on connection {Connection}.", name);
+            return result;
+        }
+        catch (AttachmentStoreException error) { throw Logged(error, name); }
+        catch (DbException error)
+        {
+            var refusal = DatabaseInspector.Refusal(error);
+            throw Logged(new AttachmentStoreException($"The attachments database through connection {name} refused the store: {error.Message}", error,
+                refusal == DatabaseRefusal.None ? AttachmentStoreProblem.Failed : write && refusal == DatabaseRefusal.Denied ? AttachmentStoreProblem.WritesRefused : AttachmentStoreProblem.NotSetUp), name);
+        }
+    }
+
+    private AttachmentStoreException Logged(AttachmentStoreException error, string name)
+    {
+        if (error.Problem == AttachmentStoreProblem.Failed) logger.LogWarning(error, "A file upload operation failed: {Problem}", error.Message);
+        else if (!Reported.TryGetValue(name, out var known) || known != error.Problem)
+        {
+            Reported[name] = error.Problem;
+            logger.LogWarning(error, "File uploads are off: {Problem} {Remedy} Forms and everything else keep working, and uploads return without a restart once this is done.", error.Message, error.Problem switch {
+                AttachmentStoreProblem.Unsupported => "Set Attachments:Connection to AttachmentsDb, or to another SQLite or SQL Server connection.",
+                AttachmentStoreProblem.NotRegistered => "Register that connection, or leave Attachments:Connection empty.",
+                AttachmentStoreProblem.Unavailable => "Check the connection in Settings > AppBlocks > Connections.",
+                _ => "Grant the permission or run the script shown in Settings > AppBlocks > Database setup.",
+            });
+        }
+        return error;
     }
 
     /// <summary>SQL Server stops a recursive query at 100 levels unless told otherwise; a file replaced more often than that is still one chain.</summary>
@@ -262,4 +311,27 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
 }
 
 /// <summary>The attachments database cannot be used: the connection is missing or its database refuses the store.</summary>
-public sealed class AttachmentStoreException(string message, Exception? inner = null) : Exception(message, inner);
+public sealed class AttachmentStoreException(string message, Exception? inner = null, AttachmentStoreProblem problem = AttachmentStoreProblem.Failed) : Exception(message, inner)
+{
+    public AttachmentStoreProblem Problem { get; } = problem;
+
+    /// <summary>Whether this needs an administrator, rather than being a failure that can pass.</summary>
+    public bool NeedsSetup => Problem is AttachmentStoreProblem.NotSetUp or AttachmentStoreProblem.WritesRefused or AttachmentStoreProblem.Unsupported or AttachmentStoreProblem.NotRegistered;
+}
+
+/// <summary>Why the attachments database cannot be used.</summary>
+public enum AttachmentStoreProblem
+{
+    /// <summary>One operation failed for a reason that says nothing about the setup, such as a deadlock.</summary>
+    Failed,
+    /// <summary>The connection does not open.</summary>
+    Unavailable,
+    /// <summary>The connection names nothing registered.</summary>
+    NotRegistered,
+    /// <summary>The tables are missing and cannot be created, or cannot be read.</summary>
+    NotSetUp,
+    /// <summary>The tables can be read but this account may not write them.</summary>
+    WritesRefused,
+    /// <summary>The connection is a database type uploads do not run on.</summary>
+    Unsupported,
+}

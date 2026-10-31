@@ -9,15 +9,21 @@ namespace AppBlocks.DataSources;
 /// The current Umbraco Member or backoffice User. These identity facts do not grant application permissions.
 /// </summary>
 /// <param name="Key">The application's key for the account (<see cref="ApplicationAccessPolicy.UserKey"/>): the member id, or <c>backoffice:</c> and the user id.</param>
-/// <param name="Sid">The Windows SID the account is linked to, its external login key; null for an account created with a password.</param>
+/// <param name="Sid">The external login provider's key; null when no external login is linked. It is not necessarily a Windows SID.</param>
 /// <param name="Groups">Member Group names for a Member, or User Group names for a backoffice User.</param>
 /// <param name="IsBackOfficeUser">True for a backoffice User; false for an Umbraco Member.</param>
 public sealed record DataSourceUser(string Key, string? Sid, string? Name, string? Email, IReadOnlyList<string> Groups, bool IsBackOfficeUser)
 {
     public bool IsMember => !IsBackOfficeUser;
-    /// <summary>Stable User Group aliases, such as "admin". Empty for Members.</summary>
+    /// <summary>Current Member Group names. Empty for backoffice Users.</summary>
+    public IReadOnlyList<string> MemberGroupNames => IsMember ? Groups : [];
+    /// <summary>Current User Group display names. Empty for Members.</summary>
+    public IReadOnlyList<string> UserGroupNames => IsBackOfficeUser ? Groups : [];
+    /// <summary>Current User Group aliases, such as "admin". Aliases can be deliberately changed in Umbraco. Empty for Members.</summary>
     public IReadOnlyList<string> UserGroupAliases { get; init; } = [];
+    /// <summary>Checks a Member Group name, ignoring case. Does not accept a numeric ID or GUID.</summary>
     public bool IsInMemberGroup(string name) => IsMember && Groups.Contains(name, StringComparer.OrdinalIgnoreCase);
+    /// <summary>Checks a backoffice User Group alias, ignoring case. Does not accept its display name, numeric ID or GUID.</summary>
     public bool IsInUserGroup(string alias) => IsBackOfficeUser && UserGroupAliases.Contains(alias, StringComparer.OrdinalIgnoreCase);
 }
 

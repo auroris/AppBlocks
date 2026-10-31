@@ -20,7 +20,7 @@ public sealed class AppReportDefinitionStore(
     ReportDefinitionCompiler compiler,
     PublishedReportCatalog catalog, DataSourceReportBindings bindings, ConnectionCatalog? managed = null,
     AppBlocks.DocumentOutput.IAppDocumentLinks? documents = null,
-    ReportSourcePreviews? previews = null, IHttpContextAccessor? http = null)
+    ReportSourcePreviews? previews = null, IHttpContextAccessor? http = null, SavedViewStore? savedViews = null)
     : IReportDefinitionStore, IReportDefinitionAuthorizationStore
 {
     public async ValueTask<ReportDefinitionAuthorization?> FindAuthorization(string name, CancellationToken ct = default)
@@ -43,7 +43,16 @@ public sealed class AppReportDefinitionStore(
         return null;
     }
 
+    /// <summary>A report's definition, without saving among its features while the saved-view table cannot be used. The engine's own administration listing keeps its answer.</summary>
     public async ValueTask<ReportDefinition?> Find(string name, CancellationToken ct = default)
+    {
+        var definition = await FindDefinition(name, ct);
+        if (definition is not null && savedViews is not null && !name.StartsWith("__", StringComparison.Ordinal) && !await savedViews.ReadyAsync(ct))
+            definition.Features = ReportFeatures.Resolve(definition).Where(feature => feature != ReportFeatures.SavedReports).ToList();
+        return definition;
+    }
+
+    private async ValueTask<ReportDefinition?> FindDefinition(string name, CancellationToken ct)
     {
         if (name.StartsWith(ReportSourcePreviews.Prefix, StringComparison.Ordinal))
         {

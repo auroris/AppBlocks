@@ -77,6 +77,26 @@ public static class ApplicationDatabase
     /// <summary>The synchronous <see cref="EnsureAsync(DbConnection, ApplicationSchema, CancellationToken)"/>, for code that runs inside an open.</summary>
     public static void Ensure(DbConnection connection, ApplicationSchema schema) => EnsureOnceAsync(connection, schema, sync: true, default).GetAwaiter().GetResult();
 
+    /// <summary>
+    /// Ensures a feature's own schema as <see cref="EnsureAsync(DbConnection, ApplicationSchema, CancellationToken)"/> does, except that an account
+    /// without the rights to do so still gets on with tables an administrator created by hand: when the ensure fails and every
+    /// one of <paramref name="tables"/> can be read, they count as ensured for this process, and the version table, which nothing
+    /// reads back, simply stays out of it. A failure that leaves the tables unusable throws as the ensure did, and the next call tries again.
+    /// </summary>
+    internal static async Task EnsureOrAcceptAsync(DbConnection connection, ApplicationSchema schema, IReadOnlyList<string> tables, CancellationToken ct)
+    {
+        try { await EnsureOnceAsync(connection, schema, sync: false, ct); }
+        catch (DbException) when (!ct.IsCancellationRequested)
+        {
+            if (!await DatabaseInspector.TablesReadableAsync(connection, tables, ct)) throw;
+            Ensured[(connection.ConnectionString, schema.Id)].Done = true;
+        }
+    }
+
+    /// <summary>A dialect's scripts as the ensure runs them, one after another, for a person to run by hand. The version table is not part of them.</summary>
+    internal static string Script(ApplicationSchema schema, string dialect)
+        => string.Concat(schema.Scripts(dialect).Select(script => Encoding.UTF8.GetString(script.Content).TrimStart('﻿')));
+
     /// <summary>The dialect folder name for a connection, by its type.</summary>
     public static string Dialect(DbConnection connection) => connection switch {
         SqliteConnection => "sqlite",

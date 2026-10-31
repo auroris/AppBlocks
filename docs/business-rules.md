@@ -45,7 +45,7 @@ var isBackOfficeAdministrator = account.IsInUserGroup("admin"); // Umbraco's Adm
 
 The resolver accepts approved, unlocked Members and backoffice Users, regardless of group membership. `null` means there is no valid authenticated account. Resolving an account grants no business permission, and membership of the Administrators User Group grants no automatic application access.
 
-The resolver reads the current account and groups rather than relying only on old cookie claims. An external login's provider key is available as `Sid` for compatibility; it is not necessarily a Windows SID on every site. `Groups` contains display names; `UserGroupAliases` contains stable backoffice User Group aliases. Member Groups and User Groups are separate, even when their names match.
+The resolver reads the current account and groups rather than relying only on old cookie claims. An external login's provider key is available as `Sid` for compatibility; it is not necessarily a Windows SID on every site. `Groups` contains display names; `UserGroupAliases` contains current backoffice User Group aliases. Member Groups and User Groups are separate, even when their names match.
 
 Umbraco's Public Access restrictions still protect Member pages. AppBlocks does not let a backoffice User bypass those restrictions. On pages without Member Public Access restrictions, either account type can reach your resource, where your code must enforce the application's rules. If both account types are signed in, the Member session takes precedence.
 
@@ -61,7 +61,31 @@ Choose the rule your application needs:
 | The Administrators User Group | `account.IsInUserGroup("admin")` |
 | Another backoffice User Group | `account.IsInUserGroup("editor")` |
 
-`IsInMemberGroup` checks Member Group names only; `IsInUserGroup` checks User Group aliases only. Neither method treats the other account type as a match. For example, this application chooses to allow Members in its Order editors Member Group:
+`IsInMemberGroup(string name)` checks the Member Group's **name**, for example `"Order editors"`. `IsInUserGroup(string alias)` checks the backoffice User Group's **alias**, for example `"admin"`, whose default display name is "Administrators". Both comparisons ignore case. Neither method accepts a numeric group ID or GUID, and neither treats the other account type as a match.
+
+For a backoffice User Group, the alias is the second string shown with the lock control beside the editable name. Renaming the display name does not change the alias. An editable alias can be unlocked and changed deliberately; update any code or configuration that references the old alias when doing so. An alias is not an immutable group identity.
+
+Umbraco 18 Member Groups have a name and an entity key, but no separate alias field. This is why the Member Group method takes a name, while the User Group method takes an alias.
+
+You can enumerate the signed-in account's current groups:
+
+```csharp
+foreach (var memberGroupName in account.MemberGroupNames)
+{
+    // A Member Group name, usable with account.IsInMemberGroup(memberGroupName).
+}
+
+foreach (var userGroupAlias in account.UserGroupAliases)
+{
+    // A backoffice User Group alias, usable with account.IsInUserGroup(userGroupAlias).
+}
+
+var userGroupDisplayNames = account.UserGroupNames;
+```
+
+`MemberGroupNames` is empty for a backoffice User. `UserGroupNames` and `UserGroupAliases` are empty for a Member. `Groups` remains the list of group display names for whichever account type was resolved. The name and alias lists are separate collections, not paired by position.
+
+For example, this application chooses to allow Members in its Order editors Member Group:
 
 ```csharp
 var canEdit = account.IsInMemberGroup("Order editors");
@@ -74,6 +98,94 @@ Avoid granting a Member access by comparing their email address with a backoffic
 For the built-in data-source engine, **Read groups** and **Write groups** select Umbraco Member Groups. They have no administrator exception. Leave these settings empty when your application uses its own account-type or User Group rules, and enforce those rules in `IDataSourcePolicy` using `request.User`. Each registered policy must allow the operation. Custom `IFormResource` implementations enforce their own rules on every operation.
 
 Interactive Reports exposes `IReportAccessPolicy` for report permissions. Its default report-administrator group list is empty; a site can explicitly configure `AppBlocks:ReportAdministratorGroups` with User Group aliases or supply its own policy. Umbraco's own backoffice management permissions remain separate from application business rules.
+
+## User Group selections on a Member
+
+A Member Type can have a custom property that picks backoffice User Groups. This is a valid application-defined authorization model: your application can use those selections as roles, just as it can use Member Groups, actual User Group membership or another rule. Umbraco stores the selections as property data; your C# resource or policy gives them their application meaning.
+
+In Umbraco 18.3, the built-in **User Group Picker** UI needs a custom Data Type registration before it can be used as a Member Type property. Create a JSON-backed Data Type using that picker UI and add a property such as `applicationUserGroups` to the Member Type. Configure this property to be managed by the backoffice editors responsible for assigning application access, rather than exposed as a self-editable profile field.
+
+Preserve the [picker's native value format](https://github.com/umbraco/Umbraco-CMS/blob/release-18.3.0/src/Umbraco.Web.UI.Client/src/packages/user/user-group/property-editor/user-group-picker/property-editor-ui-user-group-picker.element.ts): a JSON array of references, each containing a `unique` value with the User Group's GUID key. These stored values are keys, not names or aliases:
+
+```json
+[
+  { "unique": "765ef0cc-1932-4c10-9f10-25e7e138c406" }
+]
+```
+
+The following application-owned C# class resolves the current Member from the authenticated principal, reads the property, and loads the referenced groups through `IUserGroupService`. It returns each group's key, current display name and current alias. Empty or malformed selections return no groups; deleted groups are omitted.
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Security.Claims;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
+using AppBlocks.DataSources;
+using Umbraco.Cms.Core.Services;
+
+public sealed record SelectedUserGroup(Guid Key, string Name, string Alias);
+
+public sealed class MemberUserGroupSelections(
+    IDataSourceUserResolver identities,
+    IMemberService members,
+    IUserGroupService userGroups)
+{
+    private const string PropertyAlias = "applicationUserGroups";
+    private sealed record Reference([property: JsonPropertyName("unique")] Guid Key);
+
+    public async Task<IReadOnlyList<SelectedUserGroup>> GetAsync(
+        ClaimsPrincipal principal, CancellationToken ct)
+    {
+        var account = await identities.ResolveAsync(principal, ct);
+        if (account is not { IsMember: true }) return [];
+
+        var member = int.TryParse(account.Key, out var id) ? members.GetById(id)
+            : Guid.TryParse(account.Key, out var key)
+                ? (await members.GetByKeysAsync(key)).FirstOrDefault() : null;
+        if (member is not { IsApproved: true, IsLockedOut: false }) return [];
+
+        var json = member.GetValue<string>(PropertyAlias);
+        if (string.IsNullOrWhiteSpace(json)) return [];
+
+        Guid[] keys;
+        try
+        {
+            var references = JsonSerializer.Deserialize<Reference?[]>(json) ?? [];
+            if (references.Any(item => item is null || item.Key == Guid.Empty)) return [];
+            keys = references.Select(item => item!.Key).Distinct().ToArray();
+        }
+        catch (JsonException) { return []; }
+        if (keys.Length == 0) return [];
+
+        ct.ThrowIfCancellationRequested();
+        var groups = await userGroups.GetAsync(keys);
+        return groups.Select(group => new SelectedUserGroup(
+            group.Key, group.Name ?? group.Alias, group.Alias)).ToArray();
+    }
+}
+```
+
+Register this class with `builder.Services.AddScoped<MemberUserGroupSelections>()` in your application's startup or composer, then inject it into your resource. This example application accepts either a backoffice User in the `orderApprovers` User Group or a Member whose custom property selects that same group:
+
+```csharp
+var account = await userResolver.ResolveAsync(context.Member, cancellationToken);
+if (account is null) return FormResult.Denied();
+
+var selectedGroups = await memberUserGroupSelections.GetAsync(context.Member, cancellationToken);
+var canApprove = account.IsInUserGroup("orderApprovers")
+    || selectedGroups.Any(group => group.Alias.Equals("orderApprovers", StringComparison.OrdinalIgnoreCase));
+if (!canApprove) return FormResult.Denied();
+
+// Perform this application's approval operation.
+```
+
+The same helper can be injected into an `IDataSourcePolicy` and called with `request.Context.Member`. Enforce the chosen rule on every relevant operation. A developer can also enumerate `selectedGroups` or compare `group.Key` when a particular group's identity matters independently of its editable alias.
+
+These selections describe this application's roles; they do not alter Umbraco's native Member Groups, backoffice User membership or backoffice permissions. `account.IsInUserGroup(...)` continues to check actual User Group membership, while `MemberUserGroupSelections` reads the Member's application-defined selections. A group rename preserves the stored GUID reference; changing its alias requires updating application rules that compare that alias.
 
 ## Ownership and record status
 

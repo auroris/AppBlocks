@@ -90,6 +90,13 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     internal DbConnection ForUse(string name, ConnectionMaterial material)
         => registered is null ? Create(material) : registered.Create(name, () => Create(material), services!);
 
+    /// <summary>
+    /// A connection for looking only: it ensures no schema and prepares no file when it opens, as <see cref="TestAsync"/>'s does not.
+    /// <see cref="Databases.DatabaseInspector"/> also keeps a SQLite file from being created by opening this.
+    /// </summary>
+    internal DbConnection Inspectable(string name) => Find(name) is { } material ? Create(material.Provider, material.Value)
+        : Registered(name) ?? throw new ArgumentException("Choose an available connection.", nameof(name));
+
     internal bool IsApplicationDatabase(string name) => registered?.Schemas.ContainsKey(name) == true;
 
     /// <summary>What a registration's own factory makes, without the schema of an application database.</summary>

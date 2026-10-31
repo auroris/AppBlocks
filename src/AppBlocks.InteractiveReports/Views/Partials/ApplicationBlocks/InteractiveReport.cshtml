@@ -12,6 +12,9 @@
     var printUrl = paperReport is null ? null : Context.RequestServices.GetService<AppBlocks.DocumentOutput.IAppDocumentLinks>()?.Url(paperReport.Key, Context.Request.PathBase);
     var culture = VariationContext.VariationContext?.Culture;
     var apiQuery = culture is not null && Model.Page.Cultures.ContainsKey(culture) ? "?" + AppBlockContent.CultureParameter + "=" + Uri.EscapeDataString(culture) : "";
+    // Saving is simply absent for readers. Only a backoffice administrator is told why, and where to fix it.
+    var savedViewsOff = Model.MemberId is not null && Context.RequestServices.GetService<AppBlocks.InteractiveReports.Reports.SavedViewStore>() is { } savedViews && !await savedViews.ReadyAsync(Context.RequestAborted)
+        && await Context.RequestServices.GetRequiredService<AppBlocks.Authentication.ApplicationAccessPolicy>().BackOfficeAdministratorAsync(Context) is not null;
 }
 
 @if (Model.MemberId is null)
@@ -23,6 +26,7 @@ else
     var name = AppBlockContent.ReportName(Model.Page.Key, item.ContentKey);
     var controls = block.Value<string>("controls");
     <section class="app-block-report">
+        @if (savedViewsOff) { <p class="app-report-setup-note" role="status">Saving report views is off because its database tables aren't set up. <a href="@(Context.Request.PathBase + AppBlocks.Databases.DatabaseSetupGuide.ScreenPath)">Open database setup</a></p> }
         @if (printUrl is not null) { <p class="app-report-actions"><a href="@(printUrl + Context.Request.QueryString)" target="_blank" rel="noopener">Print</a></p> }
         <template data-app-report data-state-key="@(Model.MemberId):@name:@culture" data-print-url="@printUrl"
             data-print-key-column="@Text("keyColumn")" data-print-key-parameter="@(Text("keyParameter") ?? "id")">

@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Net.Mime;
 using System.Security.Claims;
+using AppBlocks.Authentication;
+using AppBlocks.Databases;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
@@ -37,15 +39,25 @@ public static class AttachmentEndpoints
         var scope = await access.ResolveAsync(pageKey, blockKey, ct);
         if (scope.Status != 200) return Refusal(scope);
         http.Response.Headers.CacheControl = "no-store";
-        var items = await Run(() => store.ListAsync(scope.Owner!, ct));
-        if (items.Problem is not null) return items.Problem;
+        IReadOnlyList<AttachmentItem> items;
+        try { items = await store.ListAsync(scope.Owner!, ct); }
+        catch (AttachmentStoreException error)
+        {
+            // Not a failure of this page: the block says so in words for the person, and the form around it never hears of it.
+            return Results.Json(new {
+                owner = new { alias = scope.Owner!.Alias, key = scope.Owner.Key },
+                canWrite = false, purposes = scope.Block!.Purposes, maxFileSize = scope.Block.Limits.MaxFileSize, accept = scope.Block.Limits.Accept,
+                items = Array.Empty<object>(),
+                storage = new { message = Plain(error), setupUrl = await SetupUrlAsync(http) },
+            });
+        }
         return Results.Json(new {
             owner = new { alias = scope.Owner!.Alias, key = scope.Owner.Key },
             canWrite = scope.CanWrite,
             purposes = scope.Block!.Purposes,
             maxFileSize = scope.Block.Limits.MaxFileSize,
             accept = scope.Block.Limits.Accept,
-            items = items.Value!.Select(Item),
+            items = items.Select(Item),
             antiforgeryToken = http.RequestServices.GetRequiredService<IAntiforgery>().GetAndStoreTokens(http).RequestToken,
         });
     }
@@ -155,8 +167,18 @@ public static class AttachmentEndpoints
     private static async Task<(T? Value, IResult? Problem)> Run<T>(Func<Task<T>> work)
     {
         try { return (await work(), null); }
-        catch (AttachmentStoreException error) { return (default, Results.Problem(error.Message, statusCode: 503)); }
+        catch (AttachmentStoreException error) { return (default, Results.Problem(Plain(error), statusCode: 503)); }
     }
+
+    /// <summary>What anyone may be told: never the database's own words, which the log keeps.</summary>
+    private static string Plain(AttachmentStoreException error) => error.NeedsSetup
+        ? "File storage isn't set up on this site, so files can't be shown or added here yet."
+        : "File storage isn't available right now. Please try again later.";
+
+    /// <summary>The way to the setup screen, for a backoffice administrator alone. An ordinary visitor gets no pointer at all.</summary>
+    private static async Task<string?> SetupUrlAsync(HttpContext http)
+        => await http.RequestServices.GetRequiredService<ApplicationAccessPolicy>().BackOfficeAdministratorAsync(http) is null
+            ? null : http.Request.PathBase + DatabaseSetupGuide.ScreenPath;
 
     private static IResult Audited(HttpContext http, string operation, AttachmentScope scope, long? id, IResult result, int status)
     {

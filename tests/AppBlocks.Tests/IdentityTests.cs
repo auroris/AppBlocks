@@ -98,6 +98,29 @@ public sealed class IdentityTests
         Assert.Equal(allowed, await access.UserAsync(page) is not null);
     }
 
+    [Theory]
+    [InlineData(PublicAccessStatus.AccessAccepted, true)]
+    [InlineData(PublicAccessStatus.AccessDenied, false)]
+    public async Task An_existing_Member_session_is_not_replaced_by_a_backoffice_session(PublicAccessStatus status, bool allowed)
+    {
+        var member = Principal(IdentityConstants.ApplicationScheme);
+        var authentication = Stub<IAuthenticationService>((method, args) => {
+            Assert.Equal("AuthenticateAsync", method.Name);
+            Assert.Equal(IdentityConstants.ApplicationScheme, args![1]);
+            return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(member, IdentityConstants.ApplicationScheme)));
+        });
+        using var services = new ServiceCollection().AddSingleton(authentication).BuildServiceProvider();
+        var context = new DefaultHttpContext { RequestServices = services };
+        var checker = Stub<IPublicAccessChecker>((method, args) => {
+            Assert.Equal("HasMemberAccessToContentAsync", method.Name);
+            Assert.Same(member, args![1]); return Task.FromResult(status);
+        });
+        var page = Stub<IPublishedContent>((method, _) => method.Name == "get_Id" ? 42 : throw new NotImplementedException(method.Name));
+        var access = new AppPageAccess(null!, checker, new HttpContextAccessor { HttpContext = context },
+            new ApplicationAccessPolicy(Stub<IUserService>(Never)), Stub<IPublicAccessService>(Never));
+        Assert.Equal(allowed, await access.UserAsync(page) is not null);
+    }
+
     private static IReadOnlyUserGroup Group(string name, string alias) => Stub<IReadOnlyUserGroup>((method, _) => method.Name switch {
         "get_Name" => name, "get_Alias" => alias, _ => throw new NotImplementedException(method.Name),
     });

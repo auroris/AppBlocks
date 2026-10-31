@@ -8,5 +8,7 @@
     <ProjectReference Include="../../src/AppBlocks.InteractiveReports/AppBlocks.InteractiveReports.csproj" />
     <Using Include="Xunit" />
     <Compile Include="../AppBlocks.Tests/BlockPages.cs" Link="BlockPages.cs" />
+    <Compile Include="../AppBlocks.Tests/LocalDbFactAttribute.cs" Link="LocalDbFactAttribute.cs" />
+    <Compile Include="../AppBlocks.Tests/RestrictedSqlServer.cs" Link="RestrictedSqlServer.cs" />
   </ItemGroup>
 </Project>

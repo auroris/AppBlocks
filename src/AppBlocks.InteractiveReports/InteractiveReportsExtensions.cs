@@ -1,5 +1,6 @@
 using AppBlocks.InteractiveReports.Connections;
 using AppBlocks.Connections;
+using AppBlocks.Databases;
 using AppBlocks.Setup;
 using AppBlocks.InteractiveReports.Reports;
 using InteractiveReport.AspNetCore;
@@ -7,6 +8,7 @@ using InteractiveReport.Client.FileDownload;
 using InteractiveReport.Client.Json;
 using InteractiveReport.Core.Definitions;
 using InteractiveReport.Core.Execution;
+using InteractiveReport.Core.SavedReports;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Umbraco.Cms.Core.Composing;
 using Umbraco.Cms.Core.Notifications;
@@ -59,6 +61,12 @@ public static class InteractiveReportsExtensions
                 options.SavedReports.Connection = ConnectionCatalog.ApplicationConnection;
         });
         Decorate<IReportConnectionFactory>(services, (sp, inner) => new ManagedConnectionFactory(inner, sp.GetRequiredService<ConnectionCatalog>()));
+        // Reports must not depend on their saved views: while the store's table cannot be used, reads answer as an empty store.
+        var savedStore = services.Last(d => d.ServiceType == typeof(ISavedReportStore));
+        services.AddSingleton(sp => new SavedViewStore((ISavedReportStore)Create(sp, savedStore), sp.GetRequiredService<ConnectionCatalog>(),
+            sp.GetRequiredService<IReportConnectionFactory>(), sp.GetRequiredService<ILogger<SavedViewStore>>()));
+        services.Replace(ServiceDescriptor.Singleton<ISavedReportStore>(sp => sp.GetRequiredService<SavedViewStore>()));
+        services.AddSingleton<IDatabaseSetupFeature, SavedViewsDatabaseSetup>();
         // Connections only the report builder has, such as ReportsDb, remain available to forms without making the base depend on reporting.
         Decorate<IApplicationConnectionFactory>(services, (sp, inner) => new ReportConnectionBridge(inner,
             sp.GetRequiredService<AppBlocksBuilder>(), sp.GetRequiredService<ConnectionCatalog>(),

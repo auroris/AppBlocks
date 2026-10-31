@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Umbraco.Cms.Core.Composing;
 using Umbraco.Cms.Core.Notifications;
-using Umbraco.Cms.Core.Security;
 using Umbraco.Cms.Web.Common.ApplicationBuilder;
 using AppBlocks.Authentication;
 using AppBlocks.Attachments;
