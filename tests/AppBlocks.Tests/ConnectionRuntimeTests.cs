@@ -12,6 +12,14 @@ namespace AppBlocks.Tests;
 
 public sealed class ConnectionRuntimeTests
 {
+    [Fact]
+    public void A_connection_string_stays_out_of_what_a_save_request_logs()
+    {
+        var text = new SaveConnection("orders", "sqlServer", "Server=db;Password=do-not-log").ToString();
+        Assert.Contains("orders", text);
+        Assert.DoesNotContain("do-not-log", text);
+    }
+
     private const string OracleConnectionString = "User Id=app;Password=oracle-test-secret;Data Source=localhost:1521/FREEPDB1";
 
     [Theory]

@@ -13,7 +13,11 @@ using Npgsql;
 namespace AppBlocks.Connections;
 
 public sealed record ConnectionInfo(string Name, string Label, string Provider, bool IsDefault, bool ReadOnly);
-public sealed record SaveConnection(string Name, string Provider, string? ConnectionString);
+public sealed record SaveConnection(string Name, string Provider, string? ConnectionString)
+{
+    /// <summary>Without the connection string: MVC writes an action's arguments to the log when tracing is on, and this is what it writes.</summary>
+    public override string ToString() => $"{nameof(SaveConnection)} {{ {nameof(Name)} = {Name}, {nameof(Provider)} = {Provider} }}";
+}
 internal sealed record StoredConnection(string Name, string Provider, string ProtectedValue, string Revision);
 internal sealed record ConnectionMaterial(string Provider, string Value, string Revision, bool LocalDefault = false);
 

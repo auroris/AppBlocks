@@ -58,7 +58,7 @@ public sealed class ApplicationDatabaseResolutionTests : IDisposable
         // As the setup screen and the readiness checks do, for the registered database and AppBlocks' own, and as its connection list does.
         foreach (var name in new[] { Name, ConnectionCatalog.ApplicationConnection })
             using (var connection = site.Catalog.Inspectable(name))
-                Assert.False((await AppBlocks.Databases.DatabaseInspector.InspectAsync(connection, ["THINGS"], false, default)).Reachable);
+                Assert.Equal(AppBlocks.Databases.InspectedTableState.Missing, (await AppBlocks.Databases.DatabaseInspector.InspectAsync(connection, ["THINGS"], false, default)).StateOf("THINGS"));
         Assert.Contains(site.Catalog.List(), connection => connection.Name == Name);
         Assert.False(Directory.Exists(folder));
         Open(site.Connections);
