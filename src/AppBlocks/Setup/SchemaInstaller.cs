@@ -1,7 +1,9 @@
+using System.Net;
 using System.Xml.Linq;
 using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Events;
 using Umbraco.Cms.Core.Models;
+using Umbraco.Cms.Core.Models.Entities;
 using Umbraco.Cms.Core.Notifications;
 using Umbraco.Cms.Core.PropertyEditors;
 using Umbraco.Cms.Core.Scoping;
@@ -12,7 +14,7 @@ using Umbraco.Cms.Core.Strings;
 namespace AppBlocks.Setup;
 
 /// <summary>
-/// Adds missing package definitions, then runs the migrations, which add to an existing definition only what they name.
+/// Installs missing package definitions from the current schema for a fresh site.
 /// Existing site definitions are never replaced on startup. Runs when the application has started, and a site that
 /// imports definitions from elsewhere first calls <see cref="EnsureAsync"/> itself, as UmbracoAppHost does for uSync.
 /// </summary>
@@ -20,7 +22,7 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
     IContentTypeContainerService contentFolders, IDataTypeContainerService dataFolders,
     PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer, IShortStringHelper strings,
     ICoreScopeProvider scopes, ILogger<SchemaInstaller> logger, IEnumerable<AppBlocksSchema> schemas,
-    IEnumerable<IAppBlocksSchemaMigration> migrations, SchemaProperties properties, IRuntimeState runtime)
+    SchemaProperties properties, IRuntimeState runtime)
     : INotificationAsyncHandler<UmbracoApplicationStartedNotification>
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -47,7 +49,7 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
                 var editorAlias = Value(info, "EditorAlias");
                 var editor = editors.FirstOrDefault(e => e.Alias == editorAlias)
                     ?? throw new InvalidOperationException($"AppBlocks data type '{Value(info, "Name")}' requires missing editor '{editorAlias}'.");
-                var type = new DataType(editor, serializer, (await SchemaFolders.EnsureAsync(dataFolders, Value(info, "Folder")))?.Id ?? -1)
+                var type = new DataType(editor, serializer, await FolderAsync(dataFolders, Value(info, "Folder")))
                 {
                     Key = key,
                     Name = Value(info, "Name"),
@@ -81,22 +83,21 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
                 ct.ThrowIfCancellationRequested();
                 var children = definition.Element("Structure")!.Elements("ContentType").ToArray();
                 if (children.Length == 0) continue;
-                type.AllowedContentTypes = children.Select(child =>
+                var allowed = new List<ContentTypeSort>();
+                foreach (var child in children.OrderBy(child => (int)child.Attribute("SortOrder")!))
                 {
                     var key = Guid.Parse(child.Attribute("Key")!.Value);
-                    var target = contentTypes.Get(key) ?? contentTypes.Get(child.Value.Trim())
-                        ?? throw new InvalidOperationException($"AppBlocks content type '{type.Alias}' requires missing child type '{child.Value}'.");
-                    return new ContentTypeSort(target.Key, (int)child.Attribute("SortOrder")!, target.Alias);
-                }).ToArray();
+                    var target = contentTypes.Get(key) ?? contentTypes.Get(child.Value.Trim());
+                    // A fresh site can install the base package without its optional companions.
+                    if (target is null && (bool?)child.Attribute("Optional") == true) continue;
+                    if (target is null) throw new InvalidOperationException($"AppBlocks content type '{type.Alias}' requires missing child type '{child.Value}'.");
+                    allowed.Add(new ContentTypeSort(target.Key, allowed.Count, target.Alias));
+                }
+                type.AllowedContentTypes = allowed;
                 var result = await contentTypes.UpdateAsync(type, Constants.Security.SuperUserKey);
                 if (!result.Success) throw new InvalidOperationException($"AppBlocks could not install child types for '{type.Alias}': {result.Result}.");
             }
 
-            foreach (var migration in migrations)
-            {
-                ct.ThrowIfCancellationRequested();
-                await migration.EnsureAsync(ct);
-            }
             ct.ThrowIfCancellationRequested();
             scope.Complete();
             if (installed > 0) logger.LogInformation("Installed {Count} missing AppBlocks definitions.", installed);
@@ -114,7 +115,7 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
         if (info.Element("Compositions")!.HasElements || info.Element("AllowedTemplates")!.HasElements
             || Value(info, "DefaultTemplate").Length > 0)
             throw new InvalidOperationException($"AppBlocks schema '{definition.Attribute("Alias")!.Value}' must not declare site templates or compositions.");
-        var type = new ContentType(strings, (await SchemaFolders.EnsureAsync(contentFolders, Value(info, "Folder")))?.Id ?? -1)
+        var type = new ContentType(strings, await FolderAsync(contentFolders, Value(info, "Folder")))
         {
             Key = Guid.Parse(definition.Attribute("Key")!.Value),
             Alias = definition.Attribute("Alias")!.Value,
@@ -140,6 +141,26 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
         foreach (var property in definition.Element("GenericProperties")!.Elements("GenericProperty"))
             SchemaProperties.Add(type, await properties.PropertyAsync(type.Alias, property), (string?)property.Element("Tab")?.Attribute("Alias"));
         return type;
+    }
+
+    private static async Task<int> FolderAsync<T>(IEntityTypeContainerService<T> folders, string path) where T : ITreeEntity
+    {
+        EntityContainer? parent = null;
+        var level = 1;
+        foreach (var segment in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var name = WebUtility.UrlDecode(segment);
+            var folder = (await folders.GetAsync(name, level++)).FirstOrDefault(f => f.ParentId == (parent?.Id ?? -1));
+            if (folder is null)
+            {
+                var result = await folders.CreateAsync(null, name, parent?.Key, Constants.Security.SuperUserKey);
+                if (!result.Success || result.Result is null)
+                    throw new InvalidOperationException($"AppBlocks could not create schema folder '{path}': {result.Status}.");
+                folder = result.Result;
+            }
+            parent = folder;
+        }
+        return parent?.Id ?? -1;
     }
 
     private static string Value(XElement element, string name) => SchemaProperties.Value(element, name);

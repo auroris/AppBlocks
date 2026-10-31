@@ -65,6 +65,12 @@ for (const name of packages) {
       assert.ok(response.ok(), `${name}/${file}: ${response.status()} ${await response.text()}`);
       const definition = await response.json();
       assert.equal(definition.id, key);
+      if (key === '0ec4f87b-ecaf-9c30-dbce-df5a5ade88f4') {
+        const expectedChildren = ['6a79805a-4170-811d-64a8-83ee1422bade',
+          ...(companions ? ['cf9efe5f-6142-c0a0-360e-bd3b4bc20882'] : []), '8b8fef37-dbd6-38e5-04d6-9c3bb55c3472'];
+        assert.deepEqual(definition.allowedDocumentTypes.sort((a, b) => a.sortOrder - b.sortOrder).map(child => child.documentType.id), expectedChildren);
+        passed('Fresh Data sources structure includes exactly the installed child types');
+      }
       const folderPath = xml.match(/<Folder>([^<]+)<\/Folder>/)?.[1];
       assert.ok(folderPath === 'AppBlocks' || folderPath?.startsWith('AppBlocks/'), `${name}/${file}: AppBlocks folder`);
       const ancestors = await admin.get(`/umbraco/management/api/v1/tree/${endpoint}/ancestors?descendantId=${key}`);

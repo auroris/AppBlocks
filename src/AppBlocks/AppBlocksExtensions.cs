@@ -39,10 +39,6 @@ public static class AppBlocksExtensions
         services.AddSingleton<IApplicationConnectionFactory, ApplicationConnections>();
         services.AddSingleton(new Setup.AppBlocksSchema(typeof(AppBlocksExtensions).Assembly));
         services.AddScoped<Setup.SchemaProperties>();
-        services.AddScoped<Setup.IAppBlocksSchemaMigration, Setup.SchemaFolderMigration>();
-        services.AddScoped<Setup.IAppBlocksSchemaMigration, Setup.FormClassMigration>();
-        services.AddScoped<Setup.IAppBlocksSchemaMigration, Setup.DataSourceSchemaMigration>();
-        services.AddScoped<Setup.IAppBlocksSchemaMigration, Setup.RowSourceSchemaMigration>();
         services.AddDataProtection();
         services.AddSingleton<ConnectionCatalog>();
         services.AddScoped<ConnectionTables>();

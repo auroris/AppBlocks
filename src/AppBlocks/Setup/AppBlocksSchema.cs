@@ -18,8 +18,3 @@ public sealed record AppBlocksSchema(Assembly Assembly)
         }
     }
 }
-
-public interface IAppBlocksSchemaMigration
-{
-    Task EnsureAsync(CancellationToken cancellationToken);
-}

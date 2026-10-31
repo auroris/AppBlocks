@@ -1,0 +1,164 @@
+using AppBlocks.DataSources;
+using AppBlocks.Schedules;
+
+namespace AppBlocks.Tests;
+
+/// <summary>
+/// The Schedule block's layout apart from a site: the lane packing, the window from the address or the settings, the
+/// bars placed, clamped and grouped, the legend, and the link template.
+/// </summary>
+public sealed class ScheduleLayoutTests
+{
+    // Thursday 29 October 2026 in the afternoon; the default window below runs from Tuesday the 27th to Monday 2 November.
+    private static readonly DateTime Now = new(2026, 10, 29, 14, 5, 0);
+    private static readonly ScheduleSettings Settings = new(null, null, "rows", "bars", 2, 4, ScheduleScale.Days, null);
+
+    [Fact]
+    public void Bars_take_the_first_free_lane_so_overlapping_bars_stay_apart()
+    {
+        // 0-2 and 1-3 overlap; 3-4 fits back into the first lane behind 0-2; 6-6 shares a column with 5-6 and moves down.
+        var (lanes, count) = ScheduleLanes.Pack([(0, 2), (1, 3), (3, 4), (5, 6), (6, 6)]);
+        Assert.Equal(new[] { 0, 1, 0, 0, 1 }, lanes);
+        Assert.Equal(2, count);
+        var empty = ScheduleLanes.Pack([]);
+        Assert.Empty(empty.Lanes);
+        Assert.Equal(1, empty.Count);
+        // A span written backwards is one column.
+        Assert.Equal(new[] { 0, 1 }, ScheduleLanes.Pack([(4, 2), (4, 4)]).Lanes);
+        Assert.Equal(new[] { 0, 0 }, ScheduleLanes.Pack([(4, 2), (5, 5)]).Lanes);
+    }
+
+    [Fact]
+    public void The_window_comes_from_the_address_or_the_settings_and_never_runs_wild()
+    {
+        var defaults = ScheduleWindow.Resolve(Settings, null, Now);
+        Assert.Equal((new DateOnly(2026, 10, 27), new DateOnly(2026, 11, 2), 7), (defaults.From, defaults.To, defaults.Columns));
+        Assert.Equal(2, defaults.TodayColumn);
+        var asked = ScheduleWindow.Resolve(Settings, Query(("FROM", "2026-06-01"), ("to", "2026-06-30T10:00:00")), Now);
+        Assert.Equal((new DateOnly(2026, 6, 1), new DateOnly(2026, 6, 30)), (asked.From, asked.To));
+        Assert.Null(asked.TodayColumn);
+        // A parameter that is not a date is ignored; an end before the start becomes the start.
+        var odd = ScheduleWindow.Resolve(Settings, Query(("from", "yesterday"), ("to", "2026-01-01")), Now);
+        Assert.Equal((new DateOnly(2026, 10, 27), new DateOnly(2026, 10, 27), 1), (odd.From, odd.To, odd.Columns));
+        var wide = ScheduleWindow.Resolve(Settings, Query(("from", "2020-01-01"), ("to", "2030-01-01")), Now);
+        Assert.Equal(ScheduleSettings.MaxDays, wide.Columns);
+        var hours = ScheduleWindow.Resolve(Settings with { Scale = ScheduleScale.Hours }, Query(("from", "2026-10-01"), ("to", "2026-12-31")), Now);
+        Assert.Equal(ScheduleSettings.MaxHourDays * 24, hours.Columns);
+        // The dates shown reach the sources as :PARAM.from and :PARAM.to, beside the page's own parameters.
+        var bound = defaults.Parameters(Query(("id", "4")));
+        Assert.Equal(("2026-10-27", "2026-11-02", "4"), (bound["from"], bound["TO"], bound["id"]));
+        Assert.Equal((new DateOnly(2026, 11, 3), new DateOnly(2026, 11, 9)), (defaults.Shift(1).From, defaults.Shift(1).To));
+        Assert.Equal(new DateOnly(2026, 10, 20), defaults.Shift(-1).From);
+    }
+
+    [Fact]
+    public void Settings_read_their_defaults_and_scale()
+    {
+        var settings = ScheduleSettings.Read(alias => alias switch {
+            ScheduleSettings.RowsSourceAlias => " rooms ", ScheduleSettings.BarsSourceAlias => "stays", ScheduleSettings.DaysBeforeAlias => "",
+            ScheduleSettings.DaysAfterAlias => "x", ScheduleSettings.ColumnsAlias => "hours", _ => null,
+        });
+        Assert.Equal(("rooms", "stays", ScheduleSettings.DefaultDaysBefore, ScheduleSettings.DefaultDaysAfter, ScheduleScale.Hours),
+            (settings.RowsSource, settings.BarsSource, settings.DaysBefore, settings.DaysAfter, settings.Scale));
+        Assert.Null(settings.LinkTemplate);
+        Assert.Equal(ScheduleScale.Days, ScheduleSettings.ParseScale(null));
+        Assert.Null(ScheduleSettings.ParseScale("weeks"));
+    }
+
+    [Fact]
+    public void Bars_are_placed_in_lanes_clamped_to_the_window_and_grouped_with_a_legend()
+    {
+        var window = ScheduleWindow.Resolve(Settings, null, Now);
+        var rows = Result([("KEY", "key"), ("LABEL", "label"), ("GROUP", "group")],
+            Row(("KEY", "101"), ("LABEL", "Room 101"), ("GROUP", "Main building")),
+            Row(("KEY", "102"), ("LABEL", "Room 102"), ("GROUP", "Main building")),
+            Row(("KEY", "201"), ("LABEL", null), ("GROUP", "Annex")),
+            Row(("KEY", "101"), ("LABEL", "Repeated key"), ("GROUP", "Annex")),
+            Row(("KEY", ""), ("LABEL", "No key"), ("GROUP", null)));
+        // The bars' key column is STAY_ID mapped to the field alias key, as a data source's mapping would do.
+        var bars = Result([("STAY_ID", "key"), ("ROW", "row"), ("START", "start"), ("END", "end"), ("LABEL", "label"), ("KIND", "kind"), ("LINK", "link")],
+            Bar(1, "101", "2026-10-27", "2026-10-28", "Smith", "Stay", null),
+            Bar(2, "101", "2026-10-28", "2026-10-30", "Jones", "Stay", null),
+            Bar(3, "101", "2026-10-31", null, "Repair", "Repair", "/repairs/3"),
+            Bar(4, "102", "2026-10-20", "2026-10-28", "Early", "Stay", null),
+            Bar(5, "102", new DateTime(2026, 11, 1, 18, 0, 0), "2026-11-10", "Late", "Block", null),
+            Bar(6, "201", "2026-09-01", "2026-09-05", "Gone", "Stay", null),
+            Bar(7, "999", "2026-10-29", "2026-10-29", "Lost", "Stay", null),
+            Bar(8, "201", "2026-10-29", "2026-10-28", "Backwards", "", null));
+        var layout = ScheduleLayout.Build(window, rows, bars, "/stays/?id={key}&room={row}", "/wing");
+
+        Assert.Equal((3, 6), (layout.RowCount, layout.BarCount));
+        Assert.Equal(new[] { "Main building", "Annex" }, layout.Groups.Select(g => g.Title));
+        var room101 = layout.Groups[0].Rows[0];
+        Assert.Equal(("101", "Room 101", 2), (room101.Key, room101.Label, room101.Lanes));
+        var smith = room101.Bars.Single(b => b.Label == "Smith");
+        Assert.Equal((0, 2, 0), (smith.Start, smith.Span, smith.Lane));
+        Assert.Equal("/wing/stays/?id=1&room=101", smith.Link);
+        var jones = room101.Bars.Single(b => b.Label == "Jones");
+        Assert.Equal((1, 3, 1), (jones.Start, jones.Span, jones.Lane));
+        var repair = room101.Bars.Single(b => b.Label == "Repair");
+        Assert.True(repair.OpenEnded);
+        Assert.False(repair.ClippedEnd);
+        Assert.Equal((4, 3, 0), (repair.Start, repair.Span, repair.Lane));
+        Assert.Equal("/wing/repairs/3", repair.Link);
+        var room102 = layout.Groups[0].Rows[1];
+        Assert.Equal(1, room102.Lanes);
+        var early = room102.Bars.Single(b => b.Label == "Early");
+        Assert.True(early.ClippedStart);
+        Assert.Equal((0, 2), (early.Start, early.Span));
+        var late = room102.Bars.Single(b => b.Label == "Late");
+        Assert.True(late.ClippedEnd);
+        Assert.False(late.OpenEnded);
+        Assert.Equal((5, 2), (late.Start, late.Span));
+        // A row without a label shows its key; a bar whose end precedes its start covers one column and has no kind.
+        var annex = Assert.Single(layout.Groups[1].Rows);
+        Assert.Equal("201", annex.Label);
+        var backwards = Assert.Single(annex.Bars);
+        Assert.Equal((2, 1, null, 0), (backwards.Start, backwards.Span, backwards.Kind, backwards.KindIndex));
+        Assert.Equal(new[] { "Stay", "Repair", "Block" }, layout.Legend.Select(l => l.Kind));
+        Assert.Equal(new[] { 1, 2, 3 }, layout.Legend.Select(l => l.Index));
+        Assert.Equal((1, 2, 3), (smith.KindIndex, repair.KindIndex, late.KindIndex));
+        // Saturday 31 October and Sunday 1 November are weekends; today is the third column; October has five columns, November two.
+        Assert.Equal(new[] { 4, 5 }, layout.Columns.Where(c => c.IsWeekend).Select(c => c.Index));
+        Assert.Equal(2, layout.TodayColumn);
+        Assert.Single(layout.Columns, c => c.IsToday);
+        Assert.Equal(new[] { (10, 5), (11, 2) }, layout.HeaderGroups.Select(g => (g.Start.Month, g.Span)));
+    }
+
+    [Fact]
+    public void Hour_columns_span_each_day_of_the_window_and_place_bars_by_the_hour()
+    {
+        var window = ScheduleWindow.Resolve(Settings with { Scale = ScheduleScale.Hours, DaysBefore = 0, DaysAfter = 1 }, null, Now);
+        var layout = ScheduleLayout.Build(window,
+            Result([("KEY", "key"), ("LABEL", "label"), ("GROUP", "group")], Row(("KEY", "A"), ("LABEL", "Hangar A"), ("GROUP", null))),
+            Result([("KEY", "key"), ("ROW", "row"), ("START", "start"), ("END", "end"), ("LABEL", "label"), ("KIND", "kind"), ("LINK", "link")],
+                Bar(1, "A", "2026-10-29 09:30:00", "2026-10-29 11:00:00", "Inspection", "", null)));
+        Assert.Equal(48, layout.Columns.Count);
+        Assert.Equal(new[] { (29, 24), (30, 24) }, layout.HeaderGroups.Select(g => (g.Start.Day, g.Span)));
+        Assert.Equal(14, layout.TodayColumn);
+        var bar = Assert.Single(Assert.Single(layout.Rows).Bars);
+        Assert.Equal((9, 3), (bar.Start, bar.Span));
+        Assert.Null(Assert.Single(layout.Groups).Title);
+        Assert.Empty(layout.Legend);
+    }
+
+    [Theory]
+    [InlineData("/orders-form/?id={key}", "/orders-form/?id=4")]
+    [InlineData("https://example.test/{KEY}/{ row }", "https://example.test/4/Acme%20Corp")]
+    [InlineData("/x?a={missing}&b={label}", "/x?a=&b=Order%204")]
+    [InlineData("{key", "{key")]
+    public void A_link_template_takes_the_bars_columns_encoded(string template, string expected)
+        => Assert.Equal(expected, ScheduleLayout.Link(template, new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["KEY"] = 4L, ["ROW"] = "Acme Corp", ["LABEL"] = "Order 4" }));
+
+    private static Dictionary<string, string> Query(params (string Name, string Value)[] values)
+        => values.ToDictionary(v => v.Name, v => v.Value, StringComparer.OrdinalIgnoreCase);
+
+    private static DataSourceQueryResult Result((string Column, string Field)[] columns, params Dictionary<string, object?>[] rows)
+        => new(columns.Select(c => new DataSourceQueryColumn(c.Column, c.Field, "text")).ToArray(), rows);
+
+    private static Dictionary<string, object?> Row(params (string Column, object? Value)[] values)
+        => values.ToDictionary(v => v.Column, v => v.Value, StringComparer.OrdinalIgnoreCase);
+
+    private static Dictionary<string, object?> Bar(long key, string row, object? start, object? end, string label, string kind, string? link)
+        => Row(("STAY_ID", key), ("KEY", key), ("ROW", row), ("START", start), ("END", end), ("LABEL", label), ("KIND", kind), ("LINK", link));
+}

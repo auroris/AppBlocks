@@ -1,5 +1,4 @@
 using System.Xml.Linq;
-using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Core.Strings;
@@ -7,38 +6,10 @@ using Umbraco.Cms.Core.Strings;
 namespace AppBlocks.Setup;
 
 /// <summary>
-/// The schema's properties as Umbraco objects, and the migrations' way to give a site that installed a type from an
-/// older schema a property added since. The property's key, name and editor all come from the schema file.
+/// Builds properties and groups for newly installed definitions from their schema files.
 /// </summary>
-public sealed class SchemaProperties(IContentTypeService contentTypes, IDataTypeService dataTypes, IShortStringHelper strings,
-    IEnumerable<AppBlocksSchema> schemas)
+public sealed class SchemaProperties(IDataTypeService dataTypes, IShortStringHelper strings)
 {
-    /// <summary>
-    /// Adds the named properties to the type the schema installed, when it lacks them. A type a site made itself under
-    /// the same alias is not the schema's, and is left alone. So is a companion's type that is not installed.
-    /// </summary>
-    public async Task AddMissingAsync(string alias, params string[] properties)
-    {
-        var definition = Definition(alias);
-        if (contentTypes.Get(Guid.Parse(definition.Attribute("Key")!.Value)) is not { } type) return;
-        var missing = definition.Element("GenericProperties")!.Elements("GenericProperty")
-            .Where(p => properties.Contains(Value(p, "Alias")) && !type.PropertyTypeExists(Value(p, "Alias"))).ToArray();
-        if (missing.Length == 0) return;
-        foreach (var property in missing)
-        {
-            var group = (string?)property.Element("Tab")?.Attribute("Alias");
-            if (!string.IsNullOrEmpty(group) && !type.PropertyGroups.Contains(group))
-                type.PropertyGroups.Add(Group(definition.Element("Tabs")!.Elements("Tab").Single(tab => Value(tab, "Alias") == group)));
-            Add(type, await PropertyAsync(type.Alias, property), group);
-        }
-        var result = await contentTypes.UpdateAsync(type, Constants.Security.SuperUserKey);
-        if (!result.Success) throw new InvalidOperationException($"AppBlocks could not add {string.Join(", ", missing.Select(p => Value(p, "Alias")))} to '{alias}': {result.Result}.");
-    }
-
-    /// <summary>The schema's definition of a content type.</summary>
-    public XElement Definition(string alias) => schemas.DistinctBy(s => s.Assembly).SelectMany(s => s.Definitions("ContentTypes"))
-        .Single(d => d.Attribute("Alias")!.Value == alias);
-
     internal async Task<PropertyType> PropertyAsync(string typeAlias, XElement property)
     {
         var dataTypeKey = Guid.Parse(Value(property, "Definition"));

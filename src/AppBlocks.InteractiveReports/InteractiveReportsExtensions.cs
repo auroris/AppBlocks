@@ -42,8 +42,6 @@ public static class InteractiveReportsExtensions
         services.TryAddScoped<IReportAccessPolicy, DefaultReportAccessPolicy>();
         services.AddControllersWithViews().AddApplicationPart(typeof(InteractiveReportsExtensions).Assembly);
         services.AddSingleton(new AppBlocksSchema(typeof(InteractiveReportsExtensions).Assembly));
-        services.AddScoped<IAppBlocksSchemaMigration, ReportBlockMigration>();
-        services.AddScoped<IAppBlocksSchemaMigration, ReportDefinitionChildMigration>();
         services.AddScoped<IAppBlockPlugin, InteractiveReportBlock>();
         services.AddScoped<IAppBlocksCatalogueContributor, ReportCatalogueContributor>();
         services.AddSingleton<ReportPrintPreviews>();
