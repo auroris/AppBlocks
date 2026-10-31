@@ -8,13 +8,14 @@ import "./business-rules.js";
 const providers = { sqlite: "SQLite", sqlServer: "SQL Server", postgres: "PostgreSQL", oracle11g: "Oracle 11.2", oracle: "Oracle 12+", unknown: "Unknown" };
 const featureStates = { ready: "Ready", automatic: "Created on first use", action: "Needs setup", unsupported: "Not supported here", unreachable: "Cannot connect", siteManaged: "Managed by the site" };
 const tableStates = { ready: "In place", missing: "Not found", noAccess: "No read and write access" };
+const secretStates = { none: "Not set", configuration: "Set in site configuration", saved: "Set here, encrypted", unreadable: "Saved, but cannot be read" };
 
 export default class AppBlocksDashboard extends UmbLitElement {
     static properties = {
         companionPages: { state: true }, companionView: { state: true }, tab: { state: true }, forms: { state: true }, connections: { state: true }, issues: { state: true },
         error: { state: true }, message: { state: true }, busy: { state: true }, loading: { state: true },
         editing: { state: true }, sample: { state: true }, selectedForm: { state: true }, search: { state: true },
-        setup: { state: true }, setupLoading: { state: true }, script: { state: true },
+        setup: { state: true }, setupLoading: { state: true }, script: { state: true }, antiSpam: { state: true }, antiSpamEditing: { state: true },
     };
     static styles = css`
         :host { display:block; height:100%; min-height:0; color:var(--uui-color-text); container-type:inline-size; }
@@ -53,7 +54,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
         @container(max-width:760px) { .header small, uui-tab umb-icon { display:none; } uui-tab-group { max-width:65cqw; overflow-x:auto; } .summary { grid-template-columns:1fr; } }
     `;
     constructor() {
-        super(); this.companionPages = []; this.tab = new URLSearchParams(location.search).get("tab") === "setup" ? "setup" : "forms"; this.setup = []; this.forms = []; this.connections = []; this.issues = []; this.search = ""; this.loading = true;
+        super(); this.companionPages = []; this.tab = new URLSearchParams(location.search).get("tab") === "setup" ? "setup" : "forms"; this.setup = []; this.antiSpam = []; this.forms = []; this.connections = []; this.issues = []; this.search = ""; this.loading = true;
         this.consumeContext(UMB_AUTH_CONTEXT, auth => { if (auth) { this.auth = auth; this.load(); } });
     }
     async load() {
@@ -72,6 +73,18 @@ export default class AppBlocksDashboard extends UmbLitElement {
         try { this.setup = await request(this.auth, "database-setup"); }
         catch (error) { this.error = error.message; }
         finally { this.setupLoading = false; }
+    }
+    async loadAntiSpam() {
+        try { this.antiSpam = await request(this.auth, "anti-spam"); }
+        catch (error) { this.error = error.message; }
+    }
+    async saveAntiSpam(service, changes) {
+        this.busy = true; this.error = undefined; this.message = undefined;
+        try {
+            this.antiSpam = await request(this.auth, "anti-spam", { service: service.alias, ...changes });
+            this.antiSpamEditing = undefined; this.message = `${service.name} keys saved.`;
+        } catch (error) { this.error = error.message; }
+        finally { this.busy = false; }
     }
     async scriptOf(feature) {
         if (this.script?.alias === feature.alias) return this.script.text;
@@ -99,6 +112,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
     selectTab(tab) {
         this.tab = tab; this.error = undefined; this.message = undefined;
         if (tab === "setup") this.loadSetup();
+        if (tab === "anti-spam") this.loadAntiSpam();
     }
     async showSample(form) {
         this.busy = true; this.error = undefined;
@@ -160,6 +174,16 @@ export default class AppBlocksDashboard extends UmbLitElement {
             ${feature.tables.length ? html`<div class="table"><table><thead><tr><th>Table</th><th>State</th></tr></thead><tbody>${feature.tables.map(table => html`<tr><td><strong>${table.name}</strong>${table.required ? "" : html`<small>Used only by the saved report administration page.</small>`}</td><td>${tableStates[table.state] ?? table.state}</td></tr>`)}</tbody></table></div>` : ""}
             <p>${feature.lost}</p>${remedies}</uui-box>`;
     }
+    renderAntiSpam() {
+        const editing = this.antiSpam.find(service => service.alias === this.antiSpamEditing);
+        if (editing) return html`<uui-box class="panel"><h2>${editing.name} keys</h2><form class="form" data-anti-spam-keys @submit=${event => { event.preventDefault(); this.saveAntiSpam(editing, Object.fromEntries(new FormData(event.target).entries())); }}>
+            ${editing.siteKeyManaged ? html`<p>The site key is set in the site's configuration.</p>` : html`<label for="anti-spam-site-key">Site key</label><input id="anti-spam-site-key" name="siteKey" maxlength="256" pattern="[A-Za-z0-9_.:\\-]*" autocomplete="off" .value=${editing.siteKey ?? ""}><p class="hint">Public. Used by any Anti-spam block that leaves its own empty.</p>`}
+            ${editing.secret === "configuration" ? html`<p>The secret key is set in the site's configuration.</p>` : html`<label for="anti-spam-secret">Secret key</label><input id="anti-spam-secret" name="secretKey" type="password" autocomplete="new-password" maxlength="1024" placeholder=${editing.secret === "none" ? "Enter the secret key" : "Leave blank to keep the saved secret key"}><p class="hint">Stored encrypted for this installation. Excluded from content exports. It is never shown again.</p>`}
+            <div class="actions"><button type="submit" class="primary" ?disabled=${this.busy}>Save keys</button>${editing.secret === "saved" || editing.secret === "unreadable" ? html`<button type="button" ?disabled=${this.busy} @click=${() => this.saveAntiSpam(editing, { removeSecret: true })}>Remove the saved secret key</button>` : ""}<button type="button" ?disabled=${this.busy} @click=${() => this.antiSpamEditing = undefined}>Cancel</button></div></form></uui-box>`;
+        return html`<uui-box class="panel"><div class="toolbar"><div><h2>Anti-spam</h2><p>The keys behind the Anti-spam block, which editors place inside a form. A form using a service with no secret key refuses every submission. The honeypot needs no keys.</p></div></div>
+            <div class="table"><table><thead><tr><th>Service</th><th>Site key</th><th>Secret key</th><th>Status</th><th></th></tr></thead><tbody>${this.antiSpam.map(service => html`<tr data-service=${service.alias}><td><strong>${service.name}</strong></td><td>${service.siteKey ?? "On each block"}</td><td>${secretStates[service.secret] ?? service.secret}</td><td>${service.problem ? html`<span class="badge action">Refusing submissions</span><small role="alert">${service.problem}</small>` : service.secret === "configuration" || service.secret === "saved" ? html`<span class="badge ready">No problems seen</span>` : html`<span class="badge">Not set up</span>`}</td><td>${service.secret === "configuration" && service.siteKeyManaged ? "" : html`<button @click=${() => { this.antiSpamEditing = service.alias; this.message = undefined; this.error = undefined; }}>Set keys</button>`}</td></tr>`)}</tbody></table></div>
+            <p>A problem clears itself once the service answers again. These services load third-party scripts in the visitor's browser and may need cookie consent on some sites; consent handling stays with the site. This is not a rate limit: see the business rules.</p></uui-box>`;
+    }
     renderHelp() {
         return html`<uui-box class="panel"><p class="eyebrow">Build your first form</p><h2>From database to working page</h2><p>Simple forms use the built-in data-source engine. Custom behaviour can use a C# resource.</p><div class="steps">
             ${[["Choose a database", "The default AppBlocks.sqlite.db sits beside Umbraco’s SQLite file. Forms, saved report views and uploads share it. Add other named connections on the Connections tab."], ["Choose a table", "Create your application tables, then in Content create a Data sources root and add a SQL data source. Give it an alias, choose its connection and table, and specify the key column. Choose whether it allows creating, editing or deleting rows, then publish it."], ["Build the form", "Add Forms container and Interactive Report to the allowed blocks in your site’s Block Grid or Block List. Add a Forms container to any page, then a Form with its interface, fields and actions. Reports choose a data source and save their view on the block."], ["Set access and publish", "Choose which Umbraco Members or backoffice Users may use the form. Enforce those rules in your resource or data-source policy; Member Public Access and configured Member Groups still apply."], ["Add your business rules", "Open the Forms tab to download a sample for any saved form. Use the shared guide for user identity, groups, ownership and validation."]].map(([title,body],index) => html`<article><span class="step">${index+1}</span><div><h3>${title}</h3><p>${body}</p></div></article>`)}</div><div class="actions"><button @click=${() => this.selectTab("business-rules")}>Read business rules</button><a href="https://www.connectionstrings.com/" target="_blank" rel="noopener noreferrer">Connection string examples ↗</a></div></uui-box>`;
@@ -168,7 +192,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
         return html`<umb-body-layout>
             <div slot="header" class="header"><umb-icon name="icon-box" aria-hidden="true"></umb-icon><div><h1>AppBlocks</h1><small>Forms and reports</small></div></div>
             <uui-tab-group slot="navigation" aria-label="AppBlocks views">
-                ${[["forms","Forms","icon-document"],["connections","Connections","icon-server"],["setup","Database setup","icon-settings"],["help","Getting started","icon-help"],["business-rules","Business rules","icon-book-alt"]].map(([key,label,icon]) => html`<uui-tab label=${label} ?active=${this.tab === key} @click=${() => this.selectTab(key)}><umb-icon slot="icon" name=${icon} aria-hidden="true"></umb-icon>${label}</uui-tab>`)}
+                ${[["forms","Forms","icon-document"],["connections","Connections","icon-server"],["setup","Database setup","icon-settings"],["anti-spam","Anti-spam","icon-shield"],["help","Getting started","icon-help"],["business-rules","Business rules","icon-book-alt"]].map(([key,label,icon]) => html`<uui-tab label=${label} ?active=${this.tab === key} @click=${() => this.selectTab(key)}><umb-icon slot="icon" name=${icon} aria-hidden="true"></umb-icon>${label}</uui-tab>`)}
                 ${this.companionPages.map(page => html`<uui-tab label=${page.label} ?active=${this.tab === page.alias} @click=${() => this.showCompanion(page)}><umb-icon slot="icon" name="icon-document" aria-hidden="true"></umb-icon>${page.label}</uui-tab>`)}
             </uui-tab-group>
             ${this.tab !== "business-rules" ? html`<div class="intro"><p>Forms and reports, connected to your data.</p><uui-button look="secondary" label="Refresh" ?disabled=${this.loading} @click=${this.load}><umb-icon name="icon-refresh" aria-hidden="true"></umb-icon> Refresh</uui-button></div>
@@ -179,7 +203,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
             </div>
             ` : ""}
             <div aria-live="polite">${this.error ? html`<div class="error" role="alert">${this.error}</div>` : ""}${this.message ? html`<div class="notice">${this.message}</div>` : ""}</div>
-            ${this.loading ? html`<p role="status">Loading AppBlocks…</p>` : this.tab === "forms" ? this.renderForms() : this.tab === "connections" ? this.renderConnections() : this.tab === "setup" ? this.renderSetup() : this.tab === "help" ? this.renderHelp() : this.tab === "business-rules" ? html`<appblocks-business-rules></appblocks-business-rules>` : this.companionView}
+            ${this.loading ? html`<p role="status">Loading AppBlocks…</p>` : this.tab === "forms" ? this.renderForms() : this.tab === "connections" ? this.renderConnections() : this.tab === "setup" ? this.renderSetup() : this.tab === "anti-spam" ? this.renderAntiSpam() : this.tab === "help" ? this.renderHelp() : this.tab === "business-rules" ? html`<appblocks-business-rules></appblocks-business-rules>` : this.companionView}
         </umb-body-layout>`;
     }
 }

@@ -108,6 +108,134 @@ public sealed class DatabaseSetupTests
         SqlConnection.ClearAllPools();
     }
 
+    // A login's unqualified names mean its default schema, so that is where the store's tables go when it creates them.
+    private const string OwnSchema = "app_files";
+
+    [LocalDbFact]
+    public async Task A_login_with_its_own_default_schema_is_told_to_grant_there_and_every_table_lands_there()
+    {
+        await using var database = await RestrictedSqlServer.CreateAsync(OwnSchema);
+        var site = Site(database.AccountConnection, connection => new SqlConnection(connection));
+        Assert.Equal(AttachmentStoreProblem.NotSetUp, (await Assert.ThrowsAsync<AttachmentStoreException>(() => site.Store().ListAsync(Order, default))).Problem);
+        var before = await site.Setup().StatusAsync(default);
+        Assert.Equal(DatabaseFeatureState.Action, before.State);
+        Assert.Contains($"SCHEMA::[{OwnSchema}]", before.GrantSql);
+        Assert.Contains(OwnSchema, before.GrantText);
+        Assert.DoesNotContain("dbo", before.GrantSql);
+        Assert.DoesNotContain("dbo", before.GrantText);
+
+        await database.Admin(before.GrantSql!);
+
+        Assert.Equal(DatabaseFeatureState.Automatic, (await site.Setup().StatusAsync(default)).State);
+        await ExerciseStore(site.Store());
+        Assert.Equal(DatabaseFeatureState.Ready, (await site.Setup().StatusAsync(default)).State);
+        foreach (var table in new[] { "APP_ATTACHMENT", "APP_ATTACHMENT_LINK", "APP_SCHEMA" }) Assert.True(await database.HasTable(OwnSchema, table), table);
+        Assert.Equal(0, await database.TableCount("dbo"));
+        SqlConnection.ClearAllPools();
+    }
+
+    [LocalDbFact]
+    public async Task The_script_run_as_the_owner_puts_the_tables_in_dbo_where_a_login_with_its_own_schema_still_finds_them()
+    {
+        await using var database = await RestrictedSqlServer.CreateAsync(OwnSchema);
+        var site = Site(database.AccountConnection, connection => new SqlConnection(connection));
+        await Assert.ThrowsAsync<AttachmentStoreException>(() => site.Store().ListAsync(Order, default));
+        var script = (await site.Setup().ScriptAsync(default))!;
+        // It says where they go, because that is not the schema the grant names.
+        Assert.Contains(OwnSchema, script);
+
+        await database.Admin(script);
+
+        Assert.True(await database.HasTable("dbo", "APP_ATTACHMENT"));
+        Assert.Equal(0, await database.TableCount(OwnSchema));
+        await ExerciseStore(site.Store());
+        Assert.Equal(DatabaseFeatureState.Ready, (await site.Setup().StatusAsync(default)).State);
+        SqlConnection.ClearAllPools();
+    }
+
+    /// <summary>An install from before these tables followed the default schema has them in dbo. An empty twin in the login's own schema would hide their rows.</summary>
+    [LocalDbFact]
+    public async Task Tables_already_in_dbo_are_not_shadowed_when_a_login_with_its_own_schema_may_create_there()
+    {
+        await using var database = await RestrictedSqlServer.CreateAsync(OwnSchema);
+        var first = Site(database.AccountConnection, connection => new SqlConnection(connection));
+        await database.Admin((await first.Setup().ScriptAsync(default))!);
+        await first.Store().AddAsync(Order, Upload("kept.txt"), null, null, null, "m", default);
+
+        await database.Admin((await first.Setup().StatusAsync(default)).GrantSql!);
+        // A new process in all but name: the ensure remembers by connection string, so a different string runs it again, now with the rights to create.
+        var second = Site(database.AccountConnection + ";Application Name=restarted", connection => new SqlConnection(connection));
+        Assert.Equal("kept.txt", Assert.Single(await second.Store().ListAsync(Order, default)).FileName);
+        Assert.True(await database.HasTable(OwnSchema, "APP_SCHEMA"));
+        Assert.False(await database.HasTable(OwnSchema, "APP_ATTACHMENT"));
+        Assert.False(await database.HasTable(OwnSchema, "APP_ATTACHMENT_LINK"));
+        SqlConnection.ClearAllPools();
+    }
+
+    [LocalDbFact]
+    public async Task Rights_on_dbo_do_not_count_for_a_login_whose_tables_would_land_in_its_own_schema()
+    {
+        await using var database = await RestrictedSqlServer.CreateAsync(OwnSchema);
+        await database.Admin($"GRANT CREATE TABLE TO [{database.Account}]; GRANT ALTER ON SCHEMA::dbo TO [{database.Account}]; GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON SCHEMA::dbo TO [{database.Account}];");
+        var site = Site(database.AccountConnection, connection => new SqlConnection(connection));
+
+        var status = await site.Setup().StatusAsync(default);
+        Assert.Equal(DatabaseFeatureState.Action, status.State);
+        Assert.Contains($"SCHEMA::[{OwnSchema}]", status.GrantSql);
+        Assert.Equal(AttachmentStoreProblem.NotSetUp, (await Assert.ThrowsAsync<AttachmentStoreException>(() => site.Store().ListAsync(Order, default))).Problem);
+        Assert.Equal(0, await database.TableCount());
+        SqlConnection.ClearAllPools();
+    }
+
+    [LocalDbFact]
+    public async Task A_login_that_owns_its_schema_needs_only_the_right_to_create_tables()
+    {
+        await using var database = await RestrictedSqlServer.CreateAsync(OwnSchema);
+        await database.Admin($"ALTER AUTHORIZATION ON SCHEMA::[{OwnSchema}] TO [{database.Account}]; GRANT CREATE TABLE TO [{database.Account}];");
+        var site = Site(database.AccountConnection, connection => new SqlConnection(connection));
+        Assert.Equal(DatabaseFeatureState.Automatic, (await site.Setup().StatusAsync(default)).State);
+        await ExerciseStore(site.Store());
+        Assert.True(await database.HasTable(OwnSchema, "APP_ATTACHMENT_LINK"));
+        SqlConnection.ClearAllPools();
+    }
+
+    [LocalDbFact]
+    public async Task A_schema_name_that_needs_quoting_is_quoted_in_the_check_and_the_grant()
+    {
+        const string odd = "odd sch.ema]x";
+        await using var database = await RestrictedSqlServer.CreateAsync(odd);
+        var site = Site(database.AccountConnection, connection => new SqlConnection(connection));
+        var before = await site.Setup().StatusAsync(default);
+        Assert.Equal(DatabaseFeatureState.Action, before.State);
+        Assert.Contains("SCHEMA::[odd sch.ema]]x]", before.GrantSql);
+        await database.Admin(before.GrantSql!);
+        Assert.Equal(DatabaseFeatureState.Automatic, (await site.Setup().StatusAsync(default)).State);
+        await ExerciseStore(site.Store());
+        Assert.True(await database.HasTable(odd, "APP_ATTACHMENT"));
+        SqlConnection.ClearAllPools();
+    }
+
+    [LocalDbFact]
+    public async Task A_default_schema_that_does_not_exist_is_a_setup_problem_the_screen_names_and_the_script_gets_past()
+    {
+        await using var database = await RestrictedSqlServer.CreateAsync("nowhere", createSchema: false);
+        await database.Admin($"GRANT CREATE TABLE TO [{database.Account}]; GRANT ALTER ON SCHEMA::dbo TO [{database.Account}];");
+        var site = Site(database.AccountConnection, connection => new SqlConnection(connection));
+        var status = await site.Setup().StatusAsync(default);
+        Assert.Equal(DatabaseFeatureState.Action, status.State);
+        Assert.Contains("does not exist", status.GrantText);
+        Assert.Contains(DatabaseSetupGuide.UnknownSchema, status.GrantSql);
+        // SQL Server refuses the table with its own error for this, and that must not read as a passing outage.
+        Assert.Equal(AttachmentStoreProblem.NotSetUp, (await Assert.ThrowsAsync<AttachmentStoreException>(() => site.Store().ListAsync(Order, default))).Problem);
+        Assert.Equal(0, await database.TableCount());
+
+        await database.Admin((await site.Setup().ScriptAsync(default))!);
+
+        await ExerciseStore(site.Store());
+        Assert.Equal(DatabaseFeatureState.Ready, (await site.Setup().StatusAsync(default)).State);
+        SqlConnection.ClearAllPools();
+    }
+
     [LocalDbFact]
     public async Task Status_reads_create_nothing_even_for_an_account_that_could()
     {
@@ -284,6 +412,40 @@ public sealed class DatabaseSetupTests
         Assert.Equal("", DatabaseSetupGuide.TableGrants("sqlServer", "dbo", ["dbo.T"]));
         Assert.Equal("", DatabaseSetupGuide.TableGrants("sqlite", null, ["T"]));
         Assert.Contains("[odd]]name]", DatabaseSetupGuide.Grant("sqlServer", "odd]name").Sql);
+    }
+
+    /// <summary>Text only: no PostgreSQL server runs here. The inspector's rights check asks has_schema_privilege(current_schema(), 'CREATE'), and this is that schema.</summary>
+    [Fact]
+    public void The_postgres_grant_names_the_schema_the_rights_check_asks_about_rather_than_public()
+    {
+        var (text, sql) = DatabaseSetupGuide.Grant("postgres", "app", "tenant_a");
+        Assert.Equal("GRANT USAGE, CREATE ON SCHEMA \"tenant_a\" TO \"app\";\n", sql);
+        Assert.Contains("tenant_a", text);
+
+        Assert.Equal("GRANT USAGE, CREATE ON SCHEMA \"public\" TO \"app\";\n", DatabaseSetupGuide.Grant("postgres", "app", "public").Sql);
+        Assert.Equal("GRANT USAGE, CREATE ON SCHEMA \"we\"\"ird\" TO \"o\"\"dd\";\n", DatabaseSetupGuide.Grant("postgres", "o\"dd", "we\"ird").Sql);
+
+        // A database that has not answered, and an account whose search path holds nothing it can use, get a blank to fill in and never a guess.
+        var unknown = DatabaseSetupGuide.Grant("postgres", null).Sql;
+        Assert.Contains(DatabaseSetupGuide.UnknownSchema, unknown);
+        Assert.Contains(DatabaseSetupGuide.UnknownAccount, unknown);
+        Assert.DoesNotContain("public", unknown);
+        var (noPathText, noPath) = DatabaseSetupGuide.Grant("postgres", "app", null);
+        Assert.Contains(DatabaseSetupGuide.UnknownSchema, noPath);
+        Assert.Contains("search path", noPathText);
+
+        Assert.Contains("SET search_path TO \"tenant_a\";", DatabaseSetupGuide.Header("T", "Db", "postgres", "app", "tenant_a"));
+        Assert.DoesNotContain("search_path", DatabaseSetupGuide.Header("T", "Db", "postgres", null));
+    }
+
+    [Fact]
+    public void The_sql_server_grant_and_header_follow_the_schema_they_are_given()
+    {
+        Assert.Contains("SCHEMA::[dbo]", DatabaseSetupGuide.Grant("sqlServer", "app", "dbo").Sql);
+        Assert.Contains(DatabaseSetupGuide.UnknownSchema, DatabaseSetupGuide.Grant("sqlServer", null).Sql);
+        Assert.DoesNotContain("does not exist", DatabaseSetupGuide.Grant("sqlServer", null).Text);
+        Assert.Contains("default schema is own", DatabaseSetupGuide.Header("T", "Db", "sqlServer", "app", "own"));
+        Assert.DoesNotContain("default schema", DatabaseSetupGuide.Header("T", "Db", "sqlServer", "app", "dbo"));
     }
 
     /// <summary>Every operation of the store, so a table the script left out or got wrong fails here.</summary>

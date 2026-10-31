@@ -44,7 +44,7 @@ internal sealed class SavedViewsDatabaseSetup(ISavedReportStore saved, IAdminist
         }
         var provider = Provider(ActualDialect(config.Dialect, inspection));
         var (state, summary) = DatabaseSetupGuide.Standing(inspection, [config.TableName], config.AutoCreate);
-        var (text, sql) = DatabaseSetupGuide.Grant(provider, inspection.Account);
+        var (text, sql) = DatabaseSetupGuide.Grant(provider, inspection.Account, inspection.Schema);
         return new(Alias, Title, shown, provider, state, summary, Lost, DatabaseSetupGuide.Tables(inspection, [config.TableName], optional), text, sql, true);
     }
 
@@ -67,7 +67,7 @@ internal sealed class SavedViewsDatabaseSetup(ISavedReportStore saved, IAdminist
             statements.AddRange(SqlAdministratorStore.SchemaStatements(administrator.Configuration with { Dialect = dialect }));
             tables.Add(administrator.Configuration.TableName);
         }
-        return DatabaseSetupGuide.Header(Title, Shown(config.ConnectionName), provider, inspection?.Account)
+        return DatabaseSetupGuide.Header(Title, Shown(config.ConnectionName), provider, inspection?.Account, inspection?.Schema)
             + DatabaseSetupGuide.Join(provider, statements) + DatabaseSetupGuide.TableGrants(provider, inspection?.Account, tables);
     }
 

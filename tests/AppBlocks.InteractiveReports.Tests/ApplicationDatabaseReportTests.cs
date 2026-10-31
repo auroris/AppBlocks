@@ -4,6 +4,7 @@ using AppBlocks.InteractiveReports.Connections;
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Core.Execution;
 using InteractiveReport.Core.Model;
+using InteractiveReport.Core.SavedReports;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Data.Sqlite;
@@ -84,6 +85,37 @@ public sealed class ApplicationDatabaseReportTests : IDisposable
         Assert.StartsWith("__ir:", compiled.Connection);
     }
 
+    /// <summary>A report named onto a connection takes its dialect from an unopened connection, so that has to be what the name really opens.</summary>
+    [Theory]
+    [InlineData("sqlite", "Data Source=x.db", ReportDialect.Sqlite)]
+    [InlineData("Microsoft.Data.Sqlite", "Data Source=x.db", ReportDialect.Sqlite)]
+    [InlineData("Npgsql", "Host=127.0.0.1;Port=1;Database=d;Username=u", ReportDialect.Postgres)]
+    [InlineData("postgres", "Host=127.0.0.1;Port=1;Database=d;Username=u", ReportDialect.Postgres)]
+    [InlineData("sqlServer", "Server=nowhere;Database=d", ReportDialect.SqlServer)]
+    [InlineData("System.Data.SqlClient", "Server=nowhere;Database=d", ReportDialect.SqlServer)]
+    public void A_report_named_onto_an_application_database_gets_the_dialect_of_every_provider_the_catalog_accepts(string providerName, string connectionString, ReportDialect dialect)
+    {
+        var site = Site(configured: false, ($"ConnectionStrings:{Name}", connectionString), ($"ConnectionStrings:{Name}_ProviderName", providerName));
+        Assert.Equal(dialect, site.Compiler.Compile("things", new ReportDefinition { Connection = Name, Sql = "SELECT 1" }).Dialect);
+    }
+
+    [Fact]
+    public async Task A_saved_connection_on_another_provider_decides_the_dialect()
+    {
+        var site = Site(configured: false, ("InteractiveReport:SavedReports:Connection", Name));
+        await site.Unregistered.SaveAsync(new(Name, "postgres", "Host=127.0.0.1;Port=1;Database=d;Username=u"), default);
+        Assert.Equal(ReportDialect.Postgres, site.Compiler.Compile("things", new ReportDefinition { Connection = Name, Sql = "SELECT 1" }).Dialect);
+        Assert.Equal(ReportDialect.Postgres, ((SqlSavedReportStore)site.Saved).Configuration.Dialect);
+    }
+
+    [Fact]
+    public void A_plain_registration_overridden_by_configuration_gets_the_dialect_of_what_opens()
+    {
+        var site = Site(configured: false, ("ConnectionStrings:Business", "Host=127.0.0.1;Port=1;Database=d;Username=u"), ("ConnectionStrings:Business_ProviderName", "Npgsql"));
+        site.Builder.AddConnection("Business", _ => new SqliteConnection(OtherConnection));
+        Assert.Equal(ReportDialect.Postgres, site.Compiler.Compile("things", new ReportDefinition { Connection = "Business", Sql = "SELECT 1" }).Dialect);
+    }
+
     private Fixture Site(bool configured, params (string Key, string Value)[] settings)
     {
         var folder = Path.Combine(root, "schema-" + Guid.NewGuid().ToString("N"));
@@ -105,12 +137,13 @@ public sealed class ApplicationDatabaseReportTests : IDisposable
         services.AddLogging();
         services.AddSingleton<IConfiguration>(configuration);
         services.AddSingleton<IWebHostEnvironment>(environment);
+        services.AddSingleton(sp => new ConnectionCatalog(configuration, environment, protection, builder, sp));
         services.AddInteractiveReports(configuration).AddConnectionsFrom(builder);
         var provider = services.BuildServiceProvider();
         providers.Add(provider);
-        var catalog = new ConnectionCatalog(configuration, environment, protection, builder, provider);
-        return new(catalog, new(configuration, environment, protection), provider.GetRequiredService<ReportDefinitionCompiler>(),
-            new ManagedConnectionFactory(provider.GetRequiredService<IReportConnectionFactory>(), catalog), new ApplicationConnections(provider, builder, catalog));
+        var catalog = provider.GetRequiredService<ConnectionCatalog>();
+        return new(builder, catalog, new(configuration, environment, protection), provider.GetRequiredService<ReportDefinitionCompiler>(),
+            new ManagedConnectionFactory(provider.GetRequiredService<IReportConnectionFactory>(), catalog), new ApplicationConnections(provider, builder, catalog), provider.GetRequiredService<ISavedReportStore>());
     }
 
     private static bool HasTables(string file)
@@ -122,8 +155,8 @@ public sealed class ApplicationDatabaseReportTests : IDisposable
         return (long)command.ExecuteScalar()! > 0;
     }
 
-    private sealed record Fixture(ConnectionCatalog Catalog, ConnectionCatalog Unregistered, ReportDefinitionCompiler Compiler,
-        ManagedConnectionFactory Reports, ApplicationConnections Connections);
+    private sealed record Fixture(AppBlocksBuilder Builder, ConnectionCatalog Catalog, ConnectionCatalog Unregistered, ReportDefinitionCompiler Compiler,
+        ManagedConnectionFactory Reports, ApplicationConnections Connections, ISavedReportStore Saved);
 
     private sealed class Environment(string root) : IWebHostEnvironment
     {

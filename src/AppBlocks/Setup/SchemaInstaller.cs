@@ -1,6 +1,7 @@
 using System.Net;
 using System.Xml.Linq;
 using Umbraco.Cms.Core;
+using Umbraco.Cms.Core.Cache;
 using Umbraco.Cms.Core.Events;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Models.Entities;
@@ -22,7 +23,7 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
     IContentTypeContainerService contentFolders, IDataTypeContainerService dataFolders,
     PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer, IShortStringHelper strings,
     ICoreScopeProvider scopes, ILogger<SchemaInstaller> logger, IEnumerable<AppBlocksSchema> schemas,
-    SchemaProperties properties, IRuntimeState runtime)
+    SchemaProperties properties, IRuntimeState runtime, AppCaches caches, IIdKeyMap keys)
     : INotificationAsyncHandler<UmbracoApplicationStartedNotification>
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -35,74 +36,85 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
     public async Task EnsureAsync(CancellationToken ct)
     {
         await Gate.WaitAsync(ct);
-        try
+        try { await InstallAsync(ct); }
+        catch
         {
-            // Roll back folders and definitions together, so a retry cannot mistake a partial type for a customization.
-            using var scope = scopes.CreateCoreScope();
-            var installed = 0;
-            foreach (var definition in Definitions("DataTypes"))
-            {
-                ct.ThrowIfCancellationRequested();
-                var key = Guid.Parse(definition.Attribute("Key")!.Value);
-                if (await dataTypes.GetAsync(key) is not null) continue;
-                var info = definition.Element("Info")!;
-                var editorAlias = Value(info, "EditorAlias");
-                var editor = editors.FirstOrDefault(e => e.Alias == editorAlias)
-                    ?? throw new InvalidOperationException($"AppBlocks data type '{Value(info, "Name")}' requires missing editor '{editorAlias}'.");
-                var type = new DataType(editor, serializer, await FolderAsync(dataFolders, Value(info, "Folder")))
-                {
-                    Key = key,
-                    Name = Value(info, "Name"),
-                    EditorUiAlias = Value(info, "EditorUIAlias"),
-                    // Stored as the editor stores it, as a site's own data types are; the type's default is long text whatever the editor.
-                    DatabaseType = ValueTypes.ToStorageType(editor.GetValueEditor().ValueType),
-                    ConfigurationData = editor.GetConfigurationEditor().FromDatabase(Value(definition, "Config"), serializer),
-                };
-                var result = await dataTypes.CreateAsync(type, Constants.Security.SuperUserKey);
-                if (!result.Success) throw new InvalidOperationException($"AppBlocks could not install data type '{type.Name}' ({key}): {result.Status}.");
-                installed++;
-            }
-
-            var created = new List<(XElement Definition, IContentType Type)>();
-            foreach (var definition in Definitions("ContentTypes"))
-            {
-                ct.ThrowIfCancellationRequested();
-                var key = Guid.Parse(definition.Attribute("Key")!.Value);
-                var alias = definition.Attribute("Alias")!.Value;
-                if (contentTypes.Get(key) is not null || contentTypes.Get(alias) is not null) continue;
-                var type = await ContentTypeAsync(definition);
-                var result = await contentTypes.CreateAsync(type, Constants.Security.SuperUserKey);
-                if (!result.Success) throw new InvalidOperationException($"AppBlocks could not install content type '{alias}' ({key}): {result.Result}.");
-                created.Add((definition, type));
-                installed++;
-            }
-
-            // All referenced types now exist. Only types created in this transaction may be changed.
-            foreach (var (definition, type) in created)
-            {
-                ct.ThrowIfCancellationRequested();
-                var children = definition.Element("Structure")!.Elements("ContentType").ToArray();
-                if (children.Length == 0) continue;
-                var allowed = new List<ContentTypeSort>();
-                foreach (var child in children.OrderBy(child => (int)child.Attribute("SortOrder")!))
-                {
-                    var key = Guid.Parse(child.Attribute("Key")!.Value);
-                    var target = contentTypes.Get(key) ?? contentTypes.Get(child.Value.Trim());
-                    // A fresh site can install the base package without its optional companions.
-                    if (target is null && (bool?)child.Attribute("Optional") == true) continue;
-                    if (target is null) throw new InvalidOperationException($"AppBlocks content type '{type.Alias}' requires missing child type '{child.Value}'.");
-                    allowed.Add(new ContentTypeSort(target.Key, allowed.Count, target.Alias));
-                }
-                type.AllowedContentTypes = allowed;
-                var result = await contentTypes.UpdateAsync(type, Constants.Security.SuperUserKey);
-                if (!result.Success) throw new InvalidOperationException($"AppBlocks could not install child types for '{type.Alias}': {result.Result}.");
-            }
-
-            ct.ThrowIfCancellationRequested();
-            scope.Complete();
-            if (installed > 0) logger.LogInformation("Installed {Count} missing AppBlocks definitions.", installed);
+            // A rollback undoes the database, not Umbraco's caches, which took in each definition as it was written. Left there, a retry
+            // in this process sees data types that do not exist, skips them, and fails on a foreign key instead of installing them.
+            caches.IsolatedCaches.ClearAllCaches();
+            caches.RuntimeCache.Clear();
+            keys.ClearCache();
+            throw;
         }
         finally { Gate.Release(); }
+    }
+
+    private async Task InstallAsync(CancellationToken ct)
+    {
+        // Roll back folders and definitions together, so a retry cannot mistake a partial type for a customization.
+        using var scope = scopes.CreateCoreScope();
+        var installed = 0;
+        foreach (var definition in Definitions("DataTypes"))
+        {
+            ct.ThrowIfCancellationRequested();
+            var key = Guid.Parse(definition.Attribute("Key")!.Value);
+            if (await dataTypes.GetAsync(key) is not null) continue;
+            var info = definition.Element("Info")!;
+            var editorAlias = Value(info, "EditorAlias");
+            var editor = editors.FirstOrDefault(e => e.Alias == editorAlias)
+                ?? throw new InvalidOperationException($"AppBlocks data type '{Value(info, "Name")}' requires missing editor '{editorAlias}'.");
+            var type = new DataType(editor, serializer, await FolderAsync(dataFolders, Value(info, "Folder")))
+            {
+                Key = key,
+                Name = Value(info, "Name"),
+                EditorUiAlias = Value(info, "EditorUIAlias"),
+                // Stored as the editor stores it, as a site's own data types are; the type's default is long text whatever the editor.
+                DatabaseType = ValueTypes.ToStorageType(editor.GetValueEditor().ValueType),
+                ConfigurationData = editor.GetConfigurationEditor().FromDatabase(Value(definition, "Config"), serializer),
+            };
+            var result = await dataTypes.CreateAsync(type, Constants.Security.SuperUserKey);
+            if (!result.Success) throw new InvalidOperationException($"AppBlocks could not install data type '{type.Name}' ({key}): {result.Status}.");
+            installed++;
+        }
+
+        var created = new List<(XElement Definition, IContentType Type)>();
+        foreach (var definition in Definitions("ContentTypes"))
+        {
+            ct.ThrowIfCancellationRequested();
+            var key = Guid.Parse(definition.Attribute("Key")!.Value);
+            var alias = definition.Attribute("Alias")!.Value;
+            if (contentTypes.Get(key) is not null || contentTypes.Get(alias) is not null) continue;
+            var type = await ContentTypeAsync(definition);
+            var result = await contentTypes.CreateAsync(type, Constants.Security.SuperUserKey);
+            if (!result.Success) throw new InvalidOperationException($"AppBlocks could not install content type '{alias}' ({key}): {result.Result}.");
+            created.Add((definition, type));
+            installed++;
+        }
+
+        // All referenced types now exist. Only types created in this transaction may be changed.
+        foreach (var (definition, type) in created)
+        {
+            ct.ThrowIfCancellationRequested();
+            var children = definition.Element("Structure")!.Elements("ContentType").ToArray();
+            if (children.Length == 0) continue;
+            var allowed = new List<ContentTypeSort>();
+            foreach (var child in children.OrderBy(child => (int)child.Attribute("SortOrder")!))
+            {
+                var key = Guid.Parse(child.Attribute("Key")!.Value);
+                var target = contentTypes.Get(key) ?? contentTypes.Get(child.Value.Trim());
+                // A fresh site can install the base package without its optional companions.
+                if (target is null && (bool?)child.Attribute("Optional") == true) continue;
+                if (target is null) throw new InvalidOperationException($"AppBlocks content type '{type.Alias}' requires missing child type '{child.Value}'.");
+                allowed.Add(new ContentTypeSort(target.Key, allowed.Count, target.Alias));
+            }
+            type.AllowedContentTypes = allowed;
+            var result = await contentTypes.UpdateAsync(type, Constants.Security.SuperUserKey);
+            if (!result.Success) throw new InvalidOperationException($"AppBlocks could not install child types for '{type.Alias}': {result.Result}.");
+        }
+
+        ct.ThrowIfCancellationRequested();
+        scope.Complete();
+        if (installed > 0) logger.LogInformation("Installed {Count} missing AppBlocks definitions.", installed);
     }
 
     private IEnumerable<XElement> Definitions(string kind) => schemas.DistinctBy(s => s.Assembly).SelectMany(schema => schema.Definitions(kind));

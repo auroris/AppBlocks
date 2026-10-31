@@ -4,6 +4,15 @@ const pathBase = new URL(import.meta.url).pathname.split("/App_Plugins/")[0];
 const blank = value => value === undefined || value === null || value === "";
 // Defaults and hidden fields hold their values as text, so a checkbox's arrives as "true" or "false".
 const truthy = value => value === true || typeof value === "string" && /^(true|1|yes|on)$/i.test(value.trim());
+// A key for one submission, so a retry is not saved twice. crypto.randomUUID exists only on HTTPS and localhost, and a public
+// site may be plain HTTP; getRandomValues exists everywhere and is just as random. Both give a version 4 UUID, which the server parses.
+function newSubmissionKey() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = bytes[6] & 0x0f | 0x40; bytes[8] = bytes[8] & 0x3f | 0x80;
+    const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 // What an anonymous visitor sees when a block's class or engine refuses them, in place of an error.
 function signInNotice(text) {
     const notice = document.createElement("p");
@@ -28,6 +37,53 @@ function otherControls(form) {
     return controls;
 }
 
+// The Anti-spam block's widget. The server rendered its script and says which global it provides, with that service's render
+// and reset, or its execute when it shows no widget. All this does is put a token in a control inside the form, where
+// otherControls finds it: the server decides, and refuses a submission without one whatever happens here.
+function mountAntiSpam(root, form) {
+    const api = () => window[root.dataset.api];
+    const siteKey = root.dataset.siteKey;
+    const action = root.dataset.action;
+    const field = root.dataset.tokenField;
+    let widget, blocked = false;
+    const wait = member => new Promise(resolve => {
+        const started = Date.now();
+        (function poll() {
+            if (typeof api()?.[member] === "function") resolve(true);
+            else if (Date.now() - started > 15000) { blocked = true; resolve(false); }
+            else setTimeout(poll, 100);
+        })();
+    });
+    const loaded = wait(action ? "execute" : "render");
+    function reset() {
+        const input = action && root.querySelector("input");
+        if (input) input.value = "";
+        if (widget !== undefined) { try { api().reset(widget); } catch { /* A widget that will not reset leaves no token, and the server says so. */ } }
+    }
+    // A token works once, and one that sits too long expires.
+    if (!action) loaded.then(ok => { if (ok) widget = api().render(root, { sitekey: siteKey, ...JSON.parse(root.dataset.options || "{}"), "expired-callback": reset }); });
+    const hasToken = () => [...form.elements].some(control => control.name === field && control.value);
+    const unavailable = "The anti-spam check could not load. Check your connection or anything blocking it, then reload the page.";
+    return {
+        reset,
+        // Returns what to tell the visitor when the form is not ready to send, or nothing when it is.
+        async prepare() {
+            if (!action) return hasToken() ? null : blocked ? unavailable : "Complete the anti-spam check, then try again.";
+            if (!await loaded) return unavailable;
+            try {
+                const token = await Promise.race([
+                    new Promise((resolve, reject) => (api().ready ?? (run => run()))(() => api().execute(siteKey, { action }).then(resolve, reject))),
+                    new Promise((_, reject) => setTimeout(reject, 15000)),
+                ]);
+                let input = root.querySelector("input");
+                if (!input) { input = document.createElement("input"); input.type = "hidden"; input.name = field; root.append(input); }
+                input.value = token;
+                return null;
+            } catch { return unavailable; }
+        },
+    };
+}
+
 function mountForm(form) {
     const fields = [...form.querySelectorAll("[data-field]")];
     const errors = form.querySelector(".app-form-errors");
@@ -36,7 +92,8 @@ function mountForm(form) {
     const anonymous = form.dataset.anonymous === "true";
     let state;
     let busy = false;
-    let submissionKey = crypto.randomUUID();
+    let submissionKey = newSubmissionKey();
+    const antiSpam = [...form.querySelectorAll("[data-app-antispam]")].map(root => mountAntiSpam(root, form));
     // A hidden field has no message element of its own.
     const errorOf = field => document.getElementById(`${field.id}-error`);
     const requestUrl = (key = null) => {
@@ -129,9 +186,15 @@ function mountForm(form) {
             else if (value === "") value = null;
             values[field.dataset.field] = value;
         }
+        busy = true;
+        // Deleting needs no check. A service that shows no widget hands over its token only now.
+        if (!remove) for (const widget of antiSpam) {
+            const problem = await widget.prepare();
+            if (problem) { showErrors({ "": [problem] }); busy = false; return; }
+        }
         // Read before the form is disabled below, which would take every control with it.
         const formData = otherControls(form);
-        busy = true; body.disabled = true; showErrors(null); message.textContent = remove ? "Deleting…" : "Saving…";
+        body.disabled = true; showErrors(null); message.textContent = remove ? "Deleting…" : "Saving…";
         try {
             const response = await fetch(requestUrl(state.record.key), {
                 method: remove ? "DELETE" : state.record.key ? "PUT" : "POST", credentials: "same-origin",
@@ -143,13 +206,17 @@ function mountForm(form) {
             if (response.status === 403 && anonymous) { message.replaceChildren(signInNotice("Sign in to use this form.")); return; }
             // Some refusals have no body, such as an expired antiforgery token.
             const result = await response.json().catch(() => ({}));
-            if (!response.ok) { showErrors(result.errors ?? { "": [response.status === 403 ? "This operation is not permitted." : "The operation failed. Reload the page if the record has changed."] }); message.textContent = ""; return; }
-            display(result.record); submissionKey = crypto.randomUUID(); message.textContent = "Saved.";
+            if (!response.ok) { showErrors(result.errors ?? { "": [response.status === 403 ? "This operation is not permitted." : response.status === 413 ? "This is too much to send at once. Shorten what you entered and try again." : response.status === 429 ? "That was too many tries. Wait a minute and try again." : "The operation failed. Reload the page if the record has changed."] }); message.textContent = ""; return; }
+            display(result.record); submissionKey = newSubmissionKey(); message.textContent = "Saved.";
             // A public form may keep nothing to come back to, so a record with no key leaves the address alone.
             if (result.record.key) { const url = new URL(location.href); url.searchParams.set(form.dataset.keyParameter, result.record.key); history.replaceState(null, "", url); }
             form.dispatchEvent(new CustomEvent("app-form:saved", { bubbles: true, detail: { record: result.record, definitionVersion: state.definitionVersion } }));
         } catch { showErrors({ "": ["The request could not be completed. Your entered values have been retained."] }); message.textContent = ""; }
-        finally { busy = false; body.disabled = false; }
+        finally {
+            busy = false; body.disabled = false;
+            // Whatever the answer was, the server has seen this token and it will not work again.
+            if (!remove) for (const widget of antiSpam) widget.reset();
+        }
     }
     form.addEventListener("submit", event => { event.preventDefault(); submit(); });
     form.querySelectorAll("[data-delete]").forEach(button => button.addEventListener("click", () => submit(true)));
@@ -321,7 +388,7 @@ function mountTabular(root) {
     let state = null;
     let busy = false;
     // One key per attempt: a retry after a lost answer reuses it, so the server answers without writing twice.
-    let submissionKey = crypto.randomUUID();
+    let submissionKey = newSubmissionKey();
     // What the table shows: each row's record, its cells' inputs and what they held when drawn.
     let rows = [];
     const requestUrl = () => {
@@ -493,7 +560,7 @@ function mountTabular(root) {
         try {
             const response = await fetch(requestUrl(), { credentials: "same-origin", cache: "no-store" });
             if (!response.ok) { state = null; render(); fail([await problem(response, "The rows could not be loaded.")]); return; }
-            state = await response.json(); submissionKey = crypto.randomUUID(); render();
+            state = await response.json(); submissionKey = newSubmissionKey(); render();
         } catch { state = null; render(); fail(["The rows could not be loaded."]); }
     }
     // The batch: every new row whole, the changed cells of every other row, and every row marked for deletion.
@@ -549,7 +616,7 @@ function mountTabular(root) {
                 else fail([result?.detail || result?.title || (response.status === 400 ? "The rows could not be saved. Reload the page and try again." : "The rows could not be saved.")]);
                 return;
             }
-            state = result; submissionKey = crypto.randomUUID(); render(); message.textContent = "Saved.";
+            state = result; submissionKey = newSubmissionKey(); render(); message.textContent = "Saved.";
             root.dispatchEvent(new CustomEvent("app-tabular:saved", { bubbles: true, detail: { rows: result.rows } }));
         } catch { message.textContent = ""; fail(["The request could not be completed. Your entered values have been retained."]); }
         finally { setBusy(false); }

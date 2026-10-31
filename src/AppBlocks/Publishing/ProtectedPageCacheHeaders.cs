@@ -19,6 +19,7 @@ public sealed class ProtectedPageCacheHeaders(IPublicAccessService access, IHttp
             context.Items[ProtectedRequest] = true;
         if (context.Items[ProtectedRequest] is not true) return Task.CompletedTask;
 
+        context.KeepOutOfCaches();
         context.Response.Headers.CacheControl = "no-cache, no-store";
         notification.RequestBuilder.SetNoCacheHeader(true);
         notification.RequestBuilder.SetCacheExtensions(["no-store"]);

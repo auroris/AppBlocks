@@ -27,7 +27,8 @@ public sealed record FormExecutionContext(ClaimsPrincipal Member, Guid PageKey, 
     /// The form's other named controls as the browser submitted them: anything inside the form that is not bound to a
     /// field, such as a captcha token or a honeypot. Never null, and empty on anything but a submission. It comes from the
     /// browser like any other input, and AppBlocks neither stores nor validates it, so verify what matters in the resource.
-    /// See <see cref="FormEndpoints.FormData"/> for its limits.
+    /// See <see cref="FormEndpoints.FormData"/> for its limits. On a form with an Anti-spam block, AppBlocks has already made
+    /// that block's check, and the check's own control is left out of this.
     /// </summary>
     public IReadOnlyDictionary<string, string> FormData { get; init; } = FormEndpoints.NoFormData;
 }
@@ -43,7 +44,9 @@ public sealed record FormResult(int Status, FormRecord? Record = null, IReadOnly
 
 /// <summary>
 /// A C# resource owns persistence, current-state authorization and business validation.
-/// Every operation must enforce permission independently of the capabilities displayed by the UI.
+/// Every operation must enforce permission independently of the capabilities displayed by the UI, including whether an
+/// anonymous visitor may perform it: on a page with no Public Access, they reach this class. Initialize and Load also run
+/// when a page renders for an anonymous visitor, to learn whether to show a sign-in notice, so they must be safe to repeat.
 /// </summary>
 public interface IFormResource
 {

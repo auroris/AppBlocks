@@ -124,7 +124,11 @@ if (settings.AppBlocksDemo?.SeedContent) {
   const path = '/a-normal-content-page/';
   const publicPage = await publicClient.get(path);
   assert.ok(publicPage.ok(), await publicPage.text());
-  assert.match(await publicPage.text(), /Sign in to use this form/);
+  // The page has no Public Access: the demo's form class asks for a sign-in, and its report blocks are public.
+  const publicHtml = await publicPage.text();
+  assert.match(publicHtml, /Sign in to use this form/);
+  assert.doesNotMatch(publicHtml, /data-app-form/);
+  assert.match(publicHtml, /data-app-report/);
   const privatePage = await admin.get(path);
   assert.ok(privatePage.ok(), await privatePage.text());
   assert.match(await privatePage.text(), /data-app-form/);
@@ -149,7 +153,11 @@ if (settings.AppBlocksDemo?.SeedContent) {
     passed(`Native ${prefix === 'main' ? 'Block List' : 'Block Grid'} form reads and updates; validation, CSRF and concurrency checks work`);
     if (companions) {
       const report = `/api/reports/page-${key('page').replaceAll('-', '')}-${key(prefix + '-report').replaceAll('-', '')}`;
-      assert.equal((await publicClient.get(report + '/default')).status(), 401);
+      const publicReport = await publicClient.get(report + '/default');
+      assert.equal(publicReport.status(), 200, 'A report on an unprotected page is public');
+      assert.match(await publicReport.text(), /A task from a normal content page/);
+      assert.deepEqual(await (await publicClient.get(report)).json(), [], 'An anonymous visitor sees no saved views');
+      assert.ok(!(await (await publicClient.get(report + '/schema')).json()).features.includes('savedReports'), 'Saving is not offered to an anonymous visitor');
       const response = await admin.get(report + '/default');
       assert.ok(response.ok(), await response.text());
       assert.match(await response.text(), /A task from a normal content page/);
@@ -166,7 +174,7 @@ if (settings.AppBlocksDemo?.SeedContent) {
       assert.match(await reopened.text(), /Clean installation view/);
       const deleted = await admin.delete('/api/reports/' + savedId);
       assert.ok(deleted.ok(), await deleted.text());
-      passed(`${prefix} report executes its block-owned SQL source and denies anonymous access`);
+      passed(`${prefix} report executes its block-owned SQL source, publicly on an unprotected page and without saved views`);
       passed(`${prefix} report queries, saves, reopens and deletes a view in the default application database`);
     }
   }

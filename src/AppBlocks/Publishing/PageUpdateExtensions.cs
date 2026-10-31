@@ -1,5 +1,6 @@
 using System;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.OutputCaching;
 
 namespace AppBlocks.Publishing
 {
@@ -101,6 +102,18 @@ namespace AppBlocks.Publishing
         /// tracks asset changes exactly, but it would not catch a Razor-only change.
         /// </remarks>
         private static readonly DateTime DeployStamp = DateTime.UtcNow;
+
+        /// <summary>
+        /// Marks a response that depends on who asked: <c>no-store</c> for browsers and proxies, and left out of the
+        /// site's own ASP.NET Core output cache, which goes by its policies and does not read that header.
+        /// </summary>
+        public static void KeepOutOfCaches(this HttpContext context)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            context.Response.Headers.CacheControl = "no-store";
+            if (context.Features.Get<IOutputCacheFeature>() is { } outputCache) outputCache.Context.AllowCacheStorage = false;
+        }
 
         /// <summary>
         /// Sets HTTP cache validators from the page update date and handles conditional requests.

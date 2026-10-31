@@ -130,6 +130,10 @@ else if (alias == AppBlockSchema.ScheduleAlias)
 {
     @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/Schedule.cshtml", Model)
 }
+else if (alias == AppBlockSchema.AntiSpamAlias && Model.Form is not null)
+{
+    @await Html.PartialAsync("~/Views/Partials/ApplicationBlocks/AntiSpam.cshtml", Model)
+}
 else if (alias == "appActions" && Model.Form is not null)
 {
     var destination = Model.Form.Interface.Value<IPublishedContent>("returnPage")?.Url() ?? Context.Request.PathBase + "/";

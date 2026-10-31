@@ -1,0 +1,42 @@
+@using System.Text.Json
+@using AppBlocks.AntiSpam
+@using AppBlocks.Blocks
+@model AppBlockView
+@inject AntiSpamGate Gate
+@*
+    The Anti-spam block, inside a form. It carries only public things: the site key, the widget's options and the service's own
+    script address, which the adapter writes. Enforcement is on the server, in FormEndpoints, so none of this decides anything.
+    A block whose service or site key is missing renders nothing and its form refuses submissions, which the settings screen says.
+*@
+@{
+    var block = AntiSpamBlock.Read(Model.Block);
+    var service = Gate.Find(block.Service);
+    var siteKey = Gate.SiteKey(block);
+}
+@if (Model.Form is null || Model.Form.ViewOnly)
+{
+    @* Nothing to protect, so nothing to load. *@
+}
+else if (Gate.IsPreview)
+{
+    <p class="app-antispam-preview" role="note">@Gate.PreviewNote(block)</p>
+}
+else if (block.IsHoneypot)
+{
+    @* Out of sight twice over: the stylesheet may not reach a layout without AppBlocks' tag helper, and a Content-Security-Policy may refuse the style attribute. With neither, the label explains the box. *@
+    var id = "field-" + Model.Block.ContentKey.ToString("N");
+    <div class="app-antispam-hp" style="position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden" aria-hidden="true">
+        <label for="@id">Leave this empty</label>
+        <input type="text" id="@id" name="@block.HoneypotField" value="" tabindex="-1" autocomplete="off" />
+    </div>
+}
+else if (service is not null && siteKey is not null)
+{
+    var widget = service.Widget(new(siteKey, block.Theme, block.Size));
+    <div class="app-antispam" data-app-antispam data-api="@widget.BrowserApi" data-site-key="@siteKey" data-token-field="@service.TokenField" data-action="@widget.ExecuteAction"
+        data-options="@JsonSerializer.Serialize(widget.RenderOptions ?? new Dictionary<string, string>())" hidden="@(widget.ExecuteAction is not null)"></div>
+    @if (Context.Items.TryAdd("AppBlocks.AntiSpamScript:" + widget.ScriptUrl, true))
+    {
+        <script src="@widget.ScriptUrl" async defer nonce="@AppPageAssets.Nonce(Context)"></script>
+    }
+}

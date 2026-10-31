@@ -31,9 +31,9 @@ public static class ApplicationDatabase
 
     /// <summary>
     /// Registers connection <paramref name="name"/> with AppBlocks. The connection string is a connection saved under that
-    /// name, or <c>ConnectionStrings:&lt;name&gt;</c> with <c>ConnectionStrings:&lt;name&gt;_ProviderName</c> (Microsoft.Data.Sqlite, or
-    /// Microsoft.Data.SqlClient, the default when a connection string is set without a provider, as Umbraco does), read
-    /// from the provider's configuration when a connection is created. Without a connection string it is a SQLite file
+    /// name, or <c>ConnectionStrings:&lt;name&gt;</c> with <c>ConnectionStrings:&lt;name&gt;_ProviderName</c>, which takes every name
+    /// <see cref="ConnectionCatalog.Provider"/> does and is SQL Server when a connection string is set without one, as Umbraco reads it,
+    /// read from the provider's configuration when a connection is created. Without a connection string it is a SQLite file
     /// <paramref name="defaultFile"/> (default <c>&lt;name&gt;.sqlite.db</c>) in the instance data folder, resolved as
     /// <see cref="ApplicationDatabase.DataFile(IServiceProvider, string)"/> resolves it, with its folder created.
     /// The first time a connection to a given connection string opens in this process, wherever that string came from, the
@@ -43,7 +43,8 @@ public static class ApplicationDatabase
     public static AppBlocksBuilder AddApplicationDatabase(this AppBlocksBuilder connections, string name, ApplicationSchema? schema = null,
         string? defaultFile = null)
     {
-        connections.AddConnection(name, provider => Create(provider, name, defaultFile));
+        connections.AddConnection(name, provider => Create(provider, name, defaultFile, forUse: true));
+        connections.LookOnlyConnections[name] = provider => Create(provider, name, defaultFile, forUse: false);
         if (schema is not null) connections.Schemas[name] = schema;
         return connections;
     }
@@ -110,20 +111,13 @@ public static class ApplicationDatabase
         },
     };
 
-    private static DbConnection Create(IServiceProvider provider, string name, string? defaultFile)
+    private static DbConnection Create(IServiceProvider provider, string name, string? defaultFile, bool forUse)
     {
-        var configuration = provider.GetRequiredService<IConfiguration>();
-        if (configuration.GetConnectionString(name) is { Length: > 0 } connectionString)
-        {
-            var providerName = configuration[$"ConnectionStrings:{name}_ProviderName"];
-            if (string.IsNullOrEmpty(providerName) || providerName.Equals("Microsoft.Data.SqlClient", StringComparison.OrdinalIgnoreCase))
-                return new SqlConnection(connectionString);
-            if (providerName.Equals("Microsoft.Data.Sqlite", StringComparison.OrdinalIgnoreCase)) return new SqliteConnection(connectionString);
-            throw new InvalidOperationException($"ConnectionStrings:{name}_ProviderName is {providerName}; an application database uses Microsoft.Data.Sqlite or Microsoft.Data.SqlClient.");
-        }
+        // A catalog has already answered for a configured or saved string by the time this runs; a builder with no catalog behind it still has the configuration.
+        if (ConnectionCatalog.Configured(provider.GetRequiredService<IConfiguration>(), name) is { } configured) return ConnectionCatalog.Create(configured);
         var file = ApplicationDatabase.DataFile(provider, defaultFile ?? name + ".sqlite.db");
-        // SQLite creates the file on open but not its folder.
-        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        // SQLite creates the file on open but not its folder. Something only looking, such as the setup screen, leaves the disk as it found it.
+        if (forUse) Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         return new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file }.ToString());
     }
 

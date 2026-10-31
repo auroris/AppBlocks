@@ -21,8 +21,9 @@ AppBlocks gives Umbraco editors blocks that work with real application data. The
 
 - **Sets itself up.** Install the package and start the site. Its definitions install through Umbraco's own services, with no import step or configuration.
 - **Forms backed by your C#.** Add a Forms container to a page and bind it to a registered class. Your class owns persistence, validation and business rules, and the field pickers follow its fields. Attachments, editable tables and schedules are included.
+- **Anti-spam without code.** Place a block in a public form to protect it with Turnstile, reCAPTCHA, hCaptcha or a honeypot, checked on the server before your class runs.
 - **Interactive reports.** The optional **AppBlocks.InteractiveReports** package adds a block powered by [Interactive Reports](https://github.com/auroris/Interactive-Reports). Pick a table or write a SELECT, and readers can search, filter, sort, chart, save and download.
-- **Documents and printing.** The optional **AppBlocks.Documents** package produces template-based HTML and PDF documents, with optional direct-to-printer output through Pressroom.
+- **Documents and printing.** The optional **AppBlocks.Documents** package produces template-based HTML and PDF documents, with optional direct-to-printer output through [Pressroom](https://github.com/auroris/Pressroom).
 - **Umbraco's access rules first.** Blocks follow their page's Public Access. Add group rules, row restrictions and C# policies only when a rule goes beyond the page.
 - **Your own database.** Application data goes in a separate SQLite file by default, away from Umbraco's. Connect SQL Server, PostgreSQL or Oracle from the backoffice, with connection strings encrypted at rest.
 - **Keeps working when it can't create tables.** If the database account isn't allowed to, the backoffice shows the grant or script to run, and everything else carries on.
@@ -44,7 +45,9 @@ Sites using Umbraco's conventional `blockgrid/Components` or `blocklist/Componen
 @await Component.InvokeAsync("AppBlocksBlock", new { block = Model })
 ```
 
-The native blocks include their required assets and inherit ordinary site typography. Public page content stays visible; interactive blocks can use an authenticated Umbraco Member or backoffice User. `IDataSourceUserResolver` exposes the account type and current groups; the application decides who may read or change its data. Backoffice administrators receive no automatic application permissions. Umbraco Public Access still protects Member pages, and configured data-source Member Groups and application policies also apply to API requests. See the [identity and access examples](docs/business-rules.md#group-membership).
+The native blocks include their required assets and inherit ordinary site typography. Public page content stays visible. On a page without Public Access an anonymous visitor reaches its interactive blocks, and whatever is behind each block decides: a C# form class with no check of its own is public, while the data source engine, tabular forms, schedules and paper reports show a sign-in notice until someone signs in. Interactive blocks also work for an authenticated Umbraco Member or backoffice User. `IDataSourceUserResolver` exposes the account type and current groups; the application decides who may read or change its data. Backoffice administrators receive no automatic application permissions. Umbraco Public Access still protects Member pages, and configured data-source Member Groups and application policies also apply to API requests. See the [identity and access examples](docs/business-rules.md#group-membership) and the Public contact form recipe there.
+
+A page with an interactive block, and any response Public Access protects, depends on who asks, so it is sent `no-store` and stays out of ASP.NET Core's output cache if the site uses one. The blocks' `/api/` endpoints send `no-store` too but do not opt out, so keep them out of any output cache policy you add.
 
 ## Connections
 
@@ -97,14 +100,31 @@ There are two ways to set a feature up, and either takes effect on the next requ
 
 1. **Grant the permission**, so AppBlocks creates the tables itself. The screen prints the statements with the account's name in them.
    - **SQLite** has no accounts: the account the site runs under needs write access to the database file and its folder.
-   - **SQL Server**: `CREATE TABLE`, `ALTER` on the `dbo` schema, and `SELECT`, `INSERT`, `UPDATE`, `DELETE` and `REFERENCES` on it. Tables in `dbo` belong to the schema's owner, not to the account that creates them, so this covers every table in `dbo`. To limit the account to these tables, use the script.
-   - **PostgreSQL**: `USAGE` and `CREATE` on the schema. The account owns what it creates.
+   - **SQL Server**: `CREATE TABLE`, plus `ALTER`, `SELECT`, `INSERT`, `UPDATE`, `DELETE` and `REFERENCES` on the account's default schema, which is where its tables land. That is `dbo` unless the database user says otherwise, and the screen names it. Tables in a schema belong to the schema's owner, not to the account that creates them, so this covers every table in that schema. To limit the account to these tables, use the script.
+   - **PostgreSQL**: `USAGE` and `CREATE` on the account's current schema, which the screen names. The account owns what it creates.
    - **Oracle**: `CREATE TABLE` and `CREATE SEQUENCE`, plus `CREATE TRIGGER` on 11.2, and a quota on the account's tablespace. The account owns what it creates.
-2. **Run the script**, viewable and downloadable on the screen, as an account that may create tables. The account the site signs in as then needs no right to create anything. The script is made from what AppBlocks itself runs, so the two cannot differ, and it is safe to run more than once. On SQL Server and PostgreSQL it ends by granting that account read and write on those tables. On Oracle, connect as the account, or as a DBA after `ALTER SESSION SET CURRENT_SCHEMA = <account>`, so that the tables are in its schema.
+2. **Run the script**, viewable and downloadable on the screen, as an account that may create tables. The account the site signs in as then needs no right to create anything. The script is made from what AppBlocks itself runs, so the two cannot differ, and it is safe to run more than once. On SQL Server and PostgreSQL it ends by granting that account read and write on those tables. On SQL Server, run as the database's owner, the tables go in `dbo`, which SQL Server looks in after an account's default schema, so an account with a schema of its own still finds them. On PostgreSQL, an owner first sets `search_path` to the account's schema, as the script's header says. On Oracle, connect as the account, or as a DBA after `ALTER SESSION SET CURRENT_SCHEMA = <account>`, so that the tables are in its schema.
 
 File uploads run on SQLite and SQL Server only. On PostgreSQL or Oracle the block shows the same notice and nothing is created: select a separate store with `Attachments:Connection`, as described under [Connections](#connections).
 
 `APP_SCHEMA` is a bookkeeping table AppBlocks' schema code writes when it creates tables. Nothing reads it back, so uploads neither need it nor wait for it, and the script leaves it out. An account that may create tables gets one as before.
+
+## Anti-spam
+
+Editors protect a form with no code by placing an **Anti-spam** block inside it. The Forms container's grid offers it on plain sites, because unlike HTML it runs nothing an editor writes. They choose Cloudflare Turnstile, Google reCAPTCHA v2 or v3 (with a score threshold, 0.5 by default), hCaptcha, or a built-in honeypot that needs no account. The block renders the service's widget and script. AppBlocks checks every create and update on the server before the form's class is called, and a request can't leave the check out. A failed check returns a message to the visitor. If the service is unreachable or a key is missing, the submission is refused with a friendly message and the problem is logged once and shown on the settings screen.
+
+Site keys are public and can go on the block. Secret keys stay on the server, in configuration (`AppBlocks:AntiSpam:<service>:SecretKey`) or encrypted in **Settings → AppBlocks → Anti-spam**. They are never in block content, exports, API responses or logs.
+
+**Privacy.** Turnstile, reCAPTCHA and hCaptcha load third-party scripts in the visitor's browser and may need cookie consent on some sites. Consent handling stays with the site. A site with its own Content-Security-Policy has to allow the scripts. The honeypot loads nothing.
+
+**This isn't a rate limit.** Anyone can still call a public form as often as they like, so a site exposed to the internet should also limit `/api/forms`. The Anti-spam section of the [business rules guide](docs/business-rules.md) has a short recipe for ASP.NET Core's rate limiter, along with the service details, the order of checks, the hosts a Content-Security-Policy needs and how to register another service. Form submissions are limited to 1 MB; `AppBlocks:Forms:MaxBodySize` changes that.
+
+The tests stand in for the services and need no network. To try the real ones with the test keys each service publishes:
+
+```powershell
+dotnet run --project tests/AppBlocks.Tests -- -noLogo -explicit only -class AppBlocks.Tests.AntiSpamRealServiceTests
+$env:APPBLOCKS_ANTISPAM_REAL = "1"; node --test tests/ui/anti-spam.browser.test.mjs
+```
 
 ## Samples and business rules
 

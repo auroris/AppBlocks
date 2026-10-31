@@ -1,3 +1,4 @@
+using AppBlocks.AntiSpam;
 using AppBlocks.Connections;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -54,6 +55,7 @@ public static class AppBlocksExtensions
         builder.AddAttachments(builder.Config);
         builder.AddSchedules();
         builder.AddTabular();
+        builder.AddAntiSpam();
         services.AddScoped<DataSourcePreview>();
         services.AddSingleton<IAuthorizationHandler, AppPageAuthorizationHandler>();
         Decorate<IAuthorizationPolicyProvider>(services, (_, inner) => new AppPagePolicyProvider(inner));

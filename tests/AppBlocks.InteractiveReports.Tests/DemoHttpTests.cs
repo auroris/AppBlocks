@@ -22,9 +22,11 @@ public sealed class DemoHttpTests
         using var anonymous = new HttpClient { BaseAddress = Address };
         var html = await anonymous.GetStringAsync("/a-normal-content-page/");
         Assert.Contains("Native Block List", html); Assert.Contains("Native Block Grid", html);
+        // The page has no Public Access, so its report is public; its form's class still asks for a sign-in.
         Assert.Contains("Sign in to use this form", html);
+        Assert.Contains("data-app-report", html);
         var firstReport = AppBlockContent.ReportName(Key("page"), Key("main-report"));
-        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"/api/reports/{firstReport}/default")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await anonymous.GetAsync($"/api/reports/{firstReport}/default")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await anonymous.GetAsync($"/api/forms/{Key("page")}/{Key("main-form")}?mainId=1")).StatusCode);
         using var client = await Administrator();
         var authenticated = await client.GetStringAsync("/a-normal-content-page/");

@@ -4,6 +4,10 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using AppBlocks.Blocks;
+using Microsoft.Extensions.DependencyInjection;
+using Umbraco.Cms.Core.Models;
+using Umbraco.Cms.Core.Models.Membership;
+using Umbraco.Cms.Core.Services;
 
 namespace AppBlocks.InteractiveReports.Tests;
 
@@ -28,6 +32,43 @@ public sealed class AnonymousAccessSiteTests
         await Reports_that_are_not_blocks_stay_refused_and_developers_can_refuse_blocks(site);
         await Files_read_with_the_record_and_write_only_when_the_class_allows(site);
         await Tabular_and_schedule_blocks_ask_for_a_sign_in(site);
+        await An_account_that_presented_itself_and_failed_is_refused_not_taken_for_anonymous(site);
+        await A_report_block_saved_without_a_page_size_uses_the_reports_default(site);
+    }
+
+    /// <summary>
+    /// A site's own output cache goes by its policies, not by no-store, and it is asked before anyone is known. A page that depends on who asked
+    /// stays out of it, or the next visitor would be served this person's page; a page of plain content stays in, so it is the cache and not the test that decides.
+    /// </summary>
+    [Fact]
+    public async Task A_sites_output_cache_never_keeps_a_page_that_depends_on_who_asked()
+    {
+        await using var site = await PublicSite.StartAsync(outputCache: true);
+        var member = await CreateMemberAsync(site, "cached");
+        await site.WithServices(services => {
+            var access = services.GetRequiredService<IPublicAccessService>();
+            var entry = access.GetEntryForContent(services.GetRequiredService<IContentService>().GetById(PublicSite.MembersPage)!)!;
+            entry.AddRule(member.Username, Umbraco.Cms.Core.Constants.Conventions.PublicAccess.MemberUsernameRuleType);
+            Assert.True(access.Save(entry).Success);
+            return Task.CompletedTask;
+        });
+        using var person = await site.SignedIn("member", member.Id.ToString(), member.Username);
+        using var editor = await site.SignedIn("backoffice", (await CreateUserAsync(site, "cached")).ToString(), "cached");
+        using var visitor = site.Anonymous();
+        foreach (var path in new[] { "/reports/", "/contact/", "/files/", "/data/", "/members/inside/", "/reports/?component=Native", "/reports/?component=AppBlocks" })
+            foreach (var (client, who) in new[] { (person, "a member"), (editor, "a backoffice user"), (visitor, "a returning visitor") })
+            {
+                // Twice, so the second has no new antiforgery cookie, which is all that keeps the first out by accident.
+                for (var i = 0; i < 2; i++) (await client.GetAsync(path)).EnsureSuccessStatusCode();
+                using var stranger = site.Anonymous();
+                using var response = await stranger.GetAsync(path);
+                var html = await response.Content.ReadAsStringAsync();
+                Assert.True(response.Headers.Age is null, $"{path} after {who} was served from the cache: {html}");
+            }
+
+        // The cache really is on: a page of plain content is kept.
+        using (var first = site.Anonymous()) { using var page = await first.GetAsync("/sign-in/"); Assert.True(page.IsSuccessStatusCode, await page.Content.ReadAsStringAsync()); }
+        using (var second = site.Anonymous()) Assert.NotNull((await second.GetAsync("/sign-in/")).Headers.Age);
     }
 
     private static async Task A_contact_form_works_for_a_visitor_with_no_account(PublicSite site)
@@ -116,9 +157,9 @@ public sealed class AnonymousAccessSiteTests
             Assert.Equal(HttpStatusCode.BadRequest, forged.StatusCode);
         Assert.Equal(calls, site.Forms.Created.Count);
 
-        // Update and delete are the class's too, and this one has none to offer.
+        // There is nothing to update: an update loads its record first, and this class keeps none.
         using (var update = await Send(visitor, HttpMethod.Put, api + "/1", token, new { definitionVersion = form.GetProperty("definitionVersion").GetString(), version = "1", values = new { name = "Pat" }, submissionKey = Guid.NewGuid() }))
-            Assert.Equal(HttpStatusCode.Forbidden, update.StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, update.StatusCode);
     }
 
     private static async Task A_class_that_refuses_shows_the_notice_and_the_engine_always_refuses(PublicSite site)
@@ -169,6 +210,17 @@ public sealed class AnonymousAccessSiteTests
 
     private static async Task A_report_block_runs_anonymously_without_saved_views(PublicSite site)
     {
+        // A page whose only interactive block is a report depends on who asks too, however the site renders it.
+        foreach (var path in new[] { "/reports/", "/reports/?component=AppBlocks", "/reports/?component=Native", "/sizes/" })
+        {
+            using var first = site.Anonymous();
+            using var page = await first.GetAsync(path);
+            Assert.True(page.Headers.CacheControl?.NoStore, path);
+            using var admitted = await site.Administrator();
+            using var adminPage = await admitted.GetAsync(path);
+            Assert.True(adminPage.Headers.CacheControl?.NoStore, path);
+            Assert.DoesNotContain("Open database setup", await adminPage.Content.ReadAsStringAsync());
+        }
         var name = PublicSite.ReportName(PublicSite.ReportPage, PublicSite.PublicReport);
         var report = "/api/reports/" + name;
         using var admin = await site.Administrator();
@@ -204,7 +256,7 @@ public sealed class AnonymousAccessSiteTests
         // Saving has no owner to give it, and printing no account to deliver for.
         using (var save = await visitor.PostAsJsonAsync(report + "/saved", new { title = "Mine", state = new { }, isGlobal = false }))
             Assert.Equal(HttpStatusCode.Unauthorized, save.StatusCode);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await visitor.DeleteAsync($"/api/reports/{savedId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await visitor.DeleteAsync($"/api/reports/{savedId}")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await visitor.GetAsync(report + "/print/options")).StatusCode);
 
         // Nothing leaked into the shared state: someone signed in keeps their saved views and features.
@@ -234,16 +286,27 @@ public sealed class AnonymousAccessSiteTests
     private static async Task Reports_that_are_not_blocks_stay_refused_and_developers_can_refuse_blocks(PublicSite site)
     {
         using var visitor = site.Anonymous();
-        foreach (var name in new[] { "__internal", "adminonly", "configured" })
+        foreach (var name in new[] { "__saved-reports", "adminonly", "configured" })
             Assert.False((await visitor.GetAsync($"/api/reports/{name}/default")).IsSuccessStatusCode, name);
 
         var report = "/api/reports/" + PublicSite.ReportName(PublicSite.ReportPage, PublicSite.PublicReport);
         Assert.Equal(HttpStatusCode.OK, (await visitor.GetAsync(report + "/default")).StatusCode);
         site.Switch.ReportPolicyRefuses = true;
         Assert.Equal(HttpStatusCode.Unauthorized, (await visitor.GetAsync(report + "/default")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await visitor.GetAsync(report + "/schema")).StatusCode);
+        // The page says so at once, in the notice, with no widget to fail first.
+        foreach (var path in new[] { "/reports/", "/reports/?component=AppBlocks", "/reports/?component=Native" })
+        {
+            var html = await visitor.GetStringAsync(path);
+            Assert.Contains("Sign in to use this report.", html);
+            Assert.DoesNotContain("report=\"" + PublicSite.ReportName(PublicSite.ReportPage, PublicSite.PublicReport) + "\"", html);
+        }
         site.Switch.ReportPolicyRefuses = false;
+        Assert.Contains("report=\"" + PublicSite.ReportName(PublicSite.ReportPage, PublicSite.PublicReport) + "\"", await visitor.GetStringAsync("/reports/"));
         site.Switch.DataPolicyRefuses = true;
         Assert.Equal(HttpStatusCode.Unauthorized, (await visitor.GetAsync(report + "/default")).StatusCode);
+        // The schema answers the same, because it is what the page's script asks before it builds the widget, to show the notice instead.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await visitor.GetAsync(report + "/schema")).StatusCode);
         site.Switch.DataPolicyRefuses = false;
         Assert.Equal(HttpStatusCode.OK, (await visitor.GetAsync(report + "/default")).StatusCode);
     }
@@ -262,11 +325,21 @@ public sealed class AnonymousAccessSiteTests
         Assert.True(adminList.GetProperty("canWrite").GetBoolean());
         using var adminUpload = await Upload(admin, closed, adminList.GetProperty("antiforgeryToken").GetString(), "from-admin");
         Assert.Equal(HttpStatusCode.Created, adminUpload.StatusCode);
-        var fileId = (await adminUpload.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        var uploadedByAdmin = await adminUpload.Content.ReadFromJsonAsync<JsonElement>();
+        var fileId = uploadedByAdmin.GetProperty("id").GetInt64();
+        var accountName = uploadedByAdmin.GetProperty("uploadedBy").GetString()!;
+        Assert.NotEqual("anonymous", accountName);
+        Assert.Equal(accountName, uploadedByAdmin.GetProperty("updatedBy").GetString());
 
         var list = await visitor.GetFromJsonAsync<JsonElement>(closed);
         Assert.False(list.GetProperty("canWrite").GetBoolean());
         Assert.Single(list.GetProperty("items").EnumerateArray());
+        // Someone with no account reads who filed it as someone signed in, not as which account. Someone signed in still sees the name.
+        var seen = list.GetProperty("items")[0];
+        Assert.Equal("a signed-in user", seen.GetProperty("uploadedBy").GetString());
+        Assert.Equal("a signed-in user", seen.GetProperty("updatedBy").GetString());
+        Assert.DoesNotContain(accountName, list.GetRawText());
+        Assert.Equal(accountName, (await admin.GetFromJsonAsync<JsonElement>(closed)).GetProperty("items")[0].GetProperty("uploadedBy").GetString());
         Assert.Equal("from-admin", await visitor.GetStringAsync($"{closed}/{fileId}"));
         var token = list.GetProperty("antiforgeryToken").GetString();
         using (var upload = await Upload(visitor, closed, token, "from-visitor")) Assert.Equal(HttpStatusCode.Forbidden, upload.StatusCode);
@@ -283,9 +356,25 @@ public sealed class AnonymousAccessSiteTests
         var item = await added.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("anonymous", item.GetProperty("uploadedBy").GetString());
         var id = item.GetProperty("id").GetInt64();
-        using (var replaced = await Upload(visitor, $"{open}/{id}", openToken, "replaced", HttpMethod.Put)) Assert.Equal(HttpStatusCode.OK, replaced.StatusCode);
-        Assert.Equal("replaced", await visitor.GetStringAsync($"{open}/{id}"));
+        using var replaced = await Upload(visitor, $"{open}/{id}", openToken, "replaced", HttpMethod.Put);
+        Assert.Equal(HttpStatusCode.OK, replaced.StatusCode);
+        // A replacement is a new revision with its own id.
+        id = (await replaced.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        Assert.Equal("replaced",await visitor.GetStringAsync($"{open}/{id}"));
         using (var removed = await Send(visitor, HttpMethod.Delete, $"{open}/{id}", openToken)) Assert.Equal(HttpStatusCode.NoContent, removed.StatusCode);
+
+        // A visitor replacing an account's file is told about its earlier revision, without the name, in the answer to the write as in the list.
+        var openForAdmin = await admin.GetFromJsonAsync<JsonElement>(open);
+        using var filedByAdmin = await Upload(admin, open, openForAdmin.GetProperty("antiforgeryToken").GetString(), "from-admin");
+        Assert.Equal(HttpStatusCode.Created, filedByAdmin.StatusCode);
+        var filedId = (await filedByAdmin.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        using var replacedAccounts = await Upload(visitor, $"{open}/{filedId}", openToken, "from-visitor", HttpMethod.Put);
+        Assert.Equal(HttpStatusCode.OK, replacedAccounts.StatusCode);
+        var afterReplace = await replacedAccounts.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("anonymous", afterReplace.GetProperty("updatedBy").GetString());
+        Assert.Equal("a signed-in user", afterReplace.GetProperty("revisions")[0].GetProperty("uploadedBy").GetString());
+        Assert.DoesNotContain(accountName, afterReplace.GetRawText());
+        using (var cleared = await Send(visitor, HttpMethod.Delete, $"{open}/{afterReplace.GetProperty("id").GetInt64()}", openToken)) Assert.Equal(HttpStatusCode.NoContent, cleared.StatusCode);
 
         // A record that does not load for them has no files for them, whatever its write rule says.
         Assert.Equal(HttpStatusCode.Forbidden, (await visitor.GetAsync(hidden)).StatusCode);
@@ -309,6 +398,102 @@ public sealed class AnonymousAccessSiteTests
         var adminHtml = await admin.GetStringAsync("/data/");
         Assert.Contains("data-app-tabular", adminHtml);
         Assert.Contains("data-app-schedule", adminHtml);
+    }
+
+    private static async Task An_account_that_presented_itself_and_failed_is_refused_not_taken_for_anonymous(PublicSite site)
+    {
+        var contact = PublicSite.FormUrl(PublicSite.ContactPage, PublicSite.ContactForm);
+        var files = PublicSite.FilesUrl(PublicSite.FilesPage, PublicSite.ClosedFiles);
+        // The page and its form are open to someone with no account, so a refusal here can only be about the account.
+        async Task AssertOpenForVisitor()
+        {
+            using var visitor = site.Anonymous();
+            Assert.Contains("data-app-form", await visitor.GetStringAsync("/contact/"));
+            Assert.Equal(HttpStatusCode.OK, (await visitor.GetAsync(contact)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await visitor.GetAsync(files)).StatusCode);
+        }
+        async Task AssertRefused(HttpClient client, string who)
+        {
+            var html = await client.GetStringAsync("/contact/");
+            Assert.True(!html.Contains("data-app-form"), who + ": " + html);
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(contact)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(files)).StatusCode);
+            // The report block's rule asks the same thing, so they do not get the public report either.
+            var report = "/api/reports/" + PublicSite.ReportName(PublicSite.ReportPage, PublicSite.PublicReport);
+            Assert.False((await client.GetAsync(report + "/default")).IsSuccessStatusCode, who);
+        }
+        await AssertOpenForVisitor();
+
+        var locked = await CreateMemberAsync(site, "locked");
+        using var lockedClient = await site.SignedIn("member", locked.Id.ToString(), locked.Username);
+        var unapproved = await CreateMemberAsync(site, "unapproved");
+        using var unapprovedClient = await site.SignedIn("member", unapproved.Id.ToString(), unapproved.Username);
+        var disabled = await CreateUserAsync(site, "disabled");
+        using var disabledClient = await site.SignedIn("backoffice", disabled.ToString(), "disabled");
+
+        // Each works while the account is in good standing, as itself, and the same cookie stops working when it is not.
+        foreach (var (client, who) in new[] { (lockedClient, "locked"), (unapprovedClient, "unapproved"), (disabledClient, "disabled") })
+        {
+            await Load(client, contact);
+            Assert.True(site.Forms.Initialized.Last().Identity?.IsAuthenticated, who);
+        }
+        await site.WithServices(async services => {
+            var members = services.GetRequiredService<IMemberService>();
+            var lockedOut = members.GetById(locked.Key)!; lockedOut.IsLockedOut = true; members.Save(lockedOut);
+            var notApproved = members.GetById(unapproved.Key)!; notApproved.IsApproved = false; members.Save(notApproved);
+            var users = services.GetRequiredService<IUserService>();
+            var user = (await users.GetAsync(disabled))!; user.IsApproved = false; users.Save(user);
+        });
+        await AssertRefused(lockedClient, "locked");
+        await AssertRefused(unapprovedClient, "unapproved");
+        await AssertRefused(disabledClient, "disabled");
+        await AssertOpenForVisitor();
+    }
+
+    private static async Task A_report_block_saved_without_a_page_size_uses_the_reports_default(PublicSite site)
+    {
+        using var visitor = site.Anonymous();
+        foreach (var (block, how) in new[] { (PublicSite.UnsizedReport, "never filled in"), (PublicSite.ZeroSizedReport, "saved as 0"), (PublicSite.EmptySizedReport, "saved empty") })
+        {
+            var report = "/api/reports/" + PublicSite.ReportName(PublicSite.SizesPage, block);
+            using var schema = await visitor.GetAsync(report + "/schema");
+            var body = await schema.Content.ReadAsStringAsync();
+            Assert.True(schema.StatusCode == HttpStatusCode.OK, how + ": " + body);
+            var loaded = await visitor.GetFromJsonAsync<JsonElement>(report + "/default");
+            Assert.Equal(2, loaded.GetProperty("result").GetProperty("rows").GetArrayLength());
+        }
+        // The page offers all three, with no size to start from, where a block with one says so.
+        var html = await visitor.GetStringAsync("/sizes/");
+        Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(html, "data-app-report").Count);
+        Assert.DoesNotContain("initial-page-size", html);
+        Assert.Contains("initial-page-size=\"10\"", await visitor.GetStringAsync("/reports/"));
+    }
+
+    private static async Task<IMember> CreateMemberAsync(PublicSite site, string name)
+    {
+        IMember? created = null;
+        await site.WithServices(services => {
+            var members = services.GetRequiredService<IMemberService>();
+            var username = name + "-" + Guid.NewGuid().ToString("N")[..8];
+            created = members.CreateMemberWithIdentity(username, username + "@example.invalid", username, "Member", isApproved: true);
+            members.Save(created);
+            return Task.CompletedTask;
+        });
+        return created!;
+    }
+
+    private static async Task<Guid> CreateUserAsync(PublicSite site, string name)
+    {
+        var key = Guid.Empty;
+        await site.WithServices(async services => {
+            var username = name + "-" + Guid.NewGuid().ToString("N")[..8] + "@example.invalid";
+            var result = await services.GetRequiredService<IUserService>().CreateAsync(Umbraco.Cms.Core.Constants.Security.SuperUserKey, new UserCreateModel {
+                UserName = username, Email = username, Name = name, Kind = UserKind.Default, UserGroupKeys = new HashSet<Guid> { Umbraco.Cms.Core.Constants.Security.EditorGroupKey },
+            }, approveUser: true);
+            Assert.True(result.Success, result.Status.ToString());
+            key = result.Result.CreatedUser!.Key;
+        });
+        return key;
     }
 
     private static async Task<JsonElement> Load(HttpClient client, string url)

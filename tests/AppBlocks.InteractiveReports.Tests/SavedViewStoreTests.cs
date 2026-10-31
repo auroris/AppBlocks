@@ -11,6 +11,7 @@ using InteractiveReport.Core.Model;
 using InteractiveReport.Core.SavedReports;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
@@ -153,6 +154,34 @@ public sealed class SavedViewStoreTests
     }
 
     [Fact]
+    public async Task A_report_blocks_saved_views_answer_as_an_empty_store_for_someone_anonymous()
+    {
+        var file = Path.Combine(Directory.CreateTempSubdirectory("saved-views-").FullName, "views.db");
+        await using var site = Site($"Data Source={file};Pooling=False", text => new SqliteConnection(text));
+        var block = AppBlocks.Blocks.AppBlockContent.ReportName(Guid.NewGuid(), Guid.NewGuid());
+        var http = new HttpContextAccessor { HttpContext = new DefaultHttpContext() };
+        var store = new SavedViewStore(new SharedViews(block), site.Catalog, site.Connections, site.Provider.GetRequiredService<ILogger<SavedViewStore>>(), http);
+
+        // Nobody signed in: a block's views are not there, not even by their id, and its default view is no default.
+        Assert.Empty(await store.ListFamily(block));
+        Assert.Null(await store.FindDefault(block));
+        Assert.Null(await store.Get(SharedViews.BlockId));
+        // What is not a block is not this rule's business, so a site that lets someone anonymous at a configured report keeps its answer.
+        Assert.Single(await store.ListFamily("orders"));
+        Assert.NotNull(await store.FindDefault("orders"));
+        Assert.NotNull(await store.Get(SharedViews.ConfiguredId));
+
+        // Someone signed in, and work outside any request such as a synchronization at startup, see everything.
+        http.HttpContext.User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity([new(System.Security.Claims.ClaimTypes.NameIdentifier, "1")], "test"));
+        Assert.Single(await store.ListFamily(block));
+        Assert.NotNull(await store.FindDefault(block));
+        Assert.NotNull(await store.Get(SharedViews.BlockId));
+        http.HttpContext = null;
+        Assert.Single(await store.ListFamily(block));
+        Assert.NotNull(await store.FindDefault(block));
+    }
+
+    [Fact]
     public async Task A_store_with_no_auto_create_is_told_apart_from_one_that_cannot()
     {
         var file = Path.Combine(Directory.CreateTempSubdirectory("saved-views-").FullName, "views.db");
@@ -223,6 +252,147 @@ public sealed class SavedViewStoreTests
         SqlConnection.ClearAllPools();
     }
 
+    private const string OwnSchema = "app_views";
+
+    [LocalDbFact]
+    public async Task A_login_with_its_own_default_schema_is_told_to_grant_there_and_the_tables_land_there()
+    {
+        await using var database = await RestrictedSqlServer.CreateAsync(OwnSchema);
+        await using var site = Site(database.AccountConnection, text => new SqlConnection(text));
+        Assert.False(await site.Store.ReadyAsync());
+        var before = await site.Setup.StatusAsync(default);
+        Assert.Equal(DatabaseFeatureState.Action, before.State);
+        Assert.Contains($"SCHEMA::[{OwnSchema}]", before.GrantSql);
+        Assert.DoesNotContain("dbo", before.GrantSql);
+        Assert.Equal(0, await database.TableCount());
+
+        await database.Admin(before.GrantSql!);
+
+        Assert.Equal(DatabaseFeatureState.Automatic, (await site.Setup.StatusAsync(default)).State);
+        Assert.True(await site.Store.ReadyAsync());
+        var view = View();
+        await site.Store.Create(view);
+        Assert.Equal("Mine", (await site.Store.Get(view.Id))!.Title);
+        var administrators = site.Provider.GetRequiredService<IAdministratorStore>();
+        await administrators.Grant("someone");
+        Assert.True(await administrators.IsAdministrator("someone"));
+        Assert.Equal(DatabaseFeatureState.Ready, (await site.Setup.StatusAsync(default)).State);
+        Assert.True(await database.HasTable(OwnSchema, "IR_SAVED_REPORTS"));
+        Assert.True(await database.HasTable(OwnSchema, "IR_ADMINISTRATORS"));
+        Assert.Equal(0, await database.TableCount("dbo"));
+        SqlConnection.ClearAllPools();
+    }
+
+    [LocalDbFact]
+    public async Task The_script_run_as_the_owner_puts_the_tables_in_dbo_where_a_login_with_its_own_schema_still_finds_them()
+    {
+        await using var database = await RestrictedSqlServer.CreateAsync(OwnSchema);
+        await using var site = Site(database.AccountConnection, text => new SqlConnection(text));
+        Assert.False(await site.Store.ReadyAsync());
+        var script = (await site.Setup.ScriptAsync(default))!;
+        Assert.Contains(OwnSchema, script);
+
+        await database.Admin(script);
+
+        Assert.True(await database.HasTable("dbo", "IR_SAVED_REPORTS"));
+        Assert.Equal(0, await database.TableCount(OwnSchema));
+        Assert.True(await site.Store.ReadyAsync());
+        await site.Store.Create(View());
+        Assert.Single(await site.Store.ListFamily("tasks"));
+        Assert.Equal(DatabaseFeatureState.Ready, (await site.Setup.StatusAsync(default)).State);
+        SqlConnection.ClearAllPools();
+    }
+
+    [LocalDbFact]
+    public async Task Rights_on_dbo_do_not_count_for_a_login_whose_tables_would_land_in_its_own_schema()
+    {
+        await using var database = await RestrictedSqlServer.CreateAsync(OwnSchema);
+        await database.Admin($"GRANT CREATE TABLE TO [{database.Account}]; GRANT ALTER ON SCHEMA::dbo TO [{database.Account}]; GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON SCHEMA::dbo TO [{database.Account}];");
+        await using var site = Site(database.AccountConnection, text => new SqlConnection(text));
+        Assert.Equal(DatabaseFeatureState.Action, (await site.Setup.StatusAsync(default)).State);
+        Assert.False(await site.Store.ReadyAsync());
+        Assert.Contains("may not create", Assert.Single(site.Warnings));
+        Assert.Equal(0, await database.TableCount());
+        SqlConnection.ClearAllPools();
+    }
+
+    /// <summary>Someone's existing tables in dbo stay the tables, however much the login may create in its own schema: an empty twin there would hide their rows.</summary>
+    [LocalDbFact]
+    public async Task Tables_already_in_dbo_are_not_shadowed_when_a_login_with_its_own_schema_may_create_there()
+    {
+        await using var database = await RestrictedSqlServer.CreateAsync(OwnSchema);
+        await using var first = Site(database.AccountConnection, text => new SqlConnection(text));
+        await database.Admin((await first.Setup.ScriptAsync(default))!);
+        await first.Store.Create(View());
+
+        await database.Admin((await first.Setup.StatusAsync(default)).GrantSql!);
+        // A new process: nothing remembers that the tables were found.
+        await using var second = Site(database.AccountConnection, text => new SqlConnection(text));
+        Assert.True(await second.Store.ReadyAsync());
+        Assert.Equal("Mine", Assert.Single(await second.Store.ListFamily("tasks")).Title);
+        await second.Provider.GetRequiredService<IAdministratorStore>().Grant("someone");
+        Assert.Equal(0, await database.TableCount(OwnSchema));
+        SqlConnection.ClearAllPools();
+    }
+
+    /// <summary>A database trigger that rolls back every new table: the rights are all there and the create still fails, as an Oracle quota makes it.</summary>
+    private const string RefuseEveryTable = "CREATE TRIGGER REFUSE_TABLES ON DATABASE FOR CREATE_TABLE AS ROLLBACK;";
+
+    [LocalDbFact]
+    public async Task A_create_that_is_allowed_and_still_fails_is_tried_again_after_a_short_wait_rather_than_on_every_request()
+    {
+        await using var database = await RestrictedSqlServer.CreateAsync();
+        await database.Admin((await Grant(database)) + RefuseEveryTable);
+        var clock = new Clock();
+        await using var site = Site(database.AccountConnection, text => new SqlConnection(text), time: clock);
+
+        Assert.False(await site.Store.ReadyAsync());
+        var attempt = site.StoreErrors.Count;
+        Assert.NotEqual(0, attempt);
+        for (var i = 0; i < 5; i++) Assert.Empty(await site.Store.ListFamily("tasks"));
+        Assert.Equal(attempt, site.StoreErrors.Count);
+        Assert.Single(site.Warnings);
+
+        // Past the wait it tries again, once, and when the database has changed that is all it takes.
+        clock.Advance(TimeSpan.FromSeconds(31));
+        Assert.False(await site.Store.ReadyAsync());
+        Assert.Equal(attempt * 2, site.StoreErrors.Count);
+        await database.Admin("DROP TRIGGER REFUSE_TABLES ON DATABASE;");
+        clock.Advance(TimeSpan.FromSeconds(31));
+        Assert.True(await site.Store.ReadyAsync());
+        await site.Store.Create(View());
+        Assert.Single(await site.Store.ListFamily("tasks"));
+        SqlConnection.ClearAllPools();
+    }
+
+    [LocalDbFact]
+    public async Task The_script_works_at_once_even_while_a_failed_create_is_waiting()
+    {
+        await using var database = await RestrictedSqlServer.CreateAsync();
+        await database.Admin((await Grant(database)) + RefuseEveryTable);
+        await using var site = Site(database.AccountConnection, text => new SqlConnection(text), time: new Clock());
+        Assert.False(await site.Store.ReadyAsync());
+
+        await database.Admin("DROP TRIGGER REFUSE_TABLES ON DATABASE;\nGO\n" + (await site.Setup.ScriptAsync(default))!);
+
+        // The clock has not moved.
+        Assert.True(await site.Store.ReadyAsync());
+        await site.Store.Create(View());
+        Assert.Single(await site.Store.ListFamily("tasks"));
+        SqlConnection.ClearAllPools();
+
+    }
+
+    private static Task<string> Grant(RestrictedSqlServer database) => Task.FromResult(
+        $"GRANT CREATE TABLE TO [{database.Account}]; GRANT ALTER ON SCHEMA::dbo TO [{database.Account}]; GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON SCHEMA::dbo TO [{database.Account}];\nGO\n");
+
+    private sealed class Clock : TimeProvider
+    {
+        private DateTimeOffset now = DateTimeOffset.UnixEpoch;
+        public override DateTimeOffset GetUtcNow() => now;
+        public void Advance(TimeSpan by) => now += by;
+    }
+
     [LocalDbFact]
     public async Task The_engines_own_store_uses_a_hand_made_table_when_its_ddl_is_refused_on_sql_server()
     {
@@ -246,7 +416,7 @@ public sealed class SavedViewStoreTests
         await command.ExecuteNonQueryAsync();
     }
 
-    private static Fixture Site(string connectionString, Func<string, DbConnection> open, bool autoCreate = true, string? dataSource = null)
+    private static Fixture Site(string connectionString, Func<string, DbConnection> open, bool autoCreate = true, string? dataSource = null, TimeProvider? time = null)
     {
         var root = Directory.CreateTempSubdirectory("saved-views-site-").FullName;
         const string name = "ViewsDb";
@@ -264,11 +434,13 @@ public sealed class SavedViewStoreTests
         var environment = new Environment(root);
         services.AddSingleton<IWebHostEnvironment>(environment);
         var connections = new AppBlocksBuilder().AddConnection(name, _ => open(connectionString));
-        services.AddInteractiveReports(configuration).AddConnectionsFrom(connections);
+        // As a host that gives the report engine its logger: its own error lines are then in the log beside AppBlocks' warning.
+        var loggers = LoggerFactory.Create(logging => logging.AddProvider(logs));
+        services.AddInteractiveReports(configuration).AddConnectionsFrom(connections).UseLogger(loggers.CreateLogger("InteractiveReport"));
         var provider = services.BuildServiceProvider();
         var catalog = new ConnectionCatalog(configuration, environment, new EphemeralDataProtectionProvider(), connections, provider);
         var factory = new ManagedConnectionFactory(provider.GetRequiredService<IReportConnectionFactory>(), catalog);
-        var store = new SavedViewStore(provider.GetRequiredService<ISavedReportStore>(), catalog, factory, provider.GetRequiredService<ILogger<SavedViewStore>>());
+        var store = new SavedViewStore(provider.GetRequiredService<ISavedReportStore>(), catalog, factory, provider.GetRequiredService<ILogger<SavedViewStore>>(), time: time);
         var setup = new SavedViewsDatabaseSetup(store, provider.GetRequiredService<IAdministratorStore>(), catalog, factory, configuration, provider.GetRequiredService<IOptionsMonitor<InteractiveReportOptions>>());
         return new(provider, logs, catalog, factory, store, setup);
     }
@@ -276,10 +448,30 @@ public sealed class SavedViewStoreTests
     private sealed record Fixture(ServiceProvider Provider, RecordingLoggerProvider Logs, ConnectionCatalog Catalog, IReportConnectionFactory Connections, SavedViewStore Store, SavedViewsDatabaseSetup Setup) : IAsyncDisposable
     {
         public IEnumerable<string> Warnings => Logs.Entries.Where(entry => entry.Level == LogLevel.Warning).Select(entry => entry.Message);
+        public IReadOnlyList<string> StoreErrors => Logs.Entries.Where(entry => entry.Level == LogLevel.Error && entry.Message.Contains("Saved reports store")).Select(entry => entry.Message).ToArray();
         public async ValueTask DisposeAsync() => await Provider.DisposeAsync();
     }
 
     /// <summary>A store a site brought itself, which AppBlocks knows nothing about.</summary>
+    /// <summary>A store holding one shared default view of a report block and one of a configured report.</summary>
+    private sealed class SharedViews(string block) : ISavedReportStore
+    {
+        public const long BlockId = 1, ConfiguredId = 2;
+        private SavedReport View(long id, string report) => new() { Id = id, ReportName = report, Title = "Shared", Owner = "someone", IsGlobal = true, IsDefault = true };
+        public Task<SavedReport?> Get(long id, CancellationToken ct = default) => Task.FromResult<SavedReport?>(id == BlockId ? View(BlockId, block) : View(ConfiguredId, "orders"));
+        public Task<SavedReport?> FindConfiguredFile(string reportName, string sourceFile, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<SavedReport>> ListFamily(string reportName, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<SavedReport>>([View(BlockId, reportName)]);
+        public Task<SavedReport?> FindDefault(string reportName, CancellationToken ct = default) => Task.FromResult<SavedReport?>(View(BlockId, reportName));
+        public Task<SavedReport?> FindTitleCollision(string reportName, string title, string? owner, bool isPublic, long? exceptId = null, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<SavedReport>> ListAll(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<string>> ListOwners(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task Create(SavedReport report, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<bool> Update(SavedReport report, SavedReport expected, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<bool> ReplaceDefault(SavedReport report, SavedReport expected, SavedReport currentDefault, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<bool> Delete(SavedReport expected, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<bool> Delete(long id, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
     private sealed class OtherStore : ISavedReportStore
     {
         public Task<SavedReport?> Get(long id, CancellationToken ct = default) => throw new NotSupportedException();

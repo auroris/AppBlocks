@@ -57,7 +57,7 @@ public static class AttachmentEndpoints
             purposes = scope.Block!.Purposes,
             maxFileSize = scope.Block.Limits.MaxFileSize,
             accept = scope.Block.Limits.Accept,
-            items = items.Select(Item),
+            items = items.Select(item => Item(item, scope.User!)),
             antiforgeryToken = http.RequestServices.GetRequiredService<IAntiforgery>().GetAndStoreTokens(http).RequestToken,
         });
     }
@@ -131,7 +131,7 @@ public static class AttachmentEndpoints
             : await store.ReplaceAsync(scope.Owner!, id.Value, upload, purpose, label, notes, by, ct));
         if (result.Problem is not null) return result.Problem;
         if (result.Value is null) return Audited(http, "replace", scope, id, Results.Problem("This file does not belong to the record.", statusCode: 404), 404);
-        return Audited(http, id is null ? "upload" : "replace", scope, result.Value.Id, Results.Json(Item(result.Value), statusCode: id is null ? 201 : 200), id is null ? 201 : 200);
+        return Audited(http, id is null ? "upload" : "replace", scope, result.Value.Id, Results.Json(Item(result.Value, scope.User!), statusCode: id is null ? 201 : 200), id is null ? 201 : 200);
     }
 
     private static async Task<IResult> Remove(Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
@@ -148,13 +148,20 @@ public static class AttachmentEndpoints
             : Audited(http, "remove", scope, id, Results.Problem("This file does not belong to the record.", statusCode: 404), 404);
     }
 
-    /// <summary>What the list and the writes return for a file: its current revision and the earlier ones, newest first.</summary>
-    private static object Item(AttachmentItem item) => new {
-        id = item.Id, fileName = item.FileName, contentType = item.ContentType, size = item.Size, sha256 = item.Sha256,
-        purpose = item.Purpose, label = item.Label, notes = item.Notes,
-        uploadedBy = item.UploadedBy, uploadedAt = Utc(item.UploadedAt), updatedBy = item.UpdatedBy, updatedAt = Utc(item.UpdatedAt),
-        revisions = item.Revisions.Select(r => new { id = r.Id, fileName = r.FileName, contentType = r.ContentType, size = r.Size, sha256 = r.Sha256, uploadedBy = r.UploadedBy, uploadedAt = Utc(r.UploadedAt) }),
-    };
+    /// <summary>What someone with no account is told in place of an account name: that it was someone signed in, not who.</summary>
+    internal const string HiddenAccount = "a signed-in user";
+
+    /// <summary>What the list and the writes return for a file: its current revision and the earlier ones, newest first. Account names are for people signed in themselves.</summary>
+    private static object Item(AttachmentItem item, ClaimsPrincipal reader)
+    {
+        string By(string actor) => reader.Identity?.IsAuthenticated == true || actor == AppBlocks.Blocks.BlockOwnerAccess.AnonymousActor ? actor : HiddenAccount;
+        return new {
+            id = item.Id, fileName = item.FileName, contentType = item.ContentType, size = item.Size, sha256 = item.Sha256,
+            purpose = item.Purpose, label = item.Label, notes = item.Notes,
+            uploadedBy = By(item.UploadedBy), uploadedAt = Utc(item.UploadedAt), updatedBy = By(item.UpdatedBy), updatedAt = Utc(item.UpdatedAt),
+            revisions = item.Revisions.Select(r => new { id = r.Id, fileName = r.FileName, contentType = r.ContentType, size = r.Size, sha256 = r.Sha256, uploadedBy = By(r.UploadedBy), uploadedAt = Utc(r.UploadedAt) }),
+        };
+    }
 
     /// <summary>Times are stored as UTC and read back without a kind on SQLite, so they are stamped before they are written as ISO text.</summary>
     private static string Utc(DateTime value) => DateTime.SpecifyKind(value, DateTimeKind.Utc).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);

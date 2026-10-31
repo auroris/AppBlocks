@@ -61,8 +61,8 @@ public sealed class DatabaseSetupSiteTests
             using (var script = await admin.GetAsync($"{Setup}/uploads/script"))
             {
                 var text = await script.Content.ReadAsStringAsync();
-                Assert.Contains("CREATE TABLE dbo.APP_ATTACHMENT_LINK", text);
-                Assert.Contains($"GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.APP_ATTACHMENT TO [{database.Account}]", text);
+                Assert.Contains("CREATE TABLE APP_ATTACHMENT_LINK", text);
+                Assert.Contains($"GRANT SELECT, INSERT, UPDATE, DELETE ON APP_ATTACHMENT TO [{database.Account}]", text);
                 Assert.DoesNotContain(database.Password, text);
             }
             Assert.Equal(1, await database.TableCount());
@@ -71,6 +71,16 @@ public sealed class DatabaseSetupSiteTests
             await AssertReportWorks(editor, savedViews: false);
             using (var refused = await editor.PostAsJsonAsync(ReportUrl("/saved"), new { title = "Mine", state = new { }, isGlobal = false }))
                 Assert.True((int)refused.StatusCode is >= 400 and < 500, refused.StatusCode.ToString());
+
+            // Only an administrator is told saving is off, by an answer the page's browser asks for, so the page itself says nothing a cache could keep.
+            const string setupNote = "/api/reports/__saved-views-setup";
+            foreach (var client in new[] { anonymous, editor }) Assert.Equal(HttpStatusCode.NoContent, (await client.GetAsync(setupNote)).StatusCode);
+            using (var note = await admin.GetAsync(setupNote))
+            {
+                Assert.Equal(HttpStatusCode.OK, note.StatusCode);
+                Assert.True(note.Headers.CacheControl?.NoStore);
+                Assert.Contains("/umbraco/section/settings/workspace/appblocks?tab=setup", (await note.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("setupUrl").GetString());
+            }
 
             // The form keeps working through the same account, and the block beside it says only that storage is not set up.
             var token = await AssertFormWorks(editor, "Renamed without file storage");
@@ -108,6 +118,7 @@ public sealed class DatabaseSetupSiteTests
 
             // Saved views work on the next request.
             await AssertReportWorks(editor, savedViews: true);
+            Assert.Equal(HttpStatusCode.NoContent, (await admin.GetAsync(setupNote)).StatusCode);
             var saved = await Json(await editor.PostAsJsonAsync(ReportUrl("/saved"), new { title = "Mine", state = new { page = new { index = 1, size = 5 } }, isGlobal = false }), HttpStatusCode.Created);
             var id = saved.GetProperty("id").GetInt64();
             Assert.Equal(id, Assert.Single((await Json(await editor.GetAsync(ReportUrl()))).EnumerateArray()).GetProperty("id").GetInt64());

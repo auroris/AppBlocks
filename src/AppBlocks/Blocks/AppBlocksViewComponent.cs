@@ -4,6 +4,7 @@ using AppBlocks.Authentication;
 using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using AppBlocks.Forms;
+using AppBlocks.Publishing;
 
 namespace AppBlocks.Blocks;
 
@@ -40,7 +41,7 @@ public sealed class AppBlocksViewComponent(AppPageAccess access, AppBindVariable
             HttpContext.Response.StatusCode = 403;
             return Content("Sign in with an Umbraco Member or backoffice User account permitted to use this page.");
         }
-        HttpContext.Response.Headers.CacheControl = "no-store";
+        HttpContext.KeepOutOfCaches();
         HttpContext.User = visitor;
         // All asynchronously loaded blocks must receive tokens for the same browser cookie.
         antiforgery.GetAndStoreTokens(HttpContext);
@@ -68,7 +69,7 @@ public sealed class WebsiteBlocksViewComponent(AppPageAccess access, AppBindVari
         if (!interactive) return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, null));
 
         // Both the sign-in notice and the admitted person's defaults depend on this request, not just the content revision.
-        HttpContext.Response.Headers.CacheControl = "no-store";
+        HttpContext.KeepOutOfCaches();
         var visitor = await access.VisitorAsync(page);
         if (visitor is null) return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, null));
         HttpContext.User = visitor;

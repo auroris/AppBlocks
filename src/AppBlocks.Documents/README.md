@@ -20,7 +20,7 @@ Until settings are saved in the backoffice, configuration under `AppBlocks:Docum
 
 Create a **Document** (`paperReport`) content node, choose a published SQL data source, and select a Razor template that accepts `PaperReportModel`. Documents can be created at the root; to nest one under a site's page, allow Document beneath that site's document type. A site's own templates supply its content and layout. The package adds no sample content or branded templates.
 
-Templates receive rows and columns, bound parameters, the signed-in person, culture, generation time and presentation name. Access is checked against both Umbraco Public Access and the data source's read permissions. The configured row limit still applies. Parameters, culture, filenames and Pressroom page options behave as in AppHost's original paper reports. `?format=html` explicitly requests HTML even with Pressroom configured.
+Templates receive rows and columns, bound parameters, the signed-in person, culture, generation time and presentation name. Access is checked against both Umbraco Public Access and the data source's read permissions, and a paper report always needs a signed-in Member or backoffice User, even on a page without Public Access. The configured row limit still applies. Parameters, culture, filenames and Pressroom page options behave as in AppHost's original paper reports. `?format=html` explicitly requests HTML even with Pressroom configured.
 
 Register `IDocumentPresentationProvider` to provide a theme name and optional print stylesheet. The default uses the package's neutral print stylesheet. AppHost supplies its own implementation for its two site shells.
 

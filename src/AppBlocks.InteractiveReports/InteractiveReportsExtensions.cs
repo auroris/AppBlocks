@@ -110,6 +110,7 @@ public static class InteractiveReportsExtensions
     {
         endpoints.MapInteractiveReportJson(InteractiveReportsSite.ReportsRoute);
         endpoints.MapReportPrinting(InteractiveReportsSite.ReportsRoute);
+        endpoints.MapSavedViewsSetupNote();
         endpoints.MapInteractiveReportFileDownload(InteractiveReportsSite.DownloadRoute);
         endpoints.MapInteractiveReportJson(InteractiveReportsSite.BackOfficeReportsRoute);
         endpoints.MapInteractiveReportFileDownload(InteractiveReportsSite.BackOfficeDownloadRoute);

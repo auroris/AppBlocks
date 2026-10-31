@@ -4,6 +4,7 @@ using Umbraco.Cms.Core.Events;
 using Umbraco.Cms.Core.Notifications;
 using Umbraco.Cms.Core.Services;
 using Umbraco.Extensions;
+using AppBlocks.AntiSpam;
 using AppBlocks.Attachments;
 using AppBlocks.DataSources;
 using AppBlocks.Forms;
@@ -19,9 +20,9 @@ namespace AppBlocks.Blocks;
 /// </summary>
 public sealed class AppBlocksValidator(FormResourceRegistry resources, PublishedDataCatalog? definitions = null, IContentService? contents = null,
     IOptions<AttachmentSettings>? attachments = null, ScheduleSources? schedules = null,
-    IContentTypeService? contentTypes = null, IEnumerable<IAppBlockPlugin>? plugins = null) : INotificationHandler<ContentPublishingNotification>
+    IContentTypeService? contentTypes = null, IEnumerable<IAppBlockPlugin>? plugins = null, AntiSpamGate? antiSpam = null) : INotificationHandler<ContentPublishingNotification>
 {
-    private static readonly string[] Aliases = ["appForm", "appFormInterface", "appFieldset", "appActions", AppBlockSchema.AttachmentsAlias,
+    private static readonly string[] Aliases = ["appForm", "appFormInterface", "appFieldset", "appActions", AppBlockSchema.AttachmentsAlias, AppBlockSchema.AntiSpamAlias,
         AppBlockSchema.ScheduleAlias, AppBlockSchema.TabularAlias, ..AppBlockSchema.LayoutAliases, ..AppBlockSchema.ContentAliases, ..AppBlockSchema.FieldAliases];
     public void Handle(ContentPublishingNotification notification)
     {
@@ -35,8 +36,10 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
                 try {
                     var sets = BlockValueSets.Read(json, contentTypes);
                     foreach (var (set, index) in sets.Select((set, index) => (set, index))) {
-                        var errors = ValidateEmbedded(set.GetRawText());
+                        var warnings = new List<string>();
+                        var errors = Validate(set.GetRawText(), website: true, embedded: true, warnings);
                         if (errors.Count > 0) notification.CancelOperation(new EventMessage("AppBlocks", page.Name + ": " + string.Join(" ", errors), EventMessageType.Error));
+                        foreach (var warning in warnings.Distinct()) notification.Messages.Add(new EventMessage("AppBlocks", page.Name + ": " + warning, EventMessageType.Warning));
                     }
                 } catch (Exception error) when (error is JsonException or InvalidOperationException or KeyNotFoundException) {
                     notification.CancelOperation(new EventMessage("AppBlocks", page.Name + ": Check the saved block configuration.", EventMessageType.Error));
@@ -52,7 +55,8 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
     public IReadOnlyList<string> ValidateWebsite(string? json) => Validate(json, website: true);
     public IReadOnlyList<string> ValidateEmbedded(string? json) => Validate(json, website: true, embedded: true);
 
-    private IReadOnlyList<string> Validate(string? json, bool website, bool embedded = false)
+    /// <param name="warnings">What will not work yet but is no reason to refuse publishing, such as a secret key an administrator has still to add.</param>
+    private IReadOnlyList<string> Validate(string? json, bool website, bool embedded = false, List<string>? warnings = null)
     {
         var errors = new List<string>();
         if (website && string.IsNullOrWhiteSpace(json)) return errors;
@@ -73,7 +77,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
                 else if (alias == AppBlockSchema.ScheduleAlias) { visited.Add(item.GetProperty("contentKey").GetGuid()); Schedule(block, errors); }
                 // A tabular form outside a form must name its owner; Tabular says so when it does not.
                 else if (alias == AppBlockSchema.TabularAlias) { visited.Add(item.GetProperty("contentKey").GetGuid()); Tabular(block, null, errors); }
-                else if (alias == "appForm") { forms++; Form(item, block, data, visited, errors); }
+                else if (alias == "appForm") { forms++; Form(item, block, data, visited, errors, warnings: warnings); }
                 // Layouts, content blocks and an Attachments block that names its owner stand on the page as they do on a
                 // website page, with whatever their areas hold; fields and actions still belong to a form, and VisitContent says so.
                 else VisitContent(item);
@@ -85,12 +89,13 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
             void VisitContent(JsonElement item) {
                 var key = item.GetProperty("contentKey").GetGuid();
                 var block = data[key]; var alias = Alias(block);
-                if (alias == "appForm") { forms++; Form(item, block, data, visited, errors, limitNesting: false); return; }
+                if (alias == "appForm") { forms++; Form(item, block, data, visited, errors, limitNesting: false, warnings: warnings); return; }
                 if (!visited.Add(key)) throw new InvalidOperationException("Blocks cannot be repeated or cyclic.");
                 if (Plugin(alias) is { } plugin) plugin.Validate(block, errors);
                 else if (alias == AppBlockSchema.AttachmentsAlias) Attachments(block, null, errors);
                 else if (alias == AppBlockSchema.ScheduleAlias) Schedule(block, errors);
                 else if (alias == AppBlockSchema.TabularAlias) Tabular(block, null, errors);
+                else if (alias == AppBlockSchema.AntiSpamAlias) errors.Add("Place the Anti-spam block inside the form it protects.");
                 else if (alias == "appActions" || AppBlockSchema.FieldAliases.Contains(alias)) errors.Add("Fields and form actions must be placed inside a form.");
                 else if (!embedded && alias != "appFieldset" && !AppBlockSchema.LayoutAliases.Contains(alias) && !AppBlockSchema.ContentAliases.Contains(alias)) errors.Add("The page contains an unsupported block.");
                 if (item.TryGetProperty("areas", out var areas)) foreach (var area in areas.EnumerateArray()) foreach (var nested in area.GetProperty("items").EnumerateArray()) VisitContent(nested);
@@ -108,7 +113,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
         if (node.ContentType.Alias != "paperReport") errors.Add($"Select a Paper report node for Paper report; {node.Name} is not one.");
     }
 
-    private void Form(JsonElement layout, JsonElement block, Dictionary<Guid, JsonElement> data, HashSet<Guid> visited, List<string> errors, bool limitNesting = true)
+    private void Form(JsonElement layout, JsonElement block, Dictionary<Guid, JsonElement> data, HashSet<Guid> visited, List<string> errors, bool limitNesting = true, List<string>? warnings = null)
     {
         if (Text(block, "paperReport") is { Length: > 0 } paper) PaperReport(paper, errors);
         using var document = JsonDocument.Parse(Text(block, "formInterface"));
@@ -121,7 +126,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
         if (resource is null) { errors.Add("Select a registered C# form class."); return; }
         // A data source's fields come from its database; without them every binding would look wrong.
         if (resource is SqlDataSource { Problem: { } problem }) { errors.Add($"The data source {resource.Alias} is not available: {problem}"); return; }
-        var fields = new Dictionary<string, JsonElement>(StringComparer.Ordinal); var actions = 0;
+        var fields = new Dictionary<string, JsonElement>(StringComparer.Ordinal); var actions = 0; var checks = 0;
         void Visit(JsonElement item, int depth) {
             if (limitNesting && depth > 16) throw new InvalidOperationException("Form nesting is too deep.");
             var key = item.GetProperty("contentKey").GetGuid();
@@ -129,7 +134,8 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
             var child = data[key]; var alias = Alias(child);
             if (depth > 0 && (alias == "appForm" || Plugin(alias)?.RequiresUser == true)) errors.Add("Forms and reports cannot be nested inside a form.");
             if (alias == "appActions") actions++;
-            if (alias == AppBlockSchema.AttachmentsAlias) Attachments(child, resource, errors);
+            if (alias == AppBlockSchema.AntiSpamAlias) { checks++; AntiSpam(child, errors, warnings); }
+            else if (alias == AppBlockSchema.AttachmentsAlias) Attachments(child, resource, errors);
             else if (alias == AppBlockSchema.ScheduleAlias) Schedule(child, errors);
             else if (alias == AppBlockSchema.TabularAlias) Tabular(child, resource, errors);
             else if (AppBlockSchema.FieldAliases.Contains(alias)) {
@@ -146,6 +152,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
         }
         Visit(layout, 0);
         if (actions > 1) errors.Add("Use one Form actions block per form.");
+        if (checks > 1) errors.Add("Use one Anti-spam block per form.");
         if (!Flag(configuration, "viewOnly")) foreach (var field in resource.Fields.Where(f => f.Required && !f.ReadOnly && !f.HasServerDefault)) {
             if (!fields.TryGetValue(field.Key, out var item) || Flag(item, "readOnly") || Alias(item) == "appDisplay") errors.Add($"Required field '{field.Key}' must be editable, or the form must be read only.");
         }
@@ -172,6 +179,27 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
             else if (settings.AllowedExtensions.Count > 0 && !settings.AllowedExtensions.Any(allowed => (allowed.StartsWith('.') ? allowed : "." + allowed).Equals(normalized, StringComparison.OrdinalIgnoreCase)))
                 errors.Add($"The site does not accept {normalized} files (Attachments:AllowedExtensions).");
         }
+    }
+
+    /// <summary>
+    /// An Anti-spam block names a service this site offers and the public site key that goes with it. A secret key missing
+    /// from the server is only a warning: it is an administrator's to add, and a site's content may well arrive before its keys.
+    /// Without the service list, as in a test without a site, the block's own settings are all that is judged.
+    /// </summary>
+    private void AntiSpam(JsonElement block, List<string> errors, List<string>? warnings)
+    {
+        var alias = Text(block, "service").Trim();
+        var siteKey = Text(block, "siteKey").Trim();
+        if (alias.Length == 0) { errors.Add("Choose a service for the Anti-spam block."); return; }
+        if (Text(block, "scoreThreshold").Trim() is { Length: > 0 } threshold && AntiSpamBlock.Threshold(threshold) is null) errors.Add("The Anti-spam block's score threshold must be a number from 0 to 1, such as 0.5.");
+        if (siteKey.Length > 0 && !AntiSpamBlock.IsSiteKey(siteKey)) errors.Add("A site key holds letters, digits, hyphens, underscores, dots and colons.");
+        if (siteKey.Length > 0 && antiSpam?.IsSecretKey(siteKey) == true) errors.Add("The Anti-spam block's site key is one of this site's secret keys, which must never be in a block. Enter the public site key.");
+        if (alias.Equals(AntiSpamBlock.Honeypot, StringComparison.OrdinalIgnoreCase) || antiSpam is null) return;
+        if (antiSpam.Find(alias) is not { } service) { errors.Add($"'{alias}' is not an anti-spam service this site offers."); return; }
+        if (siteKey.Length == 0 && antiSpam.SiteKey(new(Guid.Empty, service.Alias, null, AntiSpamBlock.DefaultScoreThreshold, null, null)) is null)
+            errors.Add($"Enter the site key for {service.Name}, or set one in Settings, AppBlocks, Anti-spam.");
+        if (antiSpam.SecretState(service.Alias) is not (AntiSpamSecretState.Configuration or AntiSpamSecretState.Saved))
+            warnings?.Add($"{service.Name} has no secret key yet, so this form refuses every submission until an administrator adds it in Settings, AppBlocks, Anti-spam.");
     }
 
     /// <summary>The words an owner rule uses: the block's name with its article, what it holds, and what an owner owns.</summary>

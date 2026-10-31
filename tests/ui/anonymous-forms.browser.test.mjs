@@ -18,7 +18,7 @@ const api = '/api/forms/page/form';
 const blank = { key: null, version: null, values: { name: null }, capabilities: { create: true } };
 
 /** The markup Block.cshtml renders for a form, a stand-in captcha widget's script, and a server that answers as told. */
-async function mount({ anonymous = true, loadStatus = 200, submit = () => ({ status: 200, body: { status: 200, record: blank } }), extra = '', address = '/contact/' } = {}) {
+async function mount({ anonymous = true, loadStatus = 200, submit = () => ({ status: 200, body: { status: 200, record: blank } }), extra = '', address = '/contact/', origin = 'http://localhost' } = {}) {
     const page = await browser.newPage();
     const errors = [], posted = [];
     let token = 'server-token';
@@ -59,7 +59,7 @@ async function mount({ anonymous = true, loadStatus = 200, submit = () => ({ sta
         if (url.pathname.startsWith('/api/attachments/')) return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ detail: 'You do not have access to these files.' }) });
         return route.fulfill({ status: 404, body: '' });
     });
-    await page.goto('http://app.test' + address);
+    await page.goto(origin + address);
     return { page, errors, posted };
 }
 
@@ -116,6 +116,22 @@ test('a create-only form stays where it is, ready for another message, with noth
     assert.equal(posted.length, 2);
     assert.notEqual(posted[0].body.submissionKey, posted[1].body.submissionKey);
     assert.deepEqual(errors, []);
+    await page.close();
+});
+
+test('a form works on a plain HTTP public site, where the browser offers no crypto.randomUUID', async () => {
+    const { page, errors, posted } = await mount({ origin: 'http://public.example.test' });
+    assert.deepEqual(await page.evaluate(() => [isSecureContext, typeof crypto.randomUUID]), [false, 'undefined']);
+    await ready(page);
+    for (const name of ['Pat', 'Sam']) {
+        await page.locator('#f1').fill(name);
+        await save(page);
+        await page.waitForFunction(() => document.querySelector('.app-form-body').disabled === false && document.querySelector('#f1').value === '');
+    }
+    assert.deepEqual(errors, []);
+    assert.equal(posted.length, 2);
+    for (const { body } of posted) assert.match(body.submissionKey, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.notEqual(posted[0].body.submissionKey, posted[1].body.submissionKey);
     await page.close();
 });
 
@@ -192,7 +208,7 @@ test('an Attachments block whose record refuses an anonymous visitor shows the n
             <script type="module" src="/App_Plugins/ApplicationBlocks/runtime.js"></script>` });
         return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ detail: 'You do not have access to these files.' }) });
     });
-    await page.goto('http://app.test/files/');
+    await page.goto('http://localhost/files/');
     await page.getByRole('status').getByText('Sign in to see the files.').waitFor();
     assert.equal(await page.locator('[data-app-attachments]').count(), 0);
     await page.close();

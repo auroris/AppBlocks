@@ -62,6 +62,12 @@ public static class AppBlockSchema
     /// </summary>
     public const string TabularAlias = "appTabular";
 
+    /// <summary>
+    /// A form's spam check, which the form endpoints enforce on the server before its class runs. It binds to no field and
+    /// runs no editor-written code, which is why the Forms container's grid can offer it on a plain site.
+    /// </summary>
+    public const string AntiSpamAlias = "appAntiSpam";
+
     // The seed is older than the namespace rename. Every stored content key derives from it, so it does not change.
     public static Guid Key(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes("UmbracoAppHost.Blocks.v1:" + value))[..16]);
 }

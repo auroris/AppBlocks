@@ -22,7 +22,8 @@ public sealed record InspectedTable(string Name, InspectedTableState State);
 /// <param name="Account">The database user this connection signs in as, when the database says.</param>
 /// <param name="CanCreateTables">Whether the account may create the tables and use them; null when the database cannot tell without trying.</param>
 /// <param name="ServerVersion">The server's version text, which decides between Oracle's two forms of a script.</param>
-public sealed record DatabaseInspection(bool Reachable, string? Account, bool? CanCreateTables, string? ServerVersion, IReadOnlyList<InspectedTable> Tables)
+/// <param name="Schema">Where this account's unqualified names create tables, on the database types that say: SQL Server's default schema and PostgreSQL's current schema. Null there means it has none it can use.</param>
+public sealed record DatabaseInspection(bool Reachable, string? Account, bool? CanCreateTables, string? ServerVersion, IReadOnlyList<InspectedTable> Tables, string? Schema = null)
 {
     public InspectedTableState StateOf(string table) => Tables.FirstOrDefault(t => t.Name.Equals(table, StringComparison.OrdinalIgnoreCase))?.State ?? InspectedTableState.Missing;
 }
@@ -74,8 +75,8 @@ public static class DatabaseInspector
                 if (state == InspectedTableState.Ready && await MayWriteAsync(connection, dialect, table, timeout.Token) == false) state = InspectedTableState.NoAccess;
                 found.Add(new(table, state));
             }
-            var (account, canCreate) = await AccountAsync(connection, dialect, legacyOracle || MajorVersion(version) < 12, timeout.Token);
-            return new(true, account, canCreate, version, found);
+            var (account, canCreate, schema) = await AccountAsync(connection, dialect, legacyOracle || MajorVersion(version) < 12, timeout.Token);
+            return new(true, account, canCreate, version, found, schema);
         }
         // A database that opens and then stops answering says nothing about its tables.
         catch (Exception error) when (!ct.IsCancellationRequested && error is DbException or OperationCanceledException)
@@ -100,8 +101,8 @@ public static class DatabaseInspector
         {
             if (error is SqlException sql) return sql.Number switch {
                 208 => DatabaseRefusal.Missing,
-                // Permission denied on an object, column or database; CREATE TABLE denied; no rights on the schema; object not found or no permission.
-                229 or 230 or 262 or 297 or 300 or 916 or 2760 or 1088 or 15151 => DatabaseRefusal.Denied,
+                // Permission denied on an object, column or database; CREATE TABLE denied; no rights on the schema; a default schema that does not exist; object not found or no permission.
+                229 or 230 or 262 or 297 or 300 or 916 or 2760 or 2797 or 1088 or 15151 => DatabaseRefusal.Denied,
                 _ => DatabaseRefusal.None,
             };
             if (error is SqliteException sqlite)
@@ -147,27 +148,29 @@ public static class DatabaseInspector
         return check is null ? null : await ScalarAsync(connection, check, ct) is { } value ? Convert.ToInt32(value) == 1 : null;
     }
 
-    /// <summary>Who the account is, and whether it may create the tables and then read and write them.</summary>
-    private static async Task<(string? Account, bool? CanCreate)> AccountAsync(DbConnection connection, string dialect, bool legacyOracle, CancellationToken ct)
+    /// <summary>Who the account is, whether it may create the tables and then read and write them, and the schema that asks about, which is where they would land.</summary>
+    private static async Task<(string? Account, bool? CanCreate, string? Schema)> AccountAsync(DbConnection connection, string dialect, bool legacyOracle, CancellationToken ct)
     {
         switch (dialect)
         {
             case "sqlite":
-                return (null, SQLitePCL.raw.sqlite3_db_readonly(((SqliteConnection)connection).Handle, "main") != 1);
+                return (null, SQLitePCL.raw.sqlite3_db_readonly(((SqliteConnection)connection).Handle, "main") != 1, null);
             case "sqlserver":
+                // A default schema that does not exist reads as NULL here, which no right is held on, and SQL Server refuses such an account's tables.
                 var rights = await ScalarAsync(connection, """
-                    SELECT CASE WHEN HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CREATE TABLE') = 1 AND HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'ALTER') = 1
-                        AND HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'SELECT') = 1 AND HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'INSERT') = 1
-                        AND HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'UPDATE') = 1 AND HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'DELETE') = 1 AND HAS_PERMS_BY_NAME('dbo', 'SCHEMA', 'REFERENCES') = 1 THEN 1 ELSE 0 END
+                    DECLARE @schema nvarchar(258) = QUOTENAME(SCHEMA_NAME());
+                    SELECT CASE WHEN HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CREATE TABLE') = 1 AND HAS_PERMS_BY_NAME(@schema, 'SCHEMA', 'ALTER') = 1
+                        AND HAS_PERMS_BY_NAME(@schema, 'SCHEMA', 'SELECT') = 1 AND HAS_PERMS_BY_NAME(@schema, 'SCHEMA', 'INSERT') = 1
+                        AND HAS_PERMS_BY_NAME(@schema, 'SCHEMA', 'UPDATE') = 1 AND HAS_PERMS_BY_NAME(@schema, 'SCHEMA', 'DELETE') = 1 AND HAS_PERMS_BY_NAME(@schema, 'SCHEMA', 'REFERENCES') = 1 THEN 1 ELSE 0 END
                     """, ct);
-                return (Convert.ToString(await ScalarAsync(connection, "SELECT USER_NAME()", ct)), rights is null ? null : Convert.ToInt32(rights) == 1);
+                return (await ScalarAsync(connection, "SELECT USER_NAME()", ct) as string, rights is null ? null : Convert.ToInt32(rights) == 1, await ScalarAsync(connection, "SELECT SCHEMA_NAME()", ct) as string);
             case "postgresql":
-                var schema = await ScalarAsync(connection, "SELECT CASE WHEN has_schema_privilege(current_schema(), 'CREATE') THEN 1 ELSE 0 END", ct);
-                return (Convert.ToString(await ScalarAsync(connection, "SELECT current_user", ct)), schema is null ? null : Convert.ToInt32(schema) == 1);
+                var inSchema = await ScalarAsync(connection, "SELECT CASE WHEN has_schema_privilege(current_schema(), 'CREATE') THEN 1 ELSE 0 END", ct);
+                return (await ScalarAsync(connection, "SELECT current_user", ct) as string, inSchema is null ? null : Convert.ToInt32(inSchema) == 1, await ScalarAsync(connection, "SELECT current_schema()", ct) as string);
             default:
                 var needed = legacyOracle ? "('CREATE TABLE', 'CREATE SEQUENCE', 'CREATE TRIGGER')" : "('CREATE TABLE', 'CREATE SEQUENCE')";
                 var held = await ScalarAsync(connection, $"SELECT COUNT(*) FROM SESSION_PRIVS WHERE PRIVILEGE IN {needed}", ct);
-                return (Convert.ToString(await ScalarAsync(connection, "SELECT USER FROM DUAL", ct)), held is null ? null : Convert.ToInt32(held) == (legacyOracle ? 3 : 2));
+                return (await ScalarAsync(connection, "SELECT USER FROM DUAL", ct) as string, held is null ? null : Convert.ToInt32(held) == (legacyOracle ? 3 : 2), null);
         }
     }
 

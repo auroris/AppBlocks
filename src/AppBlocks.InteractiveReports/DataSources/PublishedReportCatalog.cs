@@ -54,7 +54,8 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
         if (source is null) { if (errors.Count == 0) errors.Add("Select a report table or SQL query."); return null; }
         return ReadReport(key, Text(value, "heading"), property => property switch {
             "alias" => "appblocks-block-" + key.ToString("N"),
-            "title" => value("heading"), "defaultPageSize" => value("pageSize"),
+            // A block's size is an integer, which Umbraco publishes as 0 when nobody filled it in: unset, so the report's own default applies.
+            "title" => value("heading"), "defaultPageSize" => value("pageSize") is 0 or "0" ? null : value("pageSize"),
             "dataSource" or "controls" => value(property), _ => null,
         }, errors, source);
     }

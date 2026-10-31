@@ -15,6 +15,18 @@
     },
     {
       "type": "propertyEditorUi",
+      "alias": "AppBlocks.AntiSpamServicePicker",
+      "name": "Application anti-spam service",
+      "element": "/App_Plugins/ApplicationBlocks/anti-spam-picker.js",
+      "meta": {
+        "label": "Anti-spam service",
+        "icon": "icon-shield",
+        "group": "Application",
+        "propertyEditorSchemaAlias": "Umbraco.TextBox"
+      }
+    },
+    {
+      "type": "propertyEditorUi",
       "alias": "AppHost.ResourcePicker",
       "name": "Application form resource",
       "element": "/App_Plugins/ApplicationBlocks/resource-picker.js",

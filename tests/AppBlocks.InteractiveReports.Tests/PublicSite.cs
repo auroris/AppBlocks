@@ -14,10 +14,13 @@ using AppBlocks.DataSources;
 using AppBlocks.Forms;
 using AppBlocks.InteractiveReports.Reports;
 using InteractiveReport.AspNetCore;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ViewEngines;
 using Microsoft.AspNetCore.WebUtilities;
@@ -53,6 +56,7 @@ internal sealed class PublicSite : IAsyncDisposable
     public static readonly Guid RefusingPage = Key("refusing"), RefusingForm = Key("refusing-form");
     public static readonly Guid EnginePage = Key("engine"), EngineForm = Key("engine-form");
     public static readonly Guid ReportPage = Key("reports"), PublicReport = Key("public-report"), PersonalReport = Key("personal-report");
+    public static readonly Guid SizesPage = Key("sizes"), UnsizedReport = Key("unsized-report"), ZeroSizedReport = Key("zero-sized-report"), EmptySizedReport = Key("empty-sized-report");
     public static readonly Guid FilesPage = Key("files"), ClosedFiles = Key("closed-files"), OpenFiles = Key("open-files"), HiddenFiles = Key("hidden-files");
     public static readonly Guid DataPage = Key("data"), Rows = Key("rows"), Schedule = Key("schedule");
     public static readonly Guid MembersPage = Key("members"), ProtectedPage = Key("protected"), ProtectedForm = Key("protected-form"), ProtectedReport = Key("protected-report"), ProtectedFiles = Key("protected-files");
@@ -75,7 +79,8 @@ internal sealed class PublicSite : IAsyncDisposable
 
     private static Guid Key(string name) => AppBlockSchema.Key("public-site:" + name);
 
-    public static async Task<PublicSite> StartAsync()
+    /// <param name="outputCache">Gives the site what a site's own performance work might: ASP.NET Core's output cache on its pages, by a base policy.</param>
+    public static async Task<PublicSite> StartAsync(bool outputCache = false)
     {
         var root = Directory.CreateTempSubdirectory("appblocks-public-site-").FullName;
         Directory.CreateDirectory(Path.Combine(root, "wwwroot"));
@@ -98,9 +103,6 @@ internal sealed class PublicSite : IAsyncDisposable
             ["Umbraco:CMS:Unattended:UnattendedUserEmail"] = AdminEmail,
             ["Umbraco:CMS:Unattended:UnattendedUserPassword"] = password,
             // Reports that are not blocks: an anonymous visitor gets nothing from any of them, however they are named or marked.
-            ["InteractiveReport:Reports:__internal:Connection"] = ConnectionCatalog.ApplicationConnection,
-            ["InteractiveReport:Reports:__internal:Sql"] = "SELECT id FROM PUBLIC_ROWS",
-            ["InteractiveReport:Reports:__internal:Authorization:AllowAnonymous"] = "true",
             ["InteractiveReport:Reports:adminonly:Connection"] = ConnectionCatalog.ApplicationConnection,
             ["InteractiveReport:Reports:adminonly:Sql"] = "SELECT id FROM PUBLIC_ROWS",
             ["InteractiveReport:Reports:adminonly:Authorization:Policy"] = ReportAdministratorRequirement.Policy,
@@ -115,6 +117,7 @@ internal sealed class PublicSite : IAsyncDisposable
         builder.Services.AddControllersWithViews()
             .AddApplicationPart(typeof(Umbraco.Cms.Api.Management.Controllers.ManagementApiControllerBase).Assembly)
             .AddApplicationPart(typeof(Umbraco.Cms.Api.Common.Attributes.MapToApiAttribute).Assembly)
+            .AddApplicationPart(typeof(RenderController).Assembly)
             .AddApplicationPart(typeof(PublicSite).Assembly);
         var forms = new RecordedForms();
         builder.Services.AddSingleton(forms);
@@ -133,8 +136,12 @@ internal sealed class PublicSite : IAsyncDisposable
         builder.Services.Replace(ServiceDescriptor.Scoped<IReportAccessPolicy, SwitchedReportPolicy>());
         builder.Services.AddScoped<DefaultReportAccessPolicy>();
         builder.Services.Replace(ServiceDescriptor.Singleton<IServerRoleAccessor, SingleServerRoleAccessor>());
+        if (outputCache) builder.Services.AddOutputCache(options => options.AddBasePolicy(policy => policy
+            .With(context => !context.HttpContext.Request.Path.StartsWithSegments("/api") && !context.HttpContext.Request.Path.StartsWithSegments("/umbraco")).Cache()));
         var app = builder.Build();
         await app.BootUmbracoAsync();
+        if (outputCache) app.UseOutputCache();
+        MapTestLogin(app);
         app.UseUmbraco().WithMiddleware(u => { u.UseBackOffice(); u.UseWebsite(); })
             .WithEndpoints(u => { u.UseBackOfficeEndpoints(); u.UseWebsiteEndpoints(); });
         await app.StartAsync();
@@ -226,6 +233,7 @@ internal sealed class PublicSite : IAsyncDisposable
         Page("Engine", EnginePage, home.Id, Container(FormBlock(EngineForm, "public.engine", Field("title", "Title"))));
         Page("Reports", ReportPage, home.Id, Reports((PublicReport, Source("table", "PUBLIC_ROWS")),
             (PersonalReport, Source("sql", "SELECT id, title FROM PUBLIC_ROWS WHERE owner = :USER_KEY OR :USER_KEY IS NULL"))));
+        Page("Sizes", SizesPage, home.Id, Reports((UnsizedReport, Source("table", "PUBLIC_ROWS"), null), (ZeroSizedReport, Source("table", "PUBLIC_ROWS"), JsonValue.Create(0)), (EmptySizedReport, Source("table", "PUBLIC_ROWS"), JsonValue.Create(""))));
         Page("Files", FilesPage, home.Id, Container(Attachments(ClosedFiles, "public.closed"), Attachments(OpenFiles, "public.open"), Attachments(HiddenFiles, "public.hidden")));
         Page("Data", DataPage, home.Id, Container(
             Block(Rows, AppBlockSchema.TabularAlias, ("dataSource", "public.engine"), ("linkField", "owner"), ("ownerResource", "public.closed"), ("ownerKey", "1")),
@@ -282,11 +290,14 @@ internal sealed class PublicSite : IAsyncDisposable
 
     private static (string, JsonNode?)[] Values(Item item) => item.Values.Select(v => (v.Alias, v.Value is JsonNode node ? node : (JsonNode?)JsonValue.Create((string)v.Value))).ToArray();
 
-    private static JsonObject Reports(params (Guid Key, string Source)[] reports)
+    private static JsonObject Reports(params (Guid Key, string Source)[] reports) => Reports(reports.Select(report => (report.Key, report.Source, (JsonNode?)JsonValue.Create(10))).ToArray());
+
+    /// <param name="reports">Each with the page size it was saved with; null for one that never had a value, as the backoffice saves a block nobody filled in.</param>
+    private static JsonObject Reports(params (Guid Key, string Source, JsonNode? PageSize)[] reports)
     {
         var body = Set("Umbraco.BlockList");
-        foreach (var (key, source) in reports)
-            Add(body, "Umbraco.BlockList", key, AppBlockSchema.Key("appReport"), ("heading", JsonValue.Create("Rows")), ("dataSource", JsonValue.Create(source)), ("pageSize", JsonValue.Create(10)));
+        foreach (var (key, source, pageSize) in reports)
+            Add(body, "Umbraco.BlockList", key, AppBlockSchema.Key("appReport"), [("heading", JsonValue.Create("Rows")), ("dataSource", JsonValue.Create(source)), .. pageSize is null ? [] : new (string, JsonNode?)[] { ("pageSize", pageSize) }]);
         return body;
     }
 
@@ -307,6 +318,33 @@ internal sealed class PublicSite : IAsyncDisposable
         var layout = new JsonObject { ["contentKey"] = key.ToString(), ["settingsKey"] = null, ["columnSpan"] = 12, ["rowSpan"] = 1, ["areas"] = new JsonArray() };
         set["layout"]![editor]!.AsArray().Add(layout);
         return layout;
+    }
+
+    /// <summary>A real HTTP client carrying a real cookie for this account, as a browser that signed in earlier does, through the site's test-only route.</summary>
+    public async Task<HttpClient> SignedIn(string scheme, string id, string name)
+    {
+        var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = Address };
+        using var login = await client.GetAsync($"{TestLogin}/{id}?scheme={scheme}&name={Uri.EscapeDataString(name)}");
+        login.EnsureSuccessStatusCode();
+        return client;
+    }
+
+    private const string TestLogin = "/__tests/login";
+
+    private static void MapTestLogin(WebApplication app) => app.MapGet(TestLogin + "/{id}", async (string id, string scheme, string name, HttpContext http) =>
+    {
+        var authentication = scheme == "member" ? IdentityConstants.ApplicationScheme : Constants.Security.BackOfficeExposedAuthenticationType;
+        await http.SignInAsync(authentication, new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, id), new(ClaimTypes.Name, name)], authentication)));
+        // Umbraco marks the backoffice cookie Secure, and a cookie container never sends one of those over plain HTTP.
+        http.Response.Headers.SetCookie = http.Response.Headers.SetCookie.Select(cookie => System.Text.RegularExpressions.Regex.Replace(cookie!, "; *secure(?=;|$)", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase)).ToArray();
+        return Results.Ok();
+    });
+
+    /// <summary>Runs something against the site's services, in a scope of its own.</summary>
+    public async Task WithServices(Func<IServiceProvider, Task> work)
+    {
+        using var scope = app.Services.CreateScope();
+        await work(scope.ServiceProvider);
     }
 
     public async Task<HttpClient> Administrator()

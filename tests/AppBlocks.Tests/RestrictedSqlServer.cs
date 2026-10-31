@@ -29,13 +29,16 @@ internal sealed class RestrictedSqlServer : IAsyncDisposable
     public string AccountConnection { get; }
     public string AdminConnection => Master + $";Initial Catalog={Database}";
 
-    public static async Task<RestrictedSqlServer> CreateAsync()
+    /// <param name="defaultSchema">The login's default schema, instead of <c>dbo</c>. It holds no rights on it either.</param>
+    /// <param name="createSchema">Whether that schema exists: SQL Server accepts a default schema that does not.</param>
+    public static async Task<RestrictedSqlServer> CreateAsync(string? defaultSchema = null, bool createSchema = true)
     {
         var suffix = Guid.NewGuid().ToString("N")[..12];
         // Generated for this run and dropped with the database.
         var server = new RestrictedSqlServer("setup_test_" + suffix, "setup_low_" + suffix, "Low-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) + "!a");
         await Execute(Master, $"CREATE DATABASE [{server.Database}]; CREATE LOGIN [{server.Account}] WITH PASSWORD = N'{server.Password}', CHECK_POLICY = OFF;");
-        await server.Admin($"CREATE USER [{server.Account}] FOR LOGIN [{server.Account}];");
+        if (defaultSchema is not null && createSchema) await server.Admin($"CREATE SCHEMA {Quoted(defaultSchema)};");
+        await server.Admin($"CREATE USER [{server.Account}] FOR LOGIN [{server.Account}]" + (defaultSchema is null ? ";" : $" WITH DEFAULT_SCHEMA = {Quoted(defaultSchema)};"));
         return server;
     }
 
@@ -66,6 +69,15 @@ internal sealed class RestrictedSqlServer : IAsyncDisposable
     }
 
     public Task<int> TableCount() => AdminScalar<int>("SELECT COUNT(*) FROM sys.tables");
+
+    /// <summary>How many tables a schema really holds.</summary>
+    public Task<int> TableCount(string schema) => AdminScalar<int>($"SELECT COUNT(*) FROM sys.tables WHERE SCHEMA_NAME(schema_id) = N'{schema.Replace("'", "''")}'");
+
+    /// <summary>Whether a schema really holds a table.</summary>
+    public async Task<bool> HasTable(string schema, string table)
+        => await AdminScalar<int>($"SELECT COUNT(*) FROM sys.tables WHERE name = N'{table}' AND SCHEMA_NAME(schema_id) = N'{schema.Replace("'", "''")}'") == 1;
+
+    private static string Quoted(string name) => "[" + name.Replace("]", "]]", StringComparison.Ordinal) + "]";
 
     public async ValueTask DisposeAsync()
     {

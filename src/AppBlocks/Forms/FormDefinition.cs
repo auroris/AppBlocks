@@ -13,6 +13,8 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
 {
     public string ListsRevision { get; init; } = "";
     public string? Culture { get; init; }
+    /// <summary>The form's Anti-spam blocks, wherever they sit inside it. They come from the published page, so no request can leave them out.</summary>
+    public IReadOnlyList<BlockGridItem> AntiSpam { get; init; } = [];
     public string Revision => $"{Page.UpdateDate.Ticks}:{Culture}{ListsRevision}:{Resource.ContractVersion}";
     public bool ViewOnly => Interface.Value<bool>("viewOnly");
     public string KeyParameter => Interface.Value<string>("keyParameter") is { Length: > 0 } key ? key : "id";
@@ -35,7 +37,7 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
         var selected = fields.Where(f => f.Content.ContentType.Alias == "appSelect").Select(f => f.Content.Value<string>("listOfValues")).Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
         var lists = selected.Select(s => definitions?.FindList(s)).ToArray();
         if (lists.Any(list => list is null)) return null;
-        return new(page, block, interfaces[0].Content, resource, fields) { Culture = culture, ListsRevision = string.Concat(lists.Select(list => ":" + list!.Key + ":" + list.DataSource.ComputeFingerprint() + ":" + list.DisplayColumn + ":" + list.ValueColumn + ":" + list.MaximumRows)) };
+        return new(page, block, interfaces[0].Content, resource, fields) { Culture = culture, AntiSpam = children.Where(b => b.Content.ContentType.Alias == AppBlockSchema.AntiSpamAlias).ToArray(), ListsRevision = string.Concat(lists.Select(list => ":" + list!.Key + ":" + list.DataSource.ComputeFingerprint() + ":" + list.DisplayColumn + ":" + list.ValueColumn + ":" + list.MaximumRows)) };
     }
 
     public Dictionary<string, string[]> Validate(JsonElement input, bool creating)

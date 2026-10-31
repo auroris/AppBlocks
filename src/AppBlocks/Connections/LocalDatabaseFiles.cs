@@ -19,7 +19,7 @@ internal static class LocalDatabaseFiles
     {
         var value = configuration.GetConnectionString("umbracoDbDSN");
         if (string.IsNullOrWhiteSpace(value)
-            || ConnectionCatalog.Provider(configuration["ConnectionStrings:umbracoDbDSN_ProviderName"] ?? "sqlServer") != "sqlite") return null;
+            || ConnectionCatalog.ConfiguredProvider(configuration, "umbracoDbDSN") != "sqlite") return null;
         var builder = new SqliteConnectionStringBuilder(ConnectionCatalog.Expand(value));
         var source = builder.DataSource;
         if (builder.Mode == SqliteOpenMode.Memory || string.IsNullOrWhiteSpace(source) || source == ":memory:") return null;

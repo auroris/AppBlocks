@@ -20,6 +20,8 @@ public sealed class AppBlocksBuilder
     internal Dictionary<string, DatabaseDialect> Dialects { get; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>The application databases, apart from their factories: a configured or saved connection string never runs its factory.</summary>
     internal Dictionary<string, ApplicationSchema> Schemas { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>What a name's factory makes for something only looking, where that differs from <see cref="Connections"/>: nothing on disk is prepared for it.</summary>
+    internal Dictionary<string, Func<IServiceProvider, DbConnection>> LookOnlyConnections { get; } = new(StringComparer.OrdinalIgnoreCase);
     internal event Action<string>? ConnectionAdded;
     public IEnumerable<string> ConnectionNames => Connections.Keys;
 
@@ -28,6 +30,7 @@ public sealed class AppBlocksBuilder
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(factory);
         Connections[name] = factory;
+        LookOnlyConnections.Remove(name);
         Dialects.Remove(name);
         Schemas.Remove(name);
         if (dialect is { } declared) Dialects[name] = declared;
@@ -39,7 +42,14 @@ public sealed class AppBlocksBuilder
     internal DbConnection Create(string name, Func<DbConnection> create, IServiceProvider provider)
         => Schemas.TryGetValue(name, out var schema) ? ApplicationDatabase.EnsureOnOpen(create(), create, name, schema, provider) : create();
 
-    internal DbConnection CreateRegistered(string name, IServiceProvider provider) => Create(name, () => Connections[name](provider), provider);
+    /// <summary>
+    /// What a registered name opens, for callers that come to the registration first, such as the report engine asking an unopened
+    /// connection for its dialect: what the catalog holds under the name wins, as it does everywhere else, and the factory makes the rest.
+    /// </summary>
+    internal DbConnection CreateRegistered(string name, IServiceProvider provider)
+        => provider.GetService<ConnectionCatalog>()?.Find(name) is { } material
+            ? Create(name, () => ConnectionCatalog.Create(material), provider)
+            : Create(name, () => Connections[name](provider), provider);
 }
 
 internal sealed class ApplicationConnections(IServiceProvider provider, AppBlocksBuilder builder, ConnectionCatalog catalog) : IApplicationConnectionFactory

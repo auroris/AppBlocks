@@ -20,6 +20,7 @@ internal sealed record ConnectionMaterial(string Provider, string Value, string 
 /// <summary>
 /// Credentials belong to the installation, never to content or a schema export. A connection registered in code has
 /// no material here: <see cref="Find"/> does not know it, and <see cref="List"/> and <see cref="Openable"/> go to its factory.
+/// This is the one authority on what a name opens: <see cref="Find"/> first, and a registration's factory only when it finds nothing.
 /// </summary>
 public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvironment environment, IDataProtectionProvider protection,
     AppBlocksBuilder? registered = null, IServiceProvider? services = null)
@@ -44,13 +45,13 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
             [ApplicationConnection] = new(ApplicationConnection, "AppBlocks database", Find(ApplicationConnection)!.Provider, true, true),
             [AttachmentsConnection] = new(AttachmentsConnection, "Separate uploads database", Find(AttachmentsConnection)!.Provider, false, true),
             [UmbracoConnection] = new(UmbracoConnection,
-                "Umbraco database", Provider(configuration["ConnectionStrings:umbracoDbDSN_ProviderName"] ?? "sqlServer"), false, true),
+                "Umbraco database", ConfiguredProvider(configuration, "umbracoDbDSN"), false, true),
         };
         foreach (var item in configuration.GetSection("ConnectionStrings").GetChildren())
         {
             if (item.Key.Equals("umbracoDbDSN", StringComparison.OrdinalIgnoreCase) || item.Key.EndsWith("_ProviderName", StringComparison.OrdinalIgnoreCase)
                 || string.IsNullOrWhiteSpace(item.Value)) continue;
-            result.TryAdd(item.Key, new(item.Key, item.Key, Provider(configuration[$"ConnectionStrings:{item.Key}_ProviderName"] ?? "sqlServer"), false, true));
+            result.TryAdd(item.Key, new(item.Key, item.Key, ConfiguredProvider(configuration, item.Key), false, true));
         }
         foreach (var item in Read()) result.TryAdd(item.Name, new(item.Name, item.Name, item.Provider, false, false));
         // After the saved connections, because a saved connection is what a name shared with a registration opens.
@@ -64,10 +65,9 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
         if (name.Equals(UmbracoConnection, StringComparison.OrdinalIgnoreCase))
         {
             var value = configuration.GetConnectionString("umbracoDbDSN");
-            return value is null ? null : new(Provider(configuration["ConnectionStrings:umbracoDbDSN_ProviderName"] ?? "sqlServer"), Expand(value), Hash(value));
+            return value is null ? null : new(ConfiguredProvider(configuration, "umbracoDbDSN"), Expand(value), Hash(value));
         }
-        if (configuration.GetConnectionString(name) is { Length: > 0 } configured)
-            return new(Provider(configuration[$"ConnectionStrings:{name}_ProviderName"] ?? "sqlServer"), Expand(configured), Hash(configured));
+        if (Configured(configuration, name) is { } configured) return configured;
         if (name.Equals(ApplicationConnection, StringComparison.OrdinalIgnoreCase)
             || name.Equals(AttachmentsConnection, StringComparison.OrdinalIgnoreCase))
         {
@@ -78,6 +78,19 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
         }
         var stored = Read().SingleOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         return stored is null ? null : new(stored.Provider, Expand(protector.Unprotect(stored.ProtectedValue)), stored.Revision);
+    }
+
+    /// <summary><c>ConnectionStrings:&lt;name&gt;</c> and its provider, the only reading of those settings, which a builder with no catalog behind it shares.</summary>
+    internal static ConnectionMaterial? Configured(IConfiguration configuration, string name)
+        => configuration.GetConnectionString(name) is { Length: > 0 } value ? new(ConfiguredProvider(configuration, name), Expand(value), Hash(value)) : null;
+
+    /// <summary><c>ConnectionStrings:&lt;name&gt;_ProviderName</c>. Without one it is SQL Server, as Umbraco reads a connection string with no provider.</summary>
+    internal static string ConfiguredProvider(IConfiguration configuration, string name)
+    {
+        var value = configuration[$"ConnectionStrings:{name}_ProviderName"];
+        if (string.IsNullOrWhiteSpace(value)) return "sqlServer";
+        try { return Provider(value); }
+        catch (ArgumentException error) { throw new ArgumentException($"ConnectionStrings:{name}_ProviderName is {value}. {error.Message}", error); }
     }
 
     internal string Revision(string name) => Find(name) is { } material ? Revision(material) : "";
@@ -100,7 +113,8 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     internal bool IsApplicationDatabase(string name) => registered?.Schemas.ContainsKey(name) == true;
 
     /// <summary>What a registration's own factory makes, without the schema of an application database.</summary>
-    private DbConnection? Registered(string name) => registered?.Connections.TryGetValue(name, out var factory) == true ? factory(services!) : null;
+    private DbConnection? Registered(string name) => registered?.LookOnlyConnections.TryGetValue(name, out var look) == true ? look(services!)
+        : registered?.Connections.TryGetValue(name, out var factory) == true ? factory(services!) : null;
 
     /// <summary>The declared dialect, or else what an unopened connection's type says, as <see cref="ApplicationConnections"/> decides a dialect.</summary>
     private string RegisteredProvider(string name)

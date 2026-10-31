@@ -15,6 +15,7 @@ internal static class OracleDriver
 
     /// <summary>Interactive Reports looks the driver up by name, so the search covers every caller, not just <see cref="Create"/>.</summary>
     [ModuleInitializer]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2255", Justification = "It has to run before anything in any assembly touches the driver, and no call into this library is sure to come first.")]
     internal static void Register() => AssemblyLoadContext.Default.Resolving += (context, name) =>
         name.Name == AssemblyName && Path.Combine(AppContext.BaseDirectory, "oracle", AssemblyName + ".dll") is var path && File.Exists(path)
             ? context.LoadFromAssemblyPath(path) : null;

@@ -38,7 +38,7 @@ internal sealed class AttachmentDatabaseSetup(ConnectionCatalog connections, IAp
                 $"Attachments:Connection names {name}, which is not a connection AppBlocks can open. Choose one from the Connections tab.", Lost, noTables, null, null, false);
         }
         var (state, summary) = DatabaseSetupGuide.Standing(inspection, AttachmentStore.Tables);
-        var (text, sql) = DatabaseSetupGuide.Grant(provider, inspection.Account);
+        var (text, sql) = DatabaseSetupGuide.Grant(provider, inspection.Account, inspection.Schema);
         return new(Alias, Title, shown, provider, state, summary, Lost, DatabaseSetupGuide.Tables(inspection, AttachmentStore.Tables), text, sql, true);
     }
 
@@ -47,16 +47,16 @@ internal sealed class AttachmentDatabaseSetup(ConnectionCatalog connections, IAp
         var status = await StatusAsync(ct);
         if (!status.HasScript) return null;
         var dialect = status.Provider == "sqlServer" ? "sqlserver" : "sqlite";
-        var account = await AccountAsync(ct);
-        return DatabaseSetupGuide.Header(Title, status.Connection, status.Provider, account)
+        var inspection = await LookAsync(ct);
+        return DatabaseSetupGuide.Header(Title, status.Connection, status.Provider, inspection.Account, inspection.Schema)
             + ApplicationDatabase.Script(AttachmentStore.Schema, dialect)
-            + DatabaseSetupGuide.TableGrants(status.Provider, account, AttachmentStore.Tables.Select(table => "dbo." + table));
+            + DatabaseSetupGuide.TableGrants(status.Provider, inspection.Account, AttachmentStore.Tables);
     }
 
-    private async Task<string?> AccountAsync(CancellationToken ct)
+    private async Task<DatabaseInspection> LookAsync(CancellationToken ct)
     {
         await using var connection = Inspectable(settings.Value.ConnectionName);
-        return (await DatabaseInspector.InspectAsync(connection, [], false, ct)).Account;
+        return await DatabaseInspector.InspectAsync(connection, [], false, ct);
     }
 
     /// <summary>A connection the catalog knows, or one only the report builder has, which ensures nothing either way.</summary>

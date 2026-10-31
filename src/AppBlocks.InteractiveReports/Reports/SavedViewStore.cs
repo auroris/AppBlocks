@@ -17,10 +17,14 @@ namespace AppBlocks.InteractiveReports.Reports;
 /// answer the same way to an anonymous visitor: they belong to accounts, and such a visitor has none.
 /// </summary>
 public sealed class SavedViewStore(ISavedReportStore inner, ConnectionCatalog catalog, IReportConnectionFactory connections, ILogger<SavedViewStore> logger,
-    IHttpContextAccessor? http = null) : ISavedReportStore
+    IHttpContextAccessor? http = null, TimeProvider? time = null) : ISavedReportStore
 {
+    /// <summary>How long a create that was allowed and still failed, as an Oracle quota makes it, waits for its next try. A host that gives the engine its logger gets its error lines from each try.</summary>
+    private static readonly TimeSpan CreateRetry = TimeSpan.FromSeconds(30);
+
     private readonly ConcurrentDictionary<(string Connection, string Table), bool> usable = new();
     private string? reported;
+    private long createWaitsUntil;
 
     internal ISavedReportStore Inner => inner;
 
@@ -49,12 +53,16 @@ public sealed class SavedViewStore(ISavedReportStore inner, ConnectionCatalog ca
             Report(null, $"the table {config.TableName} is missing on connection {config.ConnectionName}, and this account {(config.AutoCreate ? "may not create it" : "is not set to create it")}.");
             return false;
         }
+        // Only the create waits: the look above runs every time, so a table made by hand is found at once.
+        var clock = time ?? TimeProvider.System;
+        if (state == InspectedTableState.Missing && clock.GetUtcNow().UtcTicks < Volatile.Read(ref createWaitsUntil)) return false;
         try
         {
             if (state == InspectedTableState.Missing) await inner.ListFamily(ProbeReport, ct);
         }
         catch (Exception error) when (!ct.IsCancellationRequested)
         {
+            Volatile.Write(ref createWaitsUntil, (clock.GetUtcNow() + CreateRetry).UtcTicks);
             Report(error, $"the table {config.TableName} could not be created on connection {config.ConnectionName}.");
             return false;
         }

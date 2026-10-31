@@ -24,7 +24,7 @@ public sealed class AppReportDefinitionStore(
     ReportSourcePreviews? previews = null, IHttpContextAccessor? http = null, SavedViewStore? savedViews = null, AppPageAccess? pages = null)
     : IReportDefinitionStore, IReportDefinitionAuthorizationStore
 {
-    private bool CallerIsAnonymous => http?.HttpContext?.User.Identity?.IsAuthenticated != true;
+    private bool CallerIsAnonymous => http?.HttpContext is { } context && context.User.Identity?.IsAuthenticated != true;
 
     /// <summary>
     /// A block's report-level gate. It keeps its page's Public Access for anyone signed in. An anonymous visitor passes only on

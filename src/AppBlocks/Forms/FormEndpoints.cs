@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using AppBlocks.AntiSpam;
 using AppBlocks.Blocks;
 using AppBlocks.DataSources;
 
@@ -12,9 +14,17 @@ public sealed record FormSubmission(string DefinitionVersion, string? Version, J
 
 public static class FormEndpoints
 {
+    /// <summary>
+    /// The largest form submission, in bytes, unless <c>AppBlocks:Forms:MaxBodySize</c> says otherwise. A submission is parsed
+    /// before any other check, so this bounds what an anonymous client can make the server read. A megabyte leaves room for
+    /// long text fields beside the other controls at their limits; files go through Attachments, which has limits of its own.
+    /// </summary>
+    public const long DefaultMaxBodySize = 1024 * 1024;
+
     public static void MapApplicationForms(this IEndpointRouteBuilder endpoints)
     {
-        var group = endpoints.MapGroup("/api/forms/{pageKey:guid}/{formKey:guid}");
+        var limit = endpoints.ServiceProvider.GetService<IConfiguration>()?.GetValue<long?>("AppBlocks:Forms:MaxBodySize") ?? DefaultMaxBodySize;
+        var group = endpoints.MapGroup("/api/forms/{pageKey:guid}/{formKey:guid}").WithMetadata(new RequestSizeLimitAttribute(limit));
         group.MapGet("", Load);
         group.MapPost("", Create);
         group.MapPut("/{key}", Update);
@@ -140,7 +150,11 @@ public static class FormEndpoints
         => Mutate(pageKey, formKey, key, submission, "update", http, ct);
     private static async Task<IResult> Delete(Guid pageKey, Guid formKey, string key, HttpContext http, CancellationToken ct)
     {
-        var submission = await http.Request.ReadFromJsonAsync<FormSubmission>(ct);
+        // Read by hand, as a DELETE gets no body binding, so the size limit and bad JSON are answered here as they are for the others.
+        FormSubmission? submission;
+        try { submission = await http.Request.ReadFromJsonAsync<FormSubmission>(ct); }
+        catch (BadHttpRequestException error) { return Results.StatusCode(error.StatusCode); }
+        catch (JsonException) { return Results.BadRequest(); }
         return submission is null ? Results.BadRequest() : await Mutate(pageKey, formKey, key, submission, "delete", http, ct);
     }
 
@@ -156,13 +170,23 @@ public static class FormEndpoints
             FormData = FormData(submission.FormData, http.RequestServices.GetRequiredService<IOptions<AntiforgeryOptions>>().Value.FormFieldName),
         };
         http.Response.Headers.CacheControl = "no-store";
+        var antiSpam = http.RequestServices.GetRequiredService<AntiSpamGate>();
         if (operation == "delete") {
+            // Nothing to check on a delete, which only ever acts on a record the class allows; its token still stops here.
+            context = context with { FormData = antiSpam.WithoutChecks(form, context.FormData) };
             var deletion = await form.Resource.DeleteAsync(key!, submission.Version!, context, ct);
             Audit(http, operation, form.Resource.Alias, key, member, deletion.Status);
             return Result(deletion);
         }
         var errors = form.Validate(submission.Values, key is null);
         if (errors.Count > 0) return Result(new(422, Errors: errors));
+        // After the fields, so a typo does not spend a token that works once, and before anything can reach the class, the load of an update included.
+        var check = await antiSpam.CheckAsync(form, context.FormData, ct);
+        if (check.Refusal is { } refusal) {
+            Audit(http, operation, form.Resource.Alias, key, member, refusal.Status);
+            return Result(refusal);
+        }
+        context = context with { FormData = check.FormData };
         var values = submission.Values;
         FormRecord? stored = null;
         if (key is not null) {
