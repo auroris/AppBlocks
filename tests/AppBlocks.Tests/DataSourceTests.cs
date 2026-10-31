@@ -16,7 +16,8 @@ public sealed class DataSourceTests : IDisposable
     private static readonly DateTimeOffset Now = new(2026, 10, 23, 14, 30, 0, TimeSpan.Zero);
     private static readonly DataSourceUser Owner = new("1001", "S-1-5-21-1", "jsmith", "jsmith@example.invalid", ["Planners"], false);
     private static readonly DataSourceUser Other = new("1002", "S-1-5-21-2", "kjones", "kjones@example.invalid", ["Crew"], false);
-    private static readonly DataSourceUser Administrator = new("backoffice:admin", null, "admin", "admin@example.invalid", ["Administrators"], true);
+    private static readonly DataSourceUser Administrator = new("backoffice:admin", null, "admin", "admin@example.invalid", ["Administrators"], true) { UserGroupAliases = ["admin"] };
+    private static readonly DataSourceUser Editor = new("backoffice:editor", null, "editor", "editor@example.invalid", ["Planners"], true) { UserGroupAliases = ["editor"] };
     private readonly string file = Path.Combine(Directory.CreateTempSubdirectory("data-source-test-").FullName, "tasks.db");
     private readonly ServiceProvider services;
     private readonly DataSourceRuntime runtime;
@@ -131,13 +132,33 @@ public sealed class DataSourceTests : IDisposable
     private sealed class TestUsers : IDataSourceUserResolver
     {
         public Task<DataSourceUser?> ResolveAsync(ClaimsPrincipal principal, CancellationToken ct) => Task.FromResult(
-            new[] { Owner, Other, Administrator }.FirstOrDefault(u => u.Key == principal.FindFirstValue(ClaimTypes.NameIdentifier)));
+            new[] { Owner, Other, Administrator, Editor }.FirstOrDefault(u => u.Key == principal.FindFirstValue(ClaimTypes.NameIdentifier)));
     }
 
     private sealed class FixedTime(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
         public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
+    }
+
+    [Theory]
+    [InlineData("members", true, false, false)]
+    [InlineData("users", false, true, true)]
+    [InlineData("administrators", false, false, true)]
+    public async Task Application_policy_chooses_members_users_or_a_user_group(string rule, bool memberAllowed, bool editorAllowed, bool adminAllowed)
+    {
+        var policy = new Policy(request => rule switch {
+            "members" => request.User.IsMember,
+            "users" => request.User.IsBackOfficeUser,
+            _ => request.User.IsInUserGroup("admin"),
+        });
+        var source = Working(Tasks(), policy);
+        foreach (var (account, allowed) in new[] { (Owner, memberAllowed), (Editor, editorAllowed), (Administrator, adminAllowed) }) {
+            Assert.Equal(allowed ? 200 : 403, (await source.LoadAsync("1", Context(account), default)).Status);
+            var queries = new DataSourceQueries(runtime, new TestUsers(), [policy]);
+            if (allowed) Assert.NotEmpty((await queries.QueryAsync(Definition(Tasks()), Context(account))).Rows);
+            else await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(Definition(Tasks()), Context(account)));
+        }
     }
 
     private sealed class Policy(Func<DataSourceRequest, bool> allow) : IDataSourcePolicy
@@ -499,8 +520,9 @@ public sealed class DataSourceTests : IDisposable
         Assert.False(record.Capabilities.Update);
         Assert.Equal(403, (await readers.UpdateAsync("1", Json(new { title = "Planner edit" }), record.Version!, Context(Owner), default)).Status);
         Assert.Equal(403, (await readers.CreateAsync(Json(new { title = "Planner task" }), Context(Owner), default)).Status);
-        // Backoffice Administrators keep their access whatever the groups say.
-        Assert.Equal(200, (await readers.UpdateAsync("1", Json(new { title = "Administrator edit" }), record.Version!, Context(Administrator), default)).Status);
+        // User Groups never bypass or impersonate the configured Member Groups.
+        Assert.Equal(403, (await readers.UpdateAsync("1", Json(new { title = "Administrator edit" }), record.Version!, Context(Administrator), default)).Status);
+        Assert.Equal(403, (await readers.LoadAsync("1", Context(Editor), default)).Status);
 
         var writers = Working(Tasks(("writeGroups", "Crew")));
         Assert.Equal(200, (await writers.LoadAsync("1", Context(Owner), default)).Status);

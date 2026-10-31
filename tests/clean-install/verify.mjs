@@ -230,6 +230,15 @@ try {
   await page.getByRole('tab', { name: 'Connections', exact: true }).click();
   await page.getByRole('row').filter({ hasText: 'AppBlocks database' }).waitFor();
   await page.screenshot({ path: resolve(output, stage + '-dashboard.png'), fullPage: true });
+  await page.getByRole('tab', { name: 'Business rules', exact: true }).click();
+  await page.getByRole('heading', { name: 'Business rules for AppBlocks forms', exact: true }).waitFor();
+  assert.match(await page.locator('appblocks-business-rules pre code').first().textContent(), /using AppBlocks\.Forms;/);
+  await page.screenshot({ path: resolve(output, stage + '-business-rules.png'), fullPage: true });
+  await page.getByRole('navigation', { name: 'Business rules sections' }).getByRole('link', { name: 'Ownership and record status', exact: true }).click();
+  assert.equal(await page.locator('appblocks-business-rules').evaluate(element => element.shadowRoot.activeElement?.textContent), 'Ownership and record status');
+  passed('Business rules help renders in the backoffice with code examples and section navigation');
+  await page.getByRole('tab', { name: 'Connections', exact: true }).click();
+  await page.getByRole('row').filter({ hasText: 'AppBlocks database' }).waitFor();
   if (settings.AppBlocksDemo?.SeedContent) {
     const response = await page.goto(url + '/a-normal-content-page/?mainId=1&sideId=1');
     assert.match((await response.allHeaders())['set-cookie'] || '', /\.AspNetCore\.Antiforgery\./,

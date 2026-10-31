@@ -51,8 +51,8 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
         return user;
     }
 
-    public static bool CanRead(DataSourceDefinition definition, DataSourceUser user) => user.IsAdministrator || definition.ReadGroups.Count == 0
-        || definition.ReadGroups.Concat(definition.WriteGroups).Any(group => user.Groups.Contains(group, StringComparer.OrdinalIgnoreCase));
+    public static bool CanRead(DataSourceDefinition definition, DataSourceUser user) => definition.ReadGroups.Count == 0
+        || definition.ReadGroups.Concat(definition.WriteGroups).Any(user.IsInMemberGroup);
 
     internal static object? Bind(BindVariable variable, DataSourceUser user, IReadOnlyDictionary<string, string>? parameters, DateTime now, SqlDialect dialect)
         => variable.Kind switch {

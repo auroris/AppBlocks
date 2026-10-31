@@ -55,7 +55,7 @@ public static class PaperReportExtensions
             // Paper reports always render for a person, even on a public node, so say who may download one.
             return (await http.AuthenticateAsync(IdentityConstants.ApplicationScheme)).Succeeded
                 ? Results.Problem("This member account does not have access to the paper report.", statusCode: 403, title: "Access denied")
-                : Results.Problem("Paper reports are delivered to a signed-in member with access to the report, or to a signed-in backoffice Administrator. Sign in, then download the report again.",
+                : Results.Problem("Sign in with an Umbraco Member or backoffice User account permitted to use this report.",
                     statusCode: 403, title: "Sign in to download this paper report");
         }
         http.User = user;

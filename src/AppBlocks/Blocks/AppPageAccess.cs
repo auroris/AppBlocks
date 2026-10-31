@@ -4,12 +4,13 @@ using Microsoft.AspNetCore.Identity;
 using System.Security.Claims;
 using Umbraco.Cms.Core.Security;
 using Umbraco.Cms.Core.Models.PublishedContent;
+using Umbraco.Cms.Core.Services;
 using AppBlocks.Authentication;
 
 namespace AppBlocks.Blocks;
 
 public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker access, IHttpContextAccessor http,
-    ApplicationAccessPolicy applicationAccess)
+    ApplicationAccessPolicy applicationAccess, IPublicAccessService publicAccess)
 {
     /// <summary>Retains member-only access for hosts that explicitly require it.</summary>
     public async Task<ClaimsPrincipal?> MemberAsync(Guid pageKey)
@@ -31,7 +32,10 @@ public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker 
         var member = await context.AuthenticateAsync(IdentityConstants.ApplicationScheme);
         if (member.Succeeded && member.Principal?.Identity?.IsAuthenticated == true)
             return await access.HasMemberAccessToContentAsync(page.Id, member.Principal) == PublicAccessStatus.AccessAccepted ? member.Principal : null;
-        return await applicationAccess.BackOfficeAdministratorAsync(context);
+        // Umbraco Public Access protects pages for Members. A backoffice User must not bypass it
+        // or be looked up in the Member store using a coincidentally matching identifier.
+        if (publicAccess.IsProtected(page.Path).Success) return null;
+        return await applicationAccess.BackOfficeUserAsync(context);
     }
 }
 

@@ -21,7 +21,7 @@ Sites using Umbraco's conventional `blockgrid/Components` or `blocklist/Componen
 @await Component.InvokeAsync("AppBlocksBlock", new { block = Model })
 ```
 
-The native blocks include their required assets and inherit ordinary site typography. Public page content stays visible; interactive blocks show a sign-in notice until an authorized member or backoffice administrator signs in. Data-source read/write groups and application business rules still apply to API requests.
+The native blocks include their required assets and inherit ordinary site typography. Public page content stays visible; interactive blocks can use an authenticated Umbraco Member or backoffice User. `IDataSourceUserResolver` exposes the account type and current groups; the application decides who may read or change its data. Backoffice administrators receive no automatic application permissions. Umbraco Public Access still protects Member pages, and configured data-source Member Groups and application policies also apply to API requests. See the [identity and access examples](docs/business-rules.md#group-membership).
 
 ## Connections
 
@@ -63,7 +63,7 @@ The bundled driver matches Interactive Reports' live-test dependency. Oracle's [
 
 **Settings → AppBlocks → Forms** discovers saved forms across native block properties, including nested containers, drafts and language variants. Each form links to a read-only C# sample and a `.cs` download. Samples reflect that form's writable fields and demonstrate parameterized reads and upserts with authorization and optimistic concurrency against a clearly named example SQLite table.
 
-Shared recipes live in [business-rules.md](docs/business-rules.md), also downloadable from the dashboard: signed-in identity, groups, ownership, trusted defaults, validation, transactions and other common business rules. Samples and the guide are reference material; the backoffice does not execute them or provide a code editor.
+Shared recipes live in [business-rules.md](docs/business-rules.md), available under **Settings → AppBlocks → Business rules** with section navigation, copyable code examples and a Markdown download: signed-in identity, groups, ownership, trusted defaults, validation, transactions and other common business rules. Samples and the guide are reference material; the backoffice does not execute them or provide a code editor.
 
 ## Development and verification
 
@@ -119,7 +119,7 @@ Every C# namespace in this repository is `AppBlocks.*`, and no namespace spans t
 | Old namespace | New namespace | Moved separately |
 | --- | --- | --- |
 | `UmbracoAppHost.Attachments` | `AppBlocks.Attachments` | |
-| `UmbracoAppHost.Authentication` (`AdministratorPublicAccessChecker`, `ApplicationAccessPolicy`) | `AppBlocks.Authentication` | AppHost's own types stay in `UmbracoAppHost.Authentication` |
+| `UmbracoAppHost.Authentication` (`ApplicationAccessPolicy`) | `AppBlocks.Authentication` | Identity helpers; AppBlocks does not override Umbraco Public Access for administrators |
 | `UmbracoAppHost.Blocks` | `AppBlocks.Blocks` | `AppReportDefinitionStore`, `ConfiguredReportStore`: `AppBlocks.InteractiveReports.Blocks` |
 | `UmbracoAppHost.Databases` | `AppBlocks.Databases` | `ReportApplicationDatabases` is gone: register with `AppBlocksBuilder.AddApplicationDatabase` |
 | `UmbracoAppHost.DataSources` | `AppBlocks.DataSources` | `PublishedReport`, `PublishedReportCatalog`, `PublishedReportValidator`, `DataSourceReportAccess`, `DataSourceReportBindings`, `DataSourceContextParameters`, `OriginalContextParameters`: `AppBlocks.InteractiveReports.DataSources` |

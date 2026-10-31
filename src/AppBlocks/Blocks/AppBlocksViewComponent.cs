@@ -30,7 +30,7 @@ public sealed class AppBlocksViewComponent(AppPageAccess access, AppBindVariable
     {
         if (await access.UserAsync(page.Key) is not { } member) {
             HttpContext.Response.StatusCode = 403;
-            return Content("Sign in with a member account that has access to this page or a backoffice Administrator account.");
+            return Content("Sign in with an Umbraco Member or backoffice User account permitted to use this page.");
         }
         HttpContext.Response.Headers.CacheControl = "no-store";
         HttpContext.User = member;

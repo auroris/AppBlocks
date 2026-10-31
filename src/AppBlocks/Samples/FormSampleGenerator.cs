@@ -36,7 +36,8 @@ public static class FormSampleGenerator
         code.AppendLine("// SAMPLE ONLY — a SQLite example, not deployed code or a production migration.");
         code.AppendLine("// Package: Microsoft.Data.Sqlite. Use a separate example database.");
         code.AppendLine("// Generated from form " + form.FormKey + " on page " + form.PageKey + ".");
-        code.AppendLine("// Shared identity, groups, validation and authorization recipes: docs/business-rules.md");
+        code.AppendLine("// Member and backoffice User identities, groups and business rules: Settings > AppBlocks > Business rules.");
+        code.AppendLine("// ClaimsPrincipal can represent an Umbraco Member or a backoffice User; authorize the intended account type explicitly.");
         code.AppendLine("// Supply an authorization callback; add row-level business rules before using real data.");
         code.AppendLine("using System;\nusing System.Threading;\nusing System.Threading.Tasks;\nusing System.Security.Claims;\nusing System.Text.Json.Serialization;\nusing Microsoft.Data.Sqlite;\n");
         code.AppendLine("namespace AppBlocks.Samples.Generated;\n");

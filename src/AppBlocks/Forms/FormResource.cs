@@ -11,7 +11,7 @@ public sealed record FormField(string Key, string Label, string Kind, bool Requi
     IReadOnlyList<FormChoice>? Choices = null, bool HasServerDefault = false);
 public sealed record FormCapabilities(bool Create = false, bool Update = false, bool Delete = false);
 public sealed record FormRecord(string? Key, string? Version, IReadOnlyDictionary<string, object?> Values, FormCapabilities Capabilities);
-/// <param name="Member">The authenticated caller: a website member or backoffice Administrator. Resources authorize operations independently.</param>
+/// <param name="Member">The authenticated Umbraco Member or backoffice User. Resources decide which account types and groups may perform each operation.</param>
 /// <param name="Parameters">
 /// The query parameters of the form request, which data sources bind as <c>:PARAM.name</c>. They come from the
 /// browser like any other input, so a resource may filter or default with them but must never authorize with them.

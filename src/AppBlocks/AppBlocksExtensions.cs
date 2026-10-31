@@ -50,7 +50,6 @@ public static class AppBlocksExtensions
         services.AddControllersWithViews().AddApplicationPart(typeof(AppBlocksExtensions).Assembly);
         services.AddScoped<AppBlockContent>();
         services.AddScoped<AppPageAccess>();
-        Decorate<IPublicAccessChecker>(services, (sp, inner) => new AdministratorPublicAccessChecker(inner, sp.GetRequiredService<IHttpContextAccessor>()));
         services.AddScoped<FormResourceRegistry>();
         builder.AddDataSources();
         builder.AddAttachments(builder.Config);

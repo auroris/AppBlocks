@@ -16,6 +16,9 @@ using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Core.Sync;
 using Umbraco.Extensions;
 using AppBlocks.DocumentOutput;
+using AppBlocks.DataSources;
+using Umbraco.Cms.Core.Models.Membership;
+using Umbraco.Cms.Core.Security;
 
 namespace AppBlocks.Documents.Tests;
 
@@ -51,6 +54,8 @@ public sealed class StandaloneSiteTests
             settings => { settings.InstallData = InstallDefaultDataOption.Values; settings.Values = new HashSet<string> { "en" }; });
         // Use only standard Umbraco startup: the installed package's composer must do the rest.
         builder.CreateUmbracoBuilder().AddBackOffice().AddWebsite().AddComposers().Build();
+        var applicationRule = new ApplicationRule();
+        builder.Services.AddSingleton<IDataSourcePolicy>(applicationRule);
         builder.Services.Replace(ServiceDescriptor.Singleton<IServerRoleAccessor, SingleServerRoleAccessor>());
         await using var app = builder.Build();
         var printSubmissions = 0;
@@ -75,6 +80,17 @@ public sealed class StandaloneSiteTests
             var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
             using var anonymous = new HttpClient { BaseAddress = address };
             using var admin = await Administrator(address, password);
+
+            const string guideUrl = "/umbraco/management/api/v1/appblocks/guide";
+            using var anonymousGuide = await anonymous.GetAsync(guideUrl);
+            Assert.False(anonymousGuide.IsSuccessStatusCode);
+            using var guide = await admin.GetAsync(guideUrl);
+            Assert.True(guide.IsSuccessStatusCode);
+            Assert.Equal("text/markdown", guide.Content.Headers.ContentType?.MediaType);
+            var guideText = await guide.Content.ReadAsStringAsync();
+            Assert.Contains("# Business rules for AppBlocks forms", guideText);
+            Assert.Contains("using AppBlocks.Forms;", guideText);
+            Assert.DoesNotContain("using UmbracoAppHost.", guideText);
 
             var settingsUrl = "/umbraco/management/api/v1/appblocks/documents/settings";
             var unauthorized = await anonymous.GetAsync(settingsUrl);
@@ -165,16 +181,56 @@ public sealed class StandaloneSiteTests
             Assert.DoesNotContain("<link", html);
             Assert.True(documentResponse.Headers.CacheControl?.NoStore);
             Assert.Equal(1, printSubmissions); // Loading the template document still did not print.
+
+            // A real non-administrator backoffice User reaches application code.
+            using var accountScope = app.Services.CreateScope();
+            var users = accountScope.ServiceProvider.GetRequiredService<IUserService>();
+            const string editorEmail = "document.editor@example.test";
+            var created = await users.CreateAsync(Constants.Security.SuperUserKey, new UserCreateModel {
+                UserName = editorEmail, Email = editorEmail, Name = "Document editor", Kind = UserKind.Default,
+                UserGroupKeys = new HashSet<Guid> { Constants.Security.EditorGroupKey },
+            }, approveUser: true);
+            Assert.True(created.Success, created.Status.ToString());
+            var manager = accountScope.ServiceProvider.GetRequiredService<IBackOfficeUserManager>();
+            var identity = (await manager.FindByIdAsync(created.Result.CreatedUser!.Key.ToString()))!;
+            var reset = await manager.ChangePasswordWithResetAsync(identity.Id, await manager.GeneratePasswordResetTokenAsync(identity), password);
+            Assert.True(reset.Succeeded);
+            using var editor = await Administrator(address, password, editorEmail);
+            using var editorDocument = await editor.GetAsync("/api/paper-reports/" + key);
+            Assert.Equal(HttpStatusCode.OK, editorDocument.StatusCode);
+            Assert.True(applicationRule.LastAccount!.IsBackOfficeUser);
+            Assert.True(applicationRule.LastAccount.IsInUserGroup("editor"));
+            Assert.False(applicationRule.LastAccount.IsInUserGroup("admin"));
+
+            // The application can choose all Users, only one User Group, or Members only.
+            applicationRule.Allow = account => account.IsBackOfficeUser;
+            Assert.Equal(HttpStatusCode.OK, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            applicationRule.Allow = account => account.IsInUserGroup("admin");
+            Assert.Equal(HttpStatusCode.Forbidden, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            applicationRule.Allow = account => account.IsMember;
+            Assert.Equal(HttpStatusCode.Forbidden, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
         }
         finally { await app.StopAsync(); }
     }
 
-    private static async Task<HttpClient> Administrator(Uri address, string password)
+    private sealed class ApplicationRule : IDataSourcePolicy
+    {
+        public Func<DataSourceUser, bool> Allow { get; set; } = _ => true;
+        public DataSourceUser? LastAccount { get; private set; }
+        public ValueTask<bool> IsAllowedAsync(DataSourceRequest request, CancellationToken ct) {
+            LastAccount = request.User;
+            return ValueTask.FromResult(Allow(request.User));
+        }
+    }
+
+    private static async Task<HttpClient> Administrator(Uri address, string password, string username = "documents@example.test")
     {
         var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = address };
         const string security = "/umbraco/management/api/v1/security/back-office";
-        using var login = await client.PostAsJsonAsync(security + "/login", new { username = "documents@example.test", password });
-        Assert.True(login.IsSuccessStatusCode, "Test administrator sign-in failed: " + login.StatusCode);
+        using var login = await client.PostAsJsonAsync(security + "/login", new { username, password });
+        Assert.True(login.IsSuccessStatusCode, "Test backoffice User sign-in failed: " + login.StatusCode);
         var verifier = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
         var redirect = new Uri(address, "/umbraco/oauth_complete").ToString();
         using var authorize = await client.GetAsync(QueryHelpers.AddQueryString(security + "/authorize", new Dictionary<string, string?> {

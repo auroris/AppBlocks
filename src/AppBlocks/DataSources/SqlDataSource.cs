@@ -257,14 +257,14 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         }
     }
 
-    private bool InAny(DataSourceUser user, IReadOnlyList<string> groups) => groups.Any(g => user.Groups.Contains(g, StringComparer.OrdinalIgnoreCase));
+    private bool InAny(DataSourceUser user, IReadOnlyList<string> groups) => groups.Any(user.IsInMemberGroup);
 
-    /// <summary>Readers: anyone with page access when no read groups are set, else members of the read or write groups. Administrators always.</summary>
-    private bool CanRead(DataSourceUser user) => user.IsAdministrator || definition.ReadGroups.Count == 0
+    /// <summary>Readers: anyone with page access when no read groups are set, else Members in the configured Member Groups.</summary>
+    private bool CanRead(DataSourceUser user) => definition.ReadGroups.Count == 0
         || InAny(user, definition.ReadGroups) || InAny(user, definition.WriteGroups);
 
-    /// <summary>Writers: readers when no write groups are set, else members of the write groups. Administrators always.</summary>
-    private bool CanWrite(DataSourceUser user) => CanRead(user) && (user.IsAdministrator || definition.WriteGroups.Count == 0 || InAny(user, definition.WriteGroups));
+    /// <summary>Writers: readers when no write groups are set, else Members in the configured write Member Groups.</summary>
+    private bool CanWrite(DataSourceUser user) => CanRead(user) && (definition.WriteGroups.Count == 0 || InAny(user, definition.WriteGroups));
 
     /// <summary>A record's files follow its groups: the write groups add, replace and remove them, whatever the allow flags say about the row itself.</summary>
     async ValueTask<bool> Attachments.IAttachmentOwner.MayWriteAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct)

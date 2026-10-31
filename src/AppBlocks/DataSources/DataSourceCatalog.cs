@@ -6,6 +6,7 @@ using Umbraco.Cms.Core.Services.Navigation;
 using Umbraco.Cms.Core.Strings;
 using Umbraco.Cms.Core.Web;
 using AppBlocks.Forms;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace AppBlocks.DataSources;
 
@@ -126,7 +127,7 @@ public static class DataSourceExtensions
     public static IUmbracoBuilder AddDataSources(this IUmbracoBuilder builder)
     {
         builder.Services.AddSingleton<DataSourceRuntime>();
-        builder.Services.AddScoped<IDataSourceUserResolver, UmbracoDataSourceUsers>();
+        builder.Services.TryAddScoped<IDataSourceUserResolver, UmbracoDataSourceUsers>();
         builder.Services.AddScoped<DataSourceCatalog>();
         builder.Services.AddScoped<IFormResourceProvider>(services => services.GetRequiredService<DataSourceCatalog>());
         builder.AddNotificationHandler<ContentPublishingNotification, DataSourcePublishValidator>();

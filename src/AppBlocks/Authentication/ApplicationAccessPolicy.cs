@@ -5,7 +5,7 @@ using Umbraco.Cms.Core.Services;
 
 namespace AppBlocks.Authentication;
 
-/// <summary>Allows current backoffice Administrators to use the application without a member account.</summary>
+/// <summary>Backoffice authentication helpers. The application decides how to use the resulting identity.</summary>
 public sealed class ApplicationAccessPolicy(IUserService users)
 {
     public static bool IsBackOfficeIdentity(ClaimsPrincipal user) => user.Identity?.AuthenticationType
@@ -23,11 +23,22 @@ public sealed class ApplicationAccessPolicy(IUserService users)
 
     public async Task<ClaimsPrincipal?> BackOfficeAdministratorAsync(HttpContext context)
     {
+        var principal = await BackOfficeUserAsync(context);
+        return principal is not null && await IsBackOfficeAdministratorAsync(principal) ? principal : null;
+    }
+
+    /// <summary>Authenticates a current backoffice User, without requiring a particular User Group.</summary>
+    public async Task<ClaimsPrincipal?> BackOfficeUserAsync(HttpContext context)
+    {
         foreach (var scheme in new[] { Constants.Security.BackOfficeExposedAuthenticationType, Constants.Security.BackOfficeAuthenticationType })
         {
             var result = await context.AuthenticateAsync(scheme);
-            if (result.Succeeded && result.Principal is { } principal && await IsBackOfficeAdministratorAsync(principal))
-                return principal;
+            if (result.Succeeded && result.Principal is { Identity.IsAuthenticated: true } principal && IsBackOfficeIdentity(principal)) {
+                var id = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+                var user = Guid.TryParse(id, out var key) ? await users.GetAsync(key)
+                    : int.TryParse(id, out var legacy) ? users.GetUserById(legacy) : null;
+                return user is { IsApproved: true, IsLockedOut: false } ? principal : null;
+            }
         }
         return null;
     }

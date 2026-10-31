@@ -24,7 +24,7 @@ public static class FormEndpoints
         if (http.RequestServices.GetRequiredService<AppBlockContent>().Page(pageKey) is not { } page) return (null, null);
         var member = await http.RequestServices.GetRequiredService<AppPageAccess>().UserAsync(pageKey);
         if (member is null) return (null, null);
-        // Bind antiforgery tokens to the actual caller, including a backoffice Administrator.
+        // Bind antiforgery tokens to the actual Umbraco Member or backoffice User.
         http.User = member;
         return (FormDefinition.Resolve(page, formKey, http.RequestServices.GetRequiredService<FormResourceRegistry>(), http.RequestServices.GetRequiredService<PublishedDataCatalog>(), AppBlockContent.RequestCulture(http)), member);
     }

@@ -39,7 +39,9 @@ public sealed class DataSourceAuthoringController(IContentService content, IAuth
             new MemberGroupNames(groups).Resolve, errors);
         if (definition is null) return Ok(new DataSourcePreviewResult([], null, errors));
         var editor = new DataSourceUser("backoffice:" + user.Key, null, user.Username, user.Email,
-            user.Groups.Select(g => g.Name ?? g.Alias).ToArray(), user.IsAdmin());
+            user.Groups.Select(g => g.Name ?? g.Alias).ToArray(), IsBackOfficeUser: true) {
+            UserGroupAliases = user.Groups.Select(g => g.Alias).ToArray(),
+        };
         return Ok(await preview.TestAsync(definition, editor, request.Samples ?? [], ct));
     }
 

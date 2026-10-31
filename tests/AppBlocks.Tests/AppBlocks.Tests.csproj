@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <OutputType>Exe</OutputType><IsTestProject>true</IsTestProject><IsPackable>false</IsPackable>
     <NoWarn>$(NoWarn);xUnit1051</NoWarn>
@@ -8,5 +8,7 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
     <ProjectReference Include="../../src/AppBlocks/AppBlocks.csproj" />
     <Using Include="Xunit" />
+    <!-- The Web SDK adds it for the Razor pages this project does not have, and its ConnectionInfo hides AppBlocks'. -->
+    <Using Remove="Microsoft.AspNetCore.Http" />
   </ItemGroup>
 </Project>

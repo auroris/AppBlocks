@@ -48,6 +48,8 @@ public sealed class DataSourceQueryTests : IDisposable
     {
         var denied = new DataSourceQueries(runtime, new Users(User with { Groups = ["Visitors"] }), []);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => denied.QueryAsync(Definition, Context));
+        var backOffice = User with { IsBackOfficeUser = true, UserGroupAliases = ["admin"] };
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => new DataSourceQueries(runtime, new Users(backOffice), []).QueryAsync(Definition, Context));
         var policy = new DenyQuery();
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => new DataSourceQueries(runtime, new Users(User), [policy]).QueryAsync(Definition, Context));
         Assert.Equal(DataSourceAction.Query, policy.Seen);

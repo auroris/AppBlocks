@@ -6,49 +6,55 @@ using AppBlocks.Authentication;
 namespace AppBlocks.DataSources;
 
 /// <summary>
-/// The signed-in person as a data source sees them: the facts its bind variables expose and its group checks use.
-/// It is the shape <see cref="SsoAccount"/> gives at sign-in, read back from the account Umbraco keeps.
+/// The current Umbraco Member or backoffice User. These identity facts do not grant application permissions.
 /// </summary>
 /// <param name="Key">The application's key for the account (<see cref="ApplicationAccessPolicy.UserKey"/>): the member id, or <c>backoffice:</c> and the user id.</param>
 /// <param name="Sid">The Windows SID the account is linked to, its external login key; null for an account created with a password.</param>
-/// <param name="Groups">Member group names; for a backoffice Administrator, the names of their backoffice groups.</param>
-/// <param name="IsAdministrator">A current backoffice Administrator, who keeps the access they have to every application page.</param>
-public sealed record DataSourceUser(string Key, string? Sid, string? Name, string? Email, IReadOnlyList<string> Groups, bool IsAdministrator);
+/// <param name="Groups">Member Group names for a Member, or User Group names for a backoffice User.</param>
+/// <param name="IsBackOfficeUser">True for a backoffice User; false for an Umbraco Member.</param>
+public sealed record DataSourceUser(string Key, string? Sid, string? Name, string? Email, IReadOnlyList<string> Groups, bool IsBackOfficeUser)
+{
+    public bool IsMember => !IsBackOfficeUser;
+    /// <summary>Stable User Group aliases, such as "admin". Empty for Members.</summary>
+    public IReadOnlyList<string> UserGroupAliases { get; init; } = [];
+    public bool IsInMemberGroup(string name) => IsMember && Groups.Contains(name, StringComparer.OrdinalIgnoreCase);
+    public bool IsInUserGroup(string alias) => IsBackOfficeUser && UserGroupAliases.Contains(alias, StringComparer.OrdinalIgnoreCase);
+}
 
-/// <summary>Resolves the caller of a form operation; null refuses the operation.</summary>
+/// <summary>Resolves an authenticated Umbraco Member or backoffice User. Null means no valid account; authorization belongs to the application.</summary>
 public interface IDataSourceUserResolver
 {
     Task<DataSourceUser?> ResolveAsync(ClaimsPrincipal principal, CancellationToken ct);
 }
 
 /// <summary>
-/// Reads the caller from Umbraco on every operation rather than trusting the cookie's claims, so a removed group,
-/// a disabled member or a lost Administrator role applies at once. A member is read by the id in its cookie; a
-/// backoffice identity counts only while it is a current Administrator, as for page access. The SID is the
-/// provider key of the account's external login, which every sign-in provider of the platform stores.
+/// Reads current account status and groups from Umbraco on every operation. Both Members and backoffice Users
+/// must be approved and unlocked. User Group membership never decides whether an identity can be resolved.
 /// </summary>
-public sealed class UmbracoDataSourceUsers(IMemberService members, IUserService users, IExternalLoginWithKeyService logins,
-    ApplicationAccessPolicy access) : IDataSourceUserResolver
+public sealed class UmbracoDataSourceUsers(IMemberService members, IUserService users, IExternalLoginWithKeyService logins) : IDataSourceUserResolver
 {
     /// <summary>Enough groups for any real account, few enough to stay far below a statement's parameter limit.</summary>
     public const int MaxGroups = 500;
 
     public async Task<DataSourceUser?> ResolveAsync(ClaimsPrincipal principal, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         if (principal.Identity?.IsAuthenticated != true || principal.FindFirstValue(ClaimTypes.NameIdentifier) is not { Length: > 0 } id) return null;
         if (ApplicationAccessPolicy.IsBackOfficeIdentity(principal))
         {
-            if (!await access.IsBackOfficeAdministratorAsync(principal)) return null;
             var user = Guid.TryParse(id, out var key) ? await users.GetAsync(key) : int.TryParse(id, out var legacy) ? users.GetUserById(legacy) : null;
-            return user is null ? null : new(ApplicationAccessPolicy.UserKey(principal), Sid(user.Key), user.Username, user.Email,
-                Bounded(user.Groups.Select(g => g.Name ?? g.Alias)), IsAdministrator: true);
+            return user is not { IsApproved: true, IsLockedOut: false } ? null
+                : new(ApplicationAccessPolicy.UserKey(principal), Sid(user.Key), user.Username, user.Email,
+                    Bounded(user.Groups.Select(g => g.Name ?? g.Alias)), IsBackOfficeUser: true) {
+                    UserGroupAliases = Bounded(user.Groups.Select(g => g.Alias)),
+                };
         }
         if (principal.Identity.AuthenticationType != IdentityConstants.ApplicationScheme) return null;
         var member = int.TryParse(id, out var memberId) ? members.GetById(memberId)
             : Guid.TryParse(id, out var memberKey) ? (await members.GetByKeysAsync(memberKey)).FirstOrDefault() : null;
-        if (member is not { IsApproved: true }) return null;
+        if (member is not { IsApproved: true, IsLockedOut: false }) return null;
         return new(ApplicationAccessPolicy.UserKey(principal), Sid(member.Key), member.Username, member.Email,
-            Bounded(members.GetAllRoles(member.Username)), IsAdministrator: false);
+            Bounded(members.GetAllRoles(member.Username)), IsBackOfficeUser: false);
     }
 
     private string? Sid(Guid key) => logins.GetExternalLogins(key).Select(login => login.ProviderKey).FirstOrDefault(sid => !string.IsNullOrWhiteSpace(sid));

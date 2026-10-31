@@ -48,7 +48,7 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
         if (content.Page(pageKey) is not { } page) return BlockOwnerScope.Refused(403, $"You do not have access to {words.These}.");
         var user = await access.UserAsync(page);
         if (user is null) return BlockOwnerScope.Refused(403, $"You do not have access to {words.These}.");
-        // Antiforgery tokens and the audit log name the actual caller, including a backoffice Administrator.
+        // Antiforgery tokens and the audit log name the actual Umbraco Member or backoffice User.
         request.User = user;
         var culture = AppBlockContent.RequestCulture(request);
         var blocks = AppBlockContent.Blocks(page, culture);

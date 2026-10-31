@@ -3,6 +3,7 @@ import { html, css } from "@umbraco-cms/backoffice/external/lit";
 import { UMB_AUTH_CONTEXT } from "@umbraco-cms/backoffice/auth";
 import "@umbraco-cms/backoffice/components";
 import { request, download, pathBase } from "./api.js";
+import "./business-rules.js";
 
 export default class AppBlocksDashboard extends UmbLitElement {
     static properties = {
@@ -74,10 +75,6 @@ export default class AppBlocksDashboard extends UmbLitElement {
         } catch (error) { this.error = error.message; }
         finally { this.busy = false; }
     }
-    async guide() {
-        try { download(await request(this.auth, "guide", undefined, true), "business-rules.md", "text/markdown"); }
-        catch (error) { this.error = error.message; }
-    }
     edit(connection) {
         this.editing = { name: connection?.name ?? "", provider: connection?.provider ?? "sqlServer", connectionString: "", existing: !!connection };
         this.message = undefined; this.error = undefined;
@@ -97,7 +94,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
     renderForms() {
         if (this.sample) return html`<uui-box class="panel" aria-label="Sample C#"><div class="toolbar"><div><p class="eyebrow">Sample code</p><h2>${this.selectedForm?.name}</h2></div><button @click=${() => this.sample = undefined}>Back to forms</button></div>
             <p>A SQLite example using this form’s writable fields. It includes a sample table, a parameterized read and an upsert with version checking. AppBlocks does not execute this code.</p>
-            <div class="actions"><button class="primary" @click=${() => download(this.sample, "SampleFormRepository.cs")}>Download sample C#</button><button @click=${this.guide}>Download business rules guide (.md)</button></div><pre tabindex="0"><code>${this.sample}</code></pre></uui-box>`;
+            <div class="actions"><button class="primary" @click=${() => download(this.sample, "SampleFormRepository.cs")}>Download sample C#</button><button @click=${() => this.selectTab("business-rules")}>Read business rules</button></div><pre tabindex="0"><code>${this.sample}</code></pre></uui-box>`;
         const found = this.forms.filter(f => `${f.name} ${f.pageName} ${f.resource}`.toLowerCase().includes(this.search.toLowerCase()));
         return html`<uui-box class="panel"><div class="toolbar"><div><h2>Forms on this site</h2><p>Saved forms, including drafts and language variants.</p></div><input class="search" type="search" aria-label="Find a form" placeholder="Find a form…" .value=${this.search} @input=${event => this.search = event.target.value}></div>
             ${this.issues.map(issue => html`<div class="error">${issue}</div>`)}
@@ -115,23 +112,24 @@ export default class AppBlocksDashboard extends UmbLitElement {
     }
     renderHelp() {
         return html`<uui-box class="panel"><p class="eyebrow">Build your first form</p><h2>From database to working page</h2><p>Simple forms use the built-in data-source engine. Custom behaviour can use a C# resource.</p><div class="steps">
-            ${[["Choose a database", "The default AppBlocks.sqlite.db sits beside Umbraco’s SQLite file. Forms, saved report views and uploads share it. Add other named connections on the Connections tab."], ["Choose a table", "Create your application tables, then in Content create a Data sources root and add a SQL data source. Give it an alias, choose its connection and table, and specify the key column. Choose whether it allows creating, editing or deleting rows, then publish it."], ["Build the form", "Add Forms container and Interactive Report to the allowed blocks in your site’s Block Grid or Block List. Add a Forms container to any page, then a Form with its interface, fields and actions. Reports choose a data source and save their view on the block."], ["Set access and publish", "Use Umbraco Public Access and the data source’s read/write groups. Interactive forms require a member with access or a backoffice administrator."], ["Add your business rules", "Open the Forms tab to download a sample for any saved form. Use the shared guide for user identity, groups, ownership and validation."]].map(([title,body],index) => html`<article><span class="step">${index+1}</span><div><h3>${title}</h3><p>${body}</p></div></article>`)}</div><div class="actions"><button @click=${this.guide}>Download business rules guide (.md)</button><a href="https://www.connectionstrings.com/" target="_blank" rel="noopener noreferrer">Connection string examples ↗</a></div></uui-box>`;
+            ${[["Choose a database", "The default AppBlocks.sqlite.db sits beside Umbraco’s SQLite file. Forms, saved report views and uploads share it. Add other named connections on the Connections tab."], ["Choose a table", "Create your application tables, then in Content create a Data sources root and add a SQL data source. Give it an alias, choose its connection and table, and specify the key column. Choose whether it allows creating, editing or deleting rows, then publish it."], ["Build the form", "Add Forms container and Interactive Report to the allowed blocks in your site’s Block Grid or Block List. Add a Forms container to any page, then a Form with its interface, fields and actions. Reports choose a data source and save their view on the block."], ["Set access and publish", "Choose which Umbraco Members or backoffice Users may use the form. Enforce those rules in your resource or data-source policy; Member Public Access and configured Member Groups still apply."], ["Add your business rules", "Open the Forms tab to download a sample for any saved form. Use the shared guide for user identity, groups, ownership and validation."]].map(([title,body],index) => html`<article><span class="step">${index+1}</span><div><h3>${title}</h3><p>${body}</p></div></article>`)}</div><div class="actions"><button @click=${() => this.selectTab("business-rules")}>Read business rules</button><a href="https://www.connectionstrings.com/" target="_blank" rel="noopener noreferrer">Connection string examples ↗</a></div></uui-box>`;
     }
     render() {
         return html`<umb-body-layout>
             <div slot="header" class="header"><umb-icon name="icon-box" aria-hidden="true"></umb-icon><div><h1>AppBlocks</h1><small>Forms and reports</small></div></div>
             <uui-tab-group slot="navigation" aria-label="AppBlocks views">
-                ${[["forms","Forms","icon-document"],["connections","Connections","icon-server"],["help","Getting started","icon-help"]].map(([key,label,icon]) => html`<uui-tab label=${label} ?active=${this.tab === key} @click=${() => this.selectTab(key)}><umb-icon slot="icon" name=${icon} aria-hidden="true"></umb-icon>${label}</uui-tab>`)}
+                ${[["forms","Forms","icon-document"],["connections","Connections","icon-server"],["help","Getting started","icon-help"],["business-rules","Business rules","icon-book-alt"]].map(([key,label,icon]) => html`<uui-tab label=${label} ?active=${this.tab === key} @click=${() => this.selectTab(key)}><umb-icon slot="icon" name=${icon} aria-hidden="true"></umb-icon>${label}</uui-tab>`)}
                 ${this.companionPages.map(page => html`<uui-tab label=${page.label} ?active=${this.tab === page.alias} @click=${() => this.showCompanion(page)}><umb-icon slot="icon" name="icon-document" aria-hidden="true"></umb-icon>${page.label}</uui-tab>`)}
             </uui-tab-group>
-            <div class="intro"><p>Forms and reports, connected to your data.</p><uui-button look="secondary" label="Refresh" ?disabled=${this.loading} @click=${this.load}><umb-icon name="icon-refresh" aria-hidden="true"></umb-icon> Refresh</uui-button></div>
+            ${this.tab !== "business-rules" ? html`<div class="intro"><p>Forms and reports, connected to your data.</p><uui-button look="secondary" label="Refresh" ?disabled=${this.loading} @click=${this.load}><umb-icon name="icon-refresh" aria-hidden="true"></umb-icon> Refresh</uui-button></div>
             <div class="summary">
                 <uui-box><div class="summary-content"><umb-icon name="icon-document" aria-hidden="true"></umb-icon><div><strong>${this.loading ? "…" : this.forms.length}</strong><span>Forms across this site</span></div></div></uui-box>
                 <uui-box><div class="summary-content"><umb-icon name="icon-server" aria-hidden="true"></umb-icon><div><strong>${this.loading ? "…" : this.connections.length}</strong><span>Database connections</span></div></div></uui-box>
                 <uui-box><div class="summary-content"><umb-icon name="icon-database" aria-hidden="true"></umb-icon><div><strong class="database">AppBlocks database</strong><span>Forms, saved report views and uploads</span></div></div></uui-box>
             </div>
+            ` : ""}
             <div aria-live="polite">${this.error ? html`<div class="error" role="alert">${this.error}</div>` : ""}${this.message ? html`<div class="notice">${this.message}</div>` : ""}</div>
-            ${this.loading ? html`<p role="status">Loading AppBlocks…</p>` : this.tab === "forms" ? this.renderForms() : this.tab === "connections" ? this.renderConnections() : this.tab === "help" ? this.renderHelp() : this.companionView}
+            ${this.loading ? html`<p role="status">Loading AppBlocks…</p>` : this.tab === "forms" ? this.renderForms() : this.tab === "connections" ? this.renderConnections() : this.tab === "help" ? this.renderHelp() : this.tab === "business-rules" ? html`<appblocks-business-rules></appblocks-business-rules>` : this.companionView}
         </umb-body-layout>`;
     }
 }
