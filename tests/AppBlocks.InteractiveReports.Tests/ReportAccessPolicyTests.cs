@@ -30,6 +30,9 @@ public sealed class ReportAccessPolicyTests
         Assert.True(await policy.IsAdministratorAsync(backOfficeUser));
         var member = new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, id), new(ClaimTypes.Role, "admin")], IdentityConstants.ApplicationScheme));
         Assert.False(await policy.IsAdministratorAsync(member));
+        var combined = new ClaimsPrincipal(new[] { new ClaimsIdentity([new(ClaimTypes.NameIdentifier, "42")], IdentityConstants.ApplicationScheme) }
+            .Concat(backOfficeUser.Identities));
+        Assert.True(await policy.IsAdministratorAsync(combined));
         options.ReportAdministratorGroups = [];
         Assert.False(await policy.IsAdministratorAsync(backOfficeUser));
     }

@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Umbraco.Cms.Core;
+using Umbraco.Cms.Core.Actions;
 using Umbraco.Cms.Core.Configuration.Models;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Services;
@@ -19,6 +20,7 @@ using AppBlocks.DocumentOutput;
 using AppBlocks.DataSources;
 using Umbraco.Cms.Core.Models.Membership;
 using Umbraco.Cms.Core.Security;
+using Umbraco.Cms.Core.Strings;
 
 namespace AppBlocks.Documents.Tests;
 
@@ -199,6 +201,7 @@ public sealed class StandaloneSiteTests
             using var editorDocument = await editor.GetAsync("/api/paper-reports/" + key);
             Assert.Equal(HttpStatusCode.OK, editorDocument.StatusCode);
             Assert.True(applicationRule.LastAccount!.IsBackOfficeUser);
+            Assert.True(applicationRule.LastAccount.CanEditPage);
             Assert.True(applicationRule.LastAccount.IsInUserGroup("editor"));
             Assert.False(applicationRule.LastAccount.IsInUserGroup("admin"));
 
@@ -212,14 +215,48 @@ public sealed class StandaloneSiteTests
             Assert.Equal(HttpStatusCode.Forbidden, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
 
-            // Member Public Access is a separate site rule, never bypassed by a User Group.
+            // Member Public Access is a separate site rule: a backoffice User passes it only on a page they
+            // may edit. Editors and Administrators may update this page; a group that may only browse may not.
+            applicationRule.Allow = _ => true;
+            var groups = accountScope.ServiceProvider.GetRequiredService<IUserGroupService>();
+            var viewers = new UserGroup(accountScope.ServiceProvider.GetRequiredService<IShortStringHelper>()) {
+                Alias = "documentViewers", Name = "Document viewers", Permissions = new HashSet<string> { ActionBrowse.ActionLetter },
+            };
+            viewers.AddAllowedSection(Constants.Applications.Content);
+            var viewersCreated = await groups.CreateAsync(viewers, Constants.Security.SuperUserKey, []);
+            Assert.True(viewersCreated.Success, viewersCreated.Status.ToString());
+            const string viewerEmail = "document.viewer@example.test";
+            var viewerCreated = await users.CreateAsync(Constants.Security.SuperUserKey, new UserCreateModel {
+                UserName = viewerEmail, Email = viewerEmail, Name = "Document viewer", Kind = UserKind.Default,
+                UserGroupKeys = new HashSet<Guid> { viewersCreated.Result.Key },
+            }, approveUser: true);
+            Assert.True(viewerCreated.Success, viewerCreated.Status.ToString());
+            var viewerIdentity = (await manager.FindByIdAsync(viewerCreated.Result.CreatedUser!.Key.ToString()))!;
+            Assert.True((await manager.ChangePasswordWithResetAsync(viewerIdentity.Id, await manager.GeneratePasswordResetTokenAsync(viewerIdentity), password)).Succeeded);
+            using var viewer = await Administrator(address, password, viewerEmail);
+            Assert.Equal(HttpStatusCode.OK, (await viewer.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            Assert.False(applicationRule.LastAccount!.CanEditPage);
+            Assert.False(applicationRule.LastAccount.CanPublishPage);
+            Assert.False(applicationRule.LastAccount.CanDeletePage);
+            applicationRule.Allow = account => account.CanEditPage;
+            Assert.Equal(HttpStatusCode.Forbidden, (await viewer.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            Assert.True(applicationRule.LastAccount!.CanPublishPage);
+            Assert.True(applicationRule.LastAccount.CanDeletePage);
+            Assert.True(applicationRule.LastAccount.BackOfficeUser!.CanPublishPage);
+            Assert.True(applicationRule.LastAccount.BackOfficeUser.CanDeletePage);
+            applicationRule.Allow = account => account.CanPublishPage && account.CanDeletePage;
+            Assert.Equal(HttpStatusCode.Forbidden, (await viewer.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
             applicationRule.Allow = _ => true;
             var reportContent = accountScope.ServiceProvider.GetRequiredService<IContentService>().GetById(key)!;
             var publicAccess = accountScope.ServiceProvider.GetRequiredService<IPublicAccessService>();
             publicAccess.Save(new PublicAccessEntry(reportContent, reportContent, reportContent, []));
             Assert.True(publicAccess.IsProtected(reportContent.Path).Success);
-            Assert.Equal(HttpStatusCode.Forbidden, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
-            Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await viewer.GetAsync("/api/paper-reports/" + key)).StatusCode);
         }
         finally { await app.StopAsync(); }
     }

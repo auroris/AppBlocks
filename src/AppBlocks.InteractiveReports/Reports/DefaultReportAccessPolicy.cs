@@ -26,8 +26,8 @@ public sealed class DefaultReportAccessPolicy(IUserService users, IOptions<AppBl
 {
     public async Task<bool> IsAdministratorAsync(ClaimsPrincipal principal)
     {
-        if (principal.Identity?.IsAuthenticated != true || !ApplicationAccessPolicy.IsBackOfficeIdentity(principal)) return false;
-        var id = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (ApplicationAccessPolicy.BackOfficeIdentity(principal) is not { } identity) return false;
+        var id = identity.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         var user = Guid.TryParse(id, out var key) ? await users.GetAsync(key)
             : int.TryParse(id, out var legacy) ? users.GetUserById(legacy) : null;
         return user is { IsApproved: true, IsLockedOut: false }

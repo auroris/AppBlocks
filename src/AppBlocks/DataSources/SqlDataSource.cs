@@ -40,7 +40,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public async Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct)
     {
         if (Entry.Plan is not { } plan) return Unavailable();
-        if (await users.ResolveAsync(context.Member, ct) is not { } user || !CanRead(user)) return FormResult.Denied();
+        if (await users.ResolveAsync(context, ct) is not { } user || !CanRead(user)) return FormResult.Denied();
         var binder = new Binder(plan, user, context, runtime.Now(), null);
         var values = plan.Columns.ToDictionary(c => c.Field, c => (object?)null, StringComparer.Ordinal);
         foreach (var value in plan.Defaults) values[value.Column.Field] = FieldValues.ToJson(binder.Default(value, out _));
@@ -51,7 +51,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public async Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct)
     {
         if (Entry.Plan is not { } plan) return Unavailable();
-        if (await users.ResolveAsync(context.Member, ct) is not { } user || !CanRead(user)) return FormResult.Denied();
+        if (await users.ResolveAsync(context, ct) is not { } user || !CanRead(user)) return FormResult.Denied();
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
         var binder = new Binder(plan, user, context, runtime.Now(), null);
         return await RunAsync(plan, write: false, async (connection, _) => {
@@ -64,7 +64,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public async Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct)
     {
         if (Entry.Plan is not { } plan) return Unavailable();
-        if (await users.ResolveAsync(context.Member, ct) is not { } user || !definition.AllowInsert || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
+        if (await users.ResolveAsync(context, ct) is not { } user || !definition.AllowInsert || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
         if (!Guid.TryParse(context.SubmissionKey, out var submission)) return FormResult.Invalid("", "A submission identifier is required.");
         if (Parse(plan, input, null, out var rejected) is not { } values) return rejected!;
         var now = runtime.Now();
@@ -124,7 +124,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public async Task<FormResult> UpdateAsync(string key, JsonElement input, string version, FormExecutionContext context, CancellationToken ct)
     {
         if (Entry.Plan is not { } plan) return Unavailable();
-        if (await users.ResolveAsync(context.Member, ct) is not { } user || !definition.AllowUpdate || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
+        if (await users.ResolveAsync(context, ct) is not { } user || !definition.AllowUpdate || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
         if (input.ValueKind != JsonValueKind.Object) return FormResult.Invalid("", "Form values must be an object.");
         var now = runtime.Now();
@@ -175,7 +175,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public async Task<FormResult> DeleteAsync(string key, string version, FormExecutionContext context, CancellationToken ct)
     {
         if (Entry.Plan is not { } plan) return Unavailable();
-        if (await users.ResolveAsync(context.Member, ct) is not { } user || !definition.AllowDelete || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
+        if (await users.ResolveAsync(context, ct) is not { } user || !definition.AllowDelete || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
         return await RunAsync(plan, write: true, async (connection, transaction) => {
             var deleted = await DeleteRecordAsync(plan, user, context, key, keys, version, connection, transaction!, null, ct);
@@ -268,7 +268,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
 
     /// <summary>A record's files follow its groups: the write groups add, replace and remove them, whatever the allow flags say about the row itself.</summary>
     async ValueTask<bool> Attachments.IAttachmentOwner.MayWriteAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct)
-        => await users.ResolveAsync(context.Member, ct) is { } user && CanWrite(user);
+        => await users.ResolveAsync(context, ct) is { } user && CanWrite(user);
 
     private async Task<bool> AllowedAsync(DataSourceAction action, DataSourceUser user, FormExecutionContext context, string? key,
         IReadOnlyDictionary<string, object?>? current, IReadOnlyDictionary<string, object?>? proposed, DbConnection? connection, DbTransaction? transaction,

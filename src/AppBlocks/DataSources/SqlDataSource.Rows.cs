@@ -47,7 +47,7 @@ public sealed partial class SqlDataSource
     public async Task<DataSourceRowsResult> ListRowsAsync(DataSourceScope scope, FormExecutionContext context, int maximumRows, CancellationToken ct)
     {
         if (Entry.Plan is not { } plan) return DataSourceRowsResult.From(Unavailable());
-        if (await users.ResolveAsync(context.Member, ct) is not { } user || !CanRead(user)) return new(403);
+        if (await users.ResolveAsync(context, ct) is not { } user || !CanRead(user)) return new(403);
         if (Link(plan, scope, out var link, out var value) is { } problem) return DataSourceRowsResult.From(problem);
         var binder = new Binder(plan, user, context, runtime.Now(), null);
         return await RunAsync(plan, write: false, async (connection, _) => {
@@ -66,7 +66,7 @@ public sealed partial class SqlDataSource
         int maximumRows, CancellationToken ct)
     {
         if (Entry.Plan is not { } plan) return DataSourceRowsResult.From(Unavailable());
-        if (await users.ResolveAsync(context.Member, ct) is not { } user || !plan.Writable || !CanWrite(user)) return new(403);
+        if (await users.ResolveAsync(context, ct) is not { } user || !plan.Writable || !CanWrite(user)) return new(403);
         if (Link(plan, scope, out var link, out var value) is { } problem) return DataSourceRowsResult.From(problem);
         if (changes.Count == 0) return await ListRowsAsync(scope, context, maximumRows, ct);
         if (changes.Count > MaxChanges) return new(422, Errors: new Dictionary<string, string[]> { [""] = [$"Save at most {MaxChanges} rows at a time."] });

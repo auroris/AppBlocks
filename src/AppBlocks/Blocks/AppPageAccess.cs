@@ -19,7 +19,7 @@ public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker 
         return user?.Identity?.AuthenticationType == IdentityConstants.ApplicationScheme ? user : null;
     }
 
-    /// <summary>A signed-in Member or backoffice User this page admits. Null for everyone else, including an anonymous visitor to an open page.</summary>
+    /// <summary>The signed-in Member and/or backoffice User this page admits, Member first when both are present. Null for everyone else, including an anonymous visitor to an open page.</summary>
     public async Task<ClaimsPrincipal?> UserAsync(Guid pageKey)
     {
         if (content.Page(pageKey) is not { } page) return null;
@@ -32,10 +32,17 @@ public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker 
         if (http.HttpContext is not { } context) return null;
         var member = await context.AuthenticateAsync(IdentityConstants.ApplicationScheme);
         if (member.Succeeded && member.Principal?.Identity?.IsAuthenticated == true)
-            return await access.HasMemberAccessToContentAsync(page.Id, member.Principal) == PublicAccessStatus.AccessAccepted ? member.Principal : null;
-        // Umbraco Public Access protects pages for Members. A backoffice User must not bypass it
-        // or be looked up in the Member store using a coincidentally matching identifier.
-        if (publicAccess.IsProtected(page.Path).Success) return null;
+        {
+            if (await access.HasMemberAccessToContentAsync(page.Id, member.Principal) != PublicAccessStatus.AccessAccepted) return null;
+            var backOfficeUser = await applicationAccess.BackOfficeUserAsync(context);
+            // Keep the Member first for existing ownership, audit and antiforgery identities. The resolver reads
+            // each authenticated identity's own identifier, so the accounts and their groups remain separate.
+            return backOfficeUser is null ? member.Principal
+                : new ClaimsPrincipal(member.Principal.Identities.Concat(backOfficeUser.Identities));
+        }
+        // Umbraco Public Access protects pages for Members. A backoffice User passes it only on a page
+        // they may edit, and is never looked up in the Member store using a coincidentally matching identifier.
+        if (publicAccess.IsProtected(page.Path).Success) return await applicationAccess.BackOfficeEditorAsync(context, page);
         return await applicationAccess.BackOfficeUserAsync(context);
     }
 

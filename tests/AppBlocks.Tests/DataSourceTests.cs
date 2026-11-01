@@ -167,6 +167,54 @@ public sealed class DataSourceTests : IDisposable
         public ValueTask<bool> IsAllowedAsync(DataSourceRequest request, CancellationToken ct) { Requests.Add(request); return ValueTask.FromResult(allow(request)); }
     }
 
+    [Fact]
+    public async Task Policies_receive_edit_permission_for_the_host_page_on_reads_writes_and_row_batches()
+    {
+        var pageKey = Guid.NewGuid();
+        var context = Context(Editor) with { PageKey = pageKey };
+        var users = new PageUsers(pageKey);
+        var policy = new Policy(request => request.User.CanEditPage);
+        var definition = Definition(Tasks(("insertDefaults", "OWNER_SID = 'editor'")));
+        var source = new SqlDataSource(definition, runtime, users, [policy]);
+        var queries = new DataSourceQueries(runtime, users, [policy]);
+        Assert.Equal(200, (await source.InitializeAsync(context, default)).Status);
+        var created = await source.CreateAsync(Json(new { title = "Page editor", projectId = "1" }), context, default);
+        Assert.Equal(200, created.Status);
+        var key = created.Record!.Key!;
+        Assert.Equal(200, (await source.LoadAsync(key, context, default)).Status);
+        Assert.Equal(200, (await source.UpdateAsync(key, Json(new { title = "Updated" }), "1", context, default)).Status);
+        Assert.NotEmpty((await queries.QueryAsync(definition, context)).Rows);
+        var scope = new DataSourceScope("projectId", "1");
+        Assert.Equal(200, (await source.ListRowsAsync(scope, context, 100, default)).Status);
+        Assert.Equal(200, (await source.SaveRowsAsync(scope, [new("update", key, "2", Json(new { title = "Batch updated" }))],
+            context with { SubmissionKey = Guid.NewGuid().ToString() }, 100, default)).Status);
+        Assert.Equal(204, (await source.DeleteAsync(key, "3", context, default)).Status);
+        Assert.All(policy.Requests, request => {
+            Assert.Equal(pageKey, request.Context.PageKey);
+            Assert.True(request.User.CanEditPage);
+        });
+        Assert.All(Enum.GetValues<DataSourceAction>(), action => Assert.Contains(policy.Requests, request => request.Action == action));
+
+        // The same account on another page gets refused by the rule; no permission leaks between pages.
+        var otherPage = context with { PageKey = Guid.NewGuid() };
+        Assert.Equal(403, (await source.InitializeAsync(otherPage, default)).Status);
+        Assert.Equal(403, (await source.LoadAsync("1", otherPage, default)).Status);
+        Assert.Equal(403, (await source.CreateAsync(Json(new { title = "Refused" }), otherPage with { SubmissionKey = Guid.NewGuid().ToString() }, default)).Status);
+        Assert.Equal(403, (await source.UpdateAsync("1", Json(new { title = "Refused" }), "1", otherPage, default)).Status);
+        Assert.Equal(403, (await source.DeleteAsync("1", "1", otherPage, default)).Status);
+        Assert.Equal(403, (await source.ListRowsAsync(scope, otherPage, 100, default)).Status);
+        Assert.Equal(403, (await source.SaveRowsAsync(scope, [new("update", "1", "1", Json(new { title = "Refused" }))], otherPage, 100, default)).Status);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(definition, otherPage));
+        Assert.Equal("Paint the hangar", Scalar("SELECT TITLE FROM TASKS WHERE TASK_ID = 1"));
+    }
+
+    private sealed class PageUsers(Guid editablePage) : IDataSourceUserResolver
+    {
+        public Task<DataSourceUser?> ResolveAsync(ClaimsPrincipal principal, CancellationToken ct) => throw new InvalidOperationException("The calling page is required.");
+        public Task<DataSourceUser?> ResolveAsync(FormExecutionContext context, CancellationToken ct)
+            => Task.FromResult<DataSourceUser?>(Editor with { CanEditPage = context.PageKey == editablePage });
+    }
+
     private static JsonElement Json(object value) => JsonSerializer.SerializeToElement(value);
 
     private void Execute(string sql)

@@ -37,7 +37,7 @@ Two things apply to every layer. First, Umbraco's Public Access is the baseline,
 
 In Umbraco, a **Member** signs in to the website and can belong to **Member Groups**. A **User** signs in to the backoffice and can belong to **User Groups**. A **backoffice administrator** is a User in the Administrators User Group.
 
-A C# `IFormResource` receives a `FormExecutionContext`. Despite its name, the `Member` property can contain an Umbraco Member's principal, a backoffice User's principal or, on a page without Public Access, an unauthenticated principal for an anonymous visitor. It is never null. AppBlocks supplies the identity; your application decides which account types and groups may perform each operation. Never take the signed-in account's identity from submitted form fields.
+A C# `IFormResource` receives a `FormExecutionContext`. Despite its name, the `Member` property can contain an Umbraco Member's principal, a backoffice User's principal, both identities together or, on a page without Public Access, an unauthenticated principal for an anonymous visitor. It is never null. AppBlocks supplies the identities; your application decides which account types and groups may perform each operation. Never take the signed-in account's identity from submitted form fields.
 
 Begin every operation with a sign-in check unless you mean that operation to be public, as generated samples do:
 
@@ -59,7 +59,7 @@ Member IDs and User IDs belong to different account stores. Use AppBlocks' resol
 using AppBlocks.DataSources;
 
 // Inject IDataSourceUserResolver into your resource.
-var account = await userResolver.ResolveAsync(context.Member, cancellationToken);
+var account = await userResolver.ResolveAsync(context, cancellationToken);
 if (account is null)
     return FormResult.Denied();
 
@@ -69,14 +69,53 @@ var email = account.Email;
 var groups = account.Groups;   // Member Group names, or backoffice User Group names.
 var isMember = account.IsMember;
 var isBackOfficeUser = account.IsBackOfficeUser;
+var canEditPage = account.CanEditPage;
+var canPublishPage = account.CanPublishPage;
+var canDeletePage = account.CanDeletePage;
 var isBackOfficeAdministrator = account.IsInUserGroup("admin"); // Umbraco's Administrators User Group alias.
 ```
+
+A browser can be signed in to both accounts at once. In that case `account.IsMember && account.IsBackOfficeUser` is true. Each account has its own details; AppBlocks does not link them by matching names, emails or numeric IDs:
+
+```csharp
+var member = account.Member;                 // Null without a valid Member session.
+var backOfficeUser = account.BackOfficeUser; // Null without a valid backoffice session.
+
+var memberKey = member?.Key;
+var memberEmail = member?.Email;
+var memberGroups = member?.GroupNames;
+var userKey = backOfficeUser?.Key;
+var userEmail = backOfficeUser?.Email;
+var userGroupNames = backOfficeUser?.GroupNames;
+var userGroupAliases = backOfficeUser?.GroupAliases;
+var canEdit = backOfficeUser?.CanEditPage == true; // Same answer as account.CanEditPage.
+var canPublish = backOfficeUser?.CanPublishPage == true;
+var canDelete = backOfficeUser?.CanDeletePage == true;
+```
+
+Both account objects also expose `Name` and `Sid`. For compatibility, the top-level `Key`, `Name`, `Email`, `Sid` and `Groups` use the Member when both are present, otherwise the only signed-in account. This also keeps `:USER_` bind variables, ownership and audit fields on the Member while both sessions are active. `MemberGroupNames` always describes the Member, and `UserGroupNames` and `UserGroupAliases` always describe the backoffice User; their groups are never merged. Each account's approval, lockout status and groups are read afresh on every operation. A disabled or locked account contributes no identity, groups or permissions.
 
 The resolver accepts approved, unlocked Members and backoffice Users, regardless of group membership. `null` means there is no valid authenticated account. Resolving an account grants no business permission, and membership of the Administrators User Group grants no automatic application access.
 
 The resolver reads the current account and groups rather than relying only on old cookie claims. An external login's provider key is available as `Sid` for compatibility; it is not necessarily a Windows SID on every site. `Groups` contains display names; `UserGroupAliases` contains current backoffice User Group aliases. Member Groups and User Groups are separate, even when their names match.
 
-Umbraco's Public Access restrictions still protect Member pages. AppBlocks does not let a backoffice User bypass those restrictions. On pages without Member Public Access restrictions, either account type can reach your resource, where your code must enforce the application's rules. If both account types are signed in, the Member session takes precedence.
+`account.CanEditPage`, `account.CanPublishPage` and `account.CanDeletePage` check the signed-in backoffice User's permissions on the page that called your C# code, including when a Member is also signed in. Pass the whole `FormExecutionContext` to `ResolveAsync` as above: its `PageKey` identifies the hosting page, including for API requests. AppBlocks asks Umbraco for each permission independently, including group permissions and content start nodes:
+
+| Property | Umbraco permission |
+| --- | --- |
+| `CanEditPage` | Update |
+| `CanPublishPage` | Publish |
+| `CanDeletePage` | Delete |
+
+All three are false without a valid backoffice account, when no page is supplied (the older `ResolveAsync(context.Member, ...)` overload), or when the page does not exist. A denied permission makes its corresponding property false; permission to edit does not imply permission to publish or delete. These are permission checks, not guarantees that a particular content change will pass validation. The same properties are available on `account.BackOfficeUser`. In an `IDataSourcePolicy`, use `request.User.CanEditPage`, `request.User.CanPublishPage` or `request.User.CanDeletePage`; AppBlocks has already resolved them for `request.Context.PageKey`. The results grant no application permission unless your rule uses them:
+
+```csharp
+var account = await userResolver.ResolveAsync(context, cancellationToken);
+if (account is not { CanEditPage: true })
+    return FormResult.Denied();
+```
+
+Umbraco's Public Access restrictions still protect Member pages. A backoffice User visiting without a Member session passes them only on a page they may edit, which is Umbraco's Update permission on it within their start nodes. When a Member session is present, its Public Access check still decides admission to the page; a refused Member is not replaced by a backoffice session. Once admitted, both signed-in accounts are available to your business rules. On pages without Member Public Access restrictions, either account type can reach your resource, where your code must enforce the application's rules.
 
 ## Group membership
 
@@ -86,6 +125,11 @@ Choose the rule your application needs:
 | --- | --- |
 | Any Umbraco Member | `account.IsMember` |
 | Any backoffice User | `account.IsBackOfficeUser` |
+| Both accounts signed in | `account.IsMember && account.IsBackOfficeUser` |
+| A Member with no backoffice account | `account.IsMember && !account.IsBackOfficeUser` |
+| A backoffice User who can edit the calling page | `account.CanEditPage` |
+| A backoffice User who can publish the calling page | `account.CanPublishPage` |
+| A backoffice User who can delete the calling page | `account.CanDeletePage` |
 | A specific Member Group | `account.IsInMemberGroup("Order editors")` |
 | The Administrators User Group | `account.IsInUserGroup("admin")` |
 | Another backoffice User Group | `account.IsInUserGroup("editor")` |
@@ -150,6 +194,7 @@ These are starting points, and they combine. Check the rule on every operation i
 | Open to anyone, with no account | Leave the page unprotected and write a class with its own checks. See Public contact form |
 | Members only | Protect the page with Public Access, or check `account.IsMember` |
 | Backoffice Users only | Leave the page unprotected and check `account.IsBackOfficeUser` |
+| Editors of the calling page only | Resolve with `context` and check `account.CanEditPage` |
 | Members and backoffice Users together | Leave the page unprotected and check each account type's groups |
 | Certain Member Groups | Read groups and Write groups, or `account.IsInMemberGroup(...)` |
 | Certain User Groups | `account.IsInUserGroup(...)`, in a resource or policy |
@@ -160,7 +205,7 @@ These are starting points, and they combine. Check the rule on every operation i
 | Each person sees only their own rows | Row restriction, or filter in your resource |
 | Rules that depend on the record | `IDataSourcePolicy` or your resource. See Ownership and record status |
 
-A person signed in as both a Member and a backoffice User counts as the Member, so a backoffice-only form refuses them until they sign out of the Member account.
+A person signed in as both a Member and a backoffice User can satisfy either account-type check or a rule requiring both. Use the account-specific properties when a rule depends on one identity's key, email or groups. Reports embedded in the backoffice itself continue to use only the backoffice account, including for saved-view ownership.
 
 ### Single sign-on
 
@@ -229,8 +274,13 @@ public interface IExternalGroups
 public sealed class ResolverWithExternalGroups(UmbracoDataSourceUsers umbraco, IExternalGroups external) : IDataSourceUserResolver
 {
     public async Task<DataSourceUser?> ResolveAsync(ClaimsPrincipal principal, CancellationToken ct)
+        => await AddGroupsAsync(await umbraco.ResolveAsync(principal, ct), ct);
+
+    public async Task<DataSourceUser?> ResolveAsync(AppBlocks.Forms.FormExecutionContext context, CancellationToken ct)
+        => await AddGroupsAsync(await umbraco.ResolveAsync(context, ct), ct);
+
+    private async Task<DataSourceUser?> AddGroupsAsync(DataSourceUser? account, CancellationToken ct)
     {
-        var account = await umbraco.ResolveAsync(principal, ct);
         if (account is null) return null;
         return account with { Groups = [.. account.Groups, .. await external.GetAsync(account, ct)] };
     }
@@ -238,6 +288,8 @@ public sealed class ResolverWithExternalGroups(UmbracoDataSourceUsers umbraco, I
 ```
 
 Register `builder.Services.AddScoped<UmbracoDataSourceUsers>()` and `builder.Services.AddScoped<IDataSourceUserResolver, ResolverWithExternalGroups>()`, with your `IExternalGroups` implementation. The resolver runs on every operation, so cache a slow lookup briefly. Public Access still uses the account's real Member Groups, and `IsInUserGroup` still uses `UserGroupAliases`, which this example does not change.
+
+Forward both resolver overloads as shown to preserve `CanEditPage`, `CanPublishPage` and `CanDeletePage` for the calling page. Existing custom resolvers that implement only the principal overload continue to work, but do not calculate page permissions.
 
 ## User Group selections on a Member
 
@@ -363,7 +415,7 @@ public sealed class MemberUserGroupSelections(
 Register this class with `builder.Services.AddScoped<MemberUserGroupSelections>()` in your application's startup or composer, then inject it into your resource. This example application accepts either a backoffice User in the `orderApprovers` User Group or a Member whose custom property selects that same group:
 
 ```csharp
-var account = await userResolver.ResolveAsync(context.Member, cancellationToken);
+var account = await userResolver.ResolveAsync(context, cancellationToken);
 if (account is null) return FormResult.Denied();
 
 var selectedGroups = await memberUserGroupSelections.GetAsync(context.Member, cancellationToken);

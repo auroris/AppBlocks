@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using AppBlocks.Authentication;
 using InteractiveReport.AspNetCore;
 using Microsoft.AspNetCore.Authorization;
 using Umbraco.Cms.Core;
@@ -34,11 +35,8 @@ public sealed class RecentPagesReport(IUserService users, IEntityService entitie
 
     public async Task<IUser?> GetUserAsync(ClaimsPrincipal principal)
     {
-        if (principal.Identity?.IsAuthenticated != true
-            || principal.Identity.AuthenticationType is not (Constants.Security.BackOfficeAuthenticationType
-                or Constants.Security.BackOfficeExposedAuthenticationType)) return null;
-
-        var id = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (ApplicationAccessPolicy.BackOfficeIdentity(principal) is not { } identity) return null;
+        var id = identity.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         var user = Guid.TryParse(id, out var key) ? await users.GetAsync(key)
             : int.TryParse(id, out var legacyId) ? users.GetUserById(legacyId) : null;
         return user is { IsApproved: true, IsLockedOut: false }

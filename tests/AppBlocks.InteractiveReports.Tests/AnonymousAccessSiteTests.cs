@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using AppBlocks.Blocks;
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
 using Microsoft.Extensions.DependencyInjection;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Models.Membership;
@@ -33,6 +35,7 @@ public sealed class AnonymousAccessSiteTests
         await Files_read_with_the_record_and_write_only_when_the_class_allows(site);
         await Tabular_and_schedule_blocks_ask_for_a_sign_in(site);
         await An_account_that_presented_itself_and_failed_is_refused_not_taken_for_anonymous(site);
+        await Both_sessions_reach_forms_and_reports_as_distinct_accounts(site);
         await A_report_block_saved_without_a_page_size_uses_the_reports_default(site);
     }
 
@@ -467,6 +470,47 @@ public sealed class AnonymousAccessSiteTests
         Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(html, "data-app-report").Count);
         Assert.DoesNotContain("initial-page-size", html);
         Assert.Contains("initial-page-size=\"10\"", await visitor.GetStringAsync("/reports/"));
+    }
+
+    private static async Task Both_sessions_reach_forms_and_reports_as_distinct_accounts(PublicSite site)
+    {
+        var member = await CreateMemberAsync(site, "combined");
+        var userKey = await CreateUserAsync(site, "combined");
+        using var client = await site.SignedIn("member", member.Id.ToString(), member.Username);
+        await site.SignInAsync(client, "backoffice", userKey.ToString(), "combined-editor");
+        await Load(client, $"/api/forms/{PublicSite.ContactPage}/{PublicSite.ContactForm}");
+        var principal = site.Forms.Initialized.Last();
+        Assert.Equal(2, principal.Identities.Count());
+        Assert.Equal(Microsoft.AspNetCore.Identity.IdentityConstants.ApplicationScheme, principal.Identity!.AuthenticationType);
+        await site.WithServices(async services => {
+            var account = await services.GetRequiredService<IDataSourceUserResolver>().ResolveAsync(
+                new FormExecutionContext(principal, PublicSite.ContactPage, PublicSite.ContactForm, "1"), default);
+            Check(account!);
+        });
+        var report = "/api/reports/" + PublicSite.ReportName(PublicSite.ReportPage, PublicSite.PublicReport);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(report + "/default")).StatusCode);
+        Check(site.Switch.LastDataAccount!);
+
+        await site.WithServices(async services => {
+            var users = services.GetRequiredService<IUserService>();
+            var user = (await users.GetAsync(userKey))!; user.IsApproved = false; users.Save(user);
+        });
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(report + "/default")).StatusCode);
+        Assert.True(site.Switch.LastDataAccount!.IsMember);
+        Assert.False(site.Switch.LastDataAccount.IsBackOfficeUser);
+        Assert.False(site.Switch.LastDataAccount.CanEditPage);
+        Assert.Null(site.Switch.LastDataAccount.BackOfficeUser);
+
+        void Check(DataSourceUser account)
+        {
+            Assert.True(account.IsMember && account.IsBackOfficeUser);
+            Assert.Equal(member.Id.ToString(), account.Key);
+            Assert.Equal(member.Username, account.Member!.Name);
+            Assert.Equal("backoffice:" + userKey, account.BackOfficeUser!.Key);
+            Assert.NotEqual(account.Member.Email, account.BackOfficeUser.Email);
+            Assert.True(account.IsInUserGroup("editor"));
+            Assert.True(account.CanEditPage && account.BackOfficeUser.CanEditPage);
+        }
     }
 
     private static async Task<IMember> CreateMemberAsync(PublicSite site, string name)

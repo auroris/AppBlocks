@@ -324,9 +324,14 @@ internal sealed class PublicSite : IAsyncDisposable
     public async Task<HttpClient> SignedIn(string scheme, string id, string name)
     {
         var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = Address };
+        await SignInAsync(client, scheme, id, name);
+        return client;
+    }
+
+    public async Task SignInAsync(HttpClient client, string scheme, string id, string name)
+    {
         using var login = await client.GetAsync($"{TestLogin}/{id}?scheme={scheme}&name={Uri.EscapeDataString(name)}");
         login.EnsureSuccessStatusCode();
-        return client;
     }
 
     private const string TestLogin = "/__tests/login";
@@ -382,6 +387,7 @@ internal sealed class RecordedForms
 /// <summary>What a test turns on to see a developer's rule refuse someone anonymous.</summary>
 internal sealed class Switches
 {
+    public DataSourceUser? LastDataAccount;
     public volatile bool ReportPolicyRefuses, DataPolicyRefuses;
 }
 
@@ -463,7 +469,11 @@ internal sealed class SwitchedReportPolicy(DefaultReportAccessPolicy inner, Swit
 
 internal sealed class SwitchedPolicy(Switches switches) : IDataSourcePolicy
 {
-    public ValueTask<bool> IsAllowedAsync(DataSourceRequest request, CancellationToken ct) => ValueTask.FromResult(!(switches.DataPolicyRefuses && request.User.IsAnonymous));
+    public ValueTask<bool> IsAllowedAsync(DataSourceRequest request, CancellationToken ct)
+    {
+        switches.LastDataAccount = request.User;
+        return ValueTask.FromResult(!(switches.DataPolicyRefuses && request.User.IsAnonymous));
+    }
 }
 
 /// <summary>Answers Umbraco's route to a page with AppBlocks' view components: the site's own layout would wrap this. Which one is the query's choice.</summary>

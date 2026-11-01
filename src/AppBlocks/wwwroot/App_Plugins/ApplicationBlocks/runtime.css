@@ -236,11 +236,32 @@
 .app-schedule { position: relative; margin: .5rem 0; min-width: 0; }
 .app-schedule-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; margin: 0 0 .75rem; }
 .app-schedule-window { margin: 0; font-weight: 600; }
+.app-schedule-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .app-schedule-nav { display: inline-flex; gap: 0; border-radius: var(--app-radius-sm); box-shadow: 0 0 0 1px var(--app-border); overflow: hidden; }
 .app-schedule-nav a { border: 0; border-radius: 0; background: var(--app-surface); color: var(--app-text); }
 .app-schedule-nav a + a { border-left: 1px solid var(--app-border); }
 .app-schedule-nav a:hover { background: var(--app-surface-2); color: var(--app-accent); }
 .app-schedule-nav a:focus-visible { position: relative; z-index: 1; }
+/* Jump to: a month or a quarter, as links in a disclosure, so it works without script. */
+.app-schedule-jump { position: relative; }
+.app-schedule-jump summary {
+    display: inline-block; padding: .35rem .8rem; border-radius: var(--app-radius-sm); box-shadow: 0 0 0 1px var(--app-border); background: var(--app-surface);
+    color: var(--app-text); font-size: .875rem; font-weight: 500; line-height: 1.25; cursor: pointer; list-style: none; user-select: none;
+}
+.app-schedule-jump summary::-webkit-details-marker { display: none; }
+.app-schedule-jump summary::after { content: "\25BE"; margin-left: .4rem; color: var(--app-muted); }
+.app-schedule-jump summary:hover { background: var(--app-surface-2); color: var(--app-accent); }
+.app-schedule-jump summary:focus-visible { outline: 2px solid var(--app-focus); outline-offset: 2px; }
+.app-schedule-jump__panel {
+    position: absolute; z-index: 20; top: calc(100% + .35rem); right: 0; display: flex; gap: 1rem; padding: .6rem .85rem; border: 1px solid var(--app-border);
+    border-radius: var(--app-radius-sm); background: var(--app-surface); color: var(--app-text); box-shadow: var(--app-shadow-lg); white-space: nowrap;
+}
+.app-schedule-jump__heading { margin: 0 0 .25rem; font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--app-muted); }
+.app-schedule-jump__list ul { list-style: none; margin: 0; padding: 0; columns: 2; column-gap: .75rem; }
+.app-schedule-jump__list li { break-inside: avoid; }
+.app-schedule-jump__list a { display: block; padding: .15rem .4rem; border-radius: .2rem; color: var(--app-text); font-size: .875rem; text-decoration: none; }
+.app-schedule-jump__list a:hover { background: var(--app-surface-2); color: var(--app-accent); }
+.app-schedule-jump__list a[aria-current] { background: var(--app-accent-soft); color: var(--app-accent); font-weight: 600; }
 .app-schedule-scroll { overflow: auto; max-height: 75vh; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-surface); }
 .app-schedule-table { min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: .875rem; line-height: 1.25; }
 .app-schedule-caption, .app-schedule-bar__details { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -257,7 +278,13 @@
 .app-schedule-corner, .app-schedule-row-label, .app-schedule-group-title th { position: sticky; left: 0; z-index: 2; text-align: left; background: var(--app-surface); }
 .app-schedule-corner { z-index: 4; width: 1%; background: var(--app-surface-2); }
 .app-schedule-label { display: block; width: 12rem; padding: 0 .75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A row's own colours, from its source's color and textColor columns, go on its label; its bars take them too unless they have their own. */
 .app-schedule-row-label { font-weight: 500; vertical-align: top; line-height: 1.75rem; box-shadow: 1px 0 0 var(--app-border); }
+/* Outranks the th rule above, which would keep the surface colour. */
+.app-schedule-table th.app-schedule-row-label { background: var(--ah-row, var(--app-surface)); color: var(--ah-row-text, inherit); }
+.app-schedule-label--button { appearance: none; border: 0; margin: 0; background: none; color: inherit; font: inherit; line-height: inherit; text-align: left; cursor: pointer; }
+.app-schedule-label--button:hover { text-decoration: underline; }
+.app-schedule-label--button:focus-visible { outline: 2px solid var(--app-focus); outline-offset: -2px; }
 .app-schedule-group-title th { background: var(--app-surface-3); line-height: 1.6rem; font-size: .8125rem; letter-spacing: .02em; color: var(--app-muted); }
 .app-schedule-cell { position: relative; height: calc(var(--ah-lanes, 1) * 1.75rem); vertical-align: top; background: var(--app-surface); }
 .app-schedule-col--weekend { background: var(--app-surface-2); }
@@ -266,10 +293,15 @@
 .app-schedule-table td.app-schedule-col--today { background: color-mix(in srgb, var(--app-accent-soft) 60%, var(--app-surface)); }
 .app-schedule-table thead .app-schedule-col--today { color: var(--app-accent); background: var(--app-accent-soft); }
 .app-schedule-table thead .app-schedule-col--today .app-schedule-weekday { color: var(--app-accent); }
+/*
+    A bar's colour: its own (--ah-bar, from a color column), else its kind's (--ah-kind, from the kind class), else the
+    plain colour. A marked column shades itself with the same chain, so a marker and its shade always agree.
+*/
 .app-schedule-bar {
     position: absolute; z-index: 1; top: calc(var(--ah-lane, 0) * 1.75rem + .2rem); left: .15rem;
-    width: calc(var(--ah-span, 1) * 100% + (var(--ah-span, 1) - 1) * 1px - .3rem); height: 1.35rem; box-sizing: border-box; padding: 0 .5rem;
-    border-radius: .3rem; background: var(--ah-schedule-kind-0, #4b5563); color: #fff; font-size: .8125rem; font-weight: 500; line-height: 1.35rem;
+    width: calc(var(--ah-span, 1) * 100% + (var(--ah-span, 1) - 1) * 1px - .3rem); height: 1.35rem; box-sizing: border-box; margin: 0; padding: 0 .5rem;
+    border: 0; border-radius: .3rem; background: var(--ah-bar, var(--ah-kind, var(--ah-schedule-kind-0, #4b5563))); color: var(--ah-bar-text, #fff);
+    font: inherit; font-size: .8125rem; font-weight: 500; line-height: 1.35rem; text-align: left; appearance: none;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: none; cursor: pointer;
     box-shadow: 0 1px 2px rgba(16, 24, 40, .2); transition: filter var(--app-transition), box-shadow var(--app-transition);
 }
@@ -279,23 +311,58 @@
 .app-schedule-bar--open::after { content: "\203A"; position: absolute; right: .35rem; top: 0; font-weight: 700; }
 .app-schedule-bar--clipped-start { border-radius: 0 .3rem .3rem 0; border-left: 3px dotted rgba(255, 255, 255, .85); }
 .app-schedule-bar--clipped-end { border-radius: .3rem 0 0 .3rem; border-right: 3px dotted rgba(255, 255, 255, .85); }
+/*
+    A vertical row is a band across the top: each lane is as tall as --ah-schedule-marker-height, and its bars are
+    markers written top to bottom, centred in the columns they span.
+*/
+.app-schedule-row--vertical .app-schedule-cell { height: calc(var(--ah-lanes, 1) * var(--ah-schedule-marker-height, 7rem)); }
+.app-schedule-row--vertical .app-schedule-row-label { line-height: 1.4; padding: .5rem 0; }
+.app-schedule-row--vertical .app-schedule-label { white-space: normal; }
+.app-schedule-bar--vertical {
+    top: calc(var(--ah-lane, 0) * var(--ah-schedule-marker-height, 7rem) + .15rem); height: calc(var(--ah-schedule-marker-height, 7rem) - .3rem);
+    display: flex; align-items: center; justify-content: center; padding: .4rem 0; writing-mode: vertical-lr; text-orientation: mixed; line-height: 1.2;
+}
+.app-schedule-bar--vertical .app-schedule-bar__label { max-height: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-schedule-bar--vertical.app-schedule-bar--clipped-start { border-left: 0; border-top: 3px dotted rgba(255, 255, 255, .85); border-radius: 0 0 .3rem .3rem; }
+.app-schedule-bar--vertical.app-schedule-bar--clipped-end { border-right: 0; border-bottom: 3px dotted rgba(255, 255, 255, .85); border-radius: .3rem .3rem 0 0; }
 .app-schedule-legend { display: flex; flex-wrap: wrap; gap: .4rem 1.25rem; list-style: none; margin: .75rem 0 0; padding: 0; font-size: .875rem; color: var(--app-muted); }
 .app-schedule-legend li { display: inline-flex; align-items: center; }
-.app-schedule-swatch { display: inline-block; width: .85rem; height: .85rem; margin-right: .4rem; border-radius: .2rem; background: var(--ah-schedule-kind-0, #4b5563); }
-/* The kind colors come last, so a bar and its legend swatch share them. */
-.app-schedule-kind-1 { background-color: var(--ah-schedule-kind-1, #2a5d8f); }
-.app-schedule-kind-2 { background-color: var(--ah-schedule-kind-2, #1e7b4f); }
-.app-schedule-kind-3 { background-color: var(--ah-schedule-kind-3, #b35c00); }
-.app-schedule-kind-4 { background-color: var(--ah-schedule-kind-4, #6a3d9a); }
-.app-schedule-kind-5 { background-color: var(--ah-schedule-kind-5, #9c2f2f); }
-.app-schedule-kind-6 { background-color: var(--ah-schedule-kind-6, #0d7a85); }
-.app-schedule-kind-7 { background-color: var(--ah-schedule-kind-7, #5d5d5d); }
-.app-schedule-kind-8 { background-color: var(--ah-schedule-kind-8, #8a6d00); }
+.app-schedule-swatch { display: inline-block; width: .85rem; height: .85rem; margin-right: .4rem; border-radius: .2rem; background: var(--ah-kind, var(--ah-schedule-kind-0, #4b5563)); }
+/* The kind colours come last, so a bar, its legend swatch and the columns its marker shades share them. */
+.app-schedule-kind-1 { --ah-kind: var(--ah-schedule-kind-1, #2a5d8f); }
+.app-schedule-kind-2 { --ah-kind: var(--ah-schedule-kind-2, #1e7b4f); }
+.app-schedule-kind-3 { --ah-kind: var(--ah-schedule-kind-3, #b35c00); }
+.app-schedule-kind-4 { --ah-kind: var(--ah-schedule-kind-4, #6a3d9a); }
+.app-schedule-kind-5 { --ah-kind: var(--ah-schedule-kind-5, #9c2f2f); }
+.app-schedule-kind-6 { --ah-kind: var(--ah-schedule-kind-6, #0d7a85); }
+.app-schedule-kind-7 { --ah-kind: var(--ah-schedule-kind-7, #5d5d5d); }
+.app-schedule-kind-8 { --ah-kind: var(--ah-schedule-kind-8, #8a6d00); }
+/* A marked column, under a marker: shaded with the marker's colour through every row, with today's edge still showing. */
+.app-schedule-table td.app-schedule-col--marked { background: color-mix(in srgb, var(--ah-mark, var(--ah-kind, var(--ah-schedule-kind-0, #4b5563))) 16%, var(--app-surface)); }
+.app-schedule-table thead th.app-schedule-col--marked { background: color-mix(in srgb, var(--ah-mark, var(--ah-kind, var(--ah-schedule-kind-0, #4b5563))) 28%, var(--app-surface-2)); }
 .app-schedule-tooltip {
     position: absolute; z-index: 10; max-width: 20rem; padding: .5rem .75rem; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm);
     background: var(--app-surface); color: var(--app-text); box-shadow: var(--app-shadow-lg); font-size: .875rem; line-height: 1.4; white-space: normal; pointer-events: none;
 }
 .app-schedule-tooltip[hidden] { display: none; }
+/* A bar's description: the browser's own popover, centred until the runtime places it under its bar. */
+.app-schedule-popover {
+    width: min(22rem, calc(100vw - 2rem)); margin: auto; padding: .85rem 2.25rem .85rem 1rem; border: 1px solid var(--app-border); border-radius: var(--app-radius);
+    background: var(--app-surface); color: var(--app-text); box-shadow: var(--app-shadow-lg); font-size: .9375rem; line-height: 1.45; white-space: normal; text-align: left; font-weight: 400;
+}
+.app-schedule-popover::backdrop { background: transparent; }
+.app-schedule-popover p { margin: 0 0 .5rem; }
+.app-schedule-popover p:last-child { margin-bottom: 0; }
+.app-schedule-popover__title { font-weight: 600; font-size: 1rem; }
+.app-schedule-popover__when { color: var(--app-muted); font-size: .875rem; }
+.app-schedule-popover__text { white-space: pre-line; }
+.app-schedule-popover__link a { color: var(--app-accent); }
+.app-schedule-popover__close {
+    position: absolute; top: .35rem; right: .35rem; width: 1.75rem; height: 1.75rem; margin: 0; padding: 0; border: 0; border-radius: 50%;
+    background: none; color: var(--app-muted); font: inherit; font-size: 1.25rem; line-height: 1; cursor: pointer; appearance: none;
+}
+.app-schedule-popover__close:hover { background: var(--app-surface-2); color: var(--app-text); }
+.app-schedule-popover__close:focus-visible { outline: 2px solid var(--app-focus); outline-offset: 1px; }
 .app-schedule-empty { margin: .75rem 0 0; color: var(--app-muted); font-style: italic; }
 
 /* ---------- Anti-spam, reports ---------- */
@@ -348,13 +415,16 @@
     .app-attachment-actions { margin-left: 0; flex-basis: 100%; }
     .app-schedule-toolbar { flex-direction: column; align-items: stretch; }
     .app-schedule-nav a { flex: 1; }
+    .app-schedule-controls { flex-direction: column; align-items: stretch; }
+    .app-schedule-jump summary { display: block; text-align: center; }
+    .app-schedule-jump__panel { left: 0; right: auto; flex-direction: column; white-space: normal; }
     .appblocks-native .ah-grid__item, .appblocks-native .ah-area { grid-column: 1 / -1; }
     .appblocks-native .ah-region__body { padding: 1rem; }
 }
 @media print {
     .app-form { border: 0; box-shadow: none; padding: 0; }
     .app-form-actions, .app-attachments-upload, .app-attachment-actions, .app-tabular-toolbar, .app-tabular-actions, .app-tabular-actions-head,
-    .app-schedule-nav, .app-report-actions, .app-schedule-tooltip { display: none !important; }
+    .app-schedule-nav, .app-schedule-jump, .app-report-actions, .app-schedule-tooltip, .app-schedule-popover { display: none !important; }
     .app-schedule-scroll { max-height: none; overflow: visible; }
 }
 @media (prefers-reduced-motion: reduce) {

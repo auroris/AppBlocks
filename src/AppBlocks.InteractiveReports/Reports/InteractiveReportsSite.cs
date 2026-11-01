@@ -151,25 +151,24 @@ public static class InteractiveReportsSite
             branch => branch.Use(async (context, next) =>
             {
                 var backOffice = BackOfficeReportPaths.Any(path => context.Request.Path.StartsWithSegments(path));
-                if (backOffice || context.User.Identity?.IsAuthenticated != true)
+                // Website reports carry both sessions, Member first. Backoffice reports retain their
+                // User-only identity so a Member sign-in never changes their saved-view ownership.
+                var identities = new List<System.Security.Claims.ClaimsIdentity>();
+                if (backOffice) context.User = new System.Security.Claims.ClaimsPrincipal();
+                var schemes = backOffice ? ReportAuthenticationSchemes.Skip(1) : ReportAuthenticationSchemes;
+                foreach (var scheme in schemes)
                 {
-                    // A website member cookie must not decide access or saved-view ownership
-                    // for a report embedded in the backoffice.
-                    if (backOffice) context.User = new System.Security.Claims.ClaimsPrincipal();
-                    var schemes = backOffice ? ReportAuthenticationSchemes.Skip(1) : ReportAuthenticationSchemes;
-                    foreach (var scheme in schemes)
+                    var result = await context.AuthenticateAsync(scheme);
+                    if (result.Succeeded && result.Principal is { Identity.IsAuthenticated: true } principal)
                     {
-                        var result = await context.AuthenticateAsync(scheme);
-                        if (result.Succeeded && result.Principal is not null)
-                        {
-                            context.User = result.Principal;
-                            context.RequestServices.GetRequiredService<ILoggerFactory>()
-                                .CreateLogger(typeof(InteractiveReportsSite))
-                                .LogDebug("Report request authenticated with {Scheme}.", scheme);
-                            break;
-                        }
+                        identities.AddRange(principal.Identities);
+                        context.RequestServices.GetRequiredService<ILoggerFactory>()
+                            .CreateLogger(typeof(InteractiveReportsSite))
+                            .LogDebug("Report request authenticated with {Scheme}.", scheme);
+                        if (scheme != IdentityConstants.ApplicationScheme) break;
                     }
                 }
+                if (identities.Count > 0) context.User = new System.Security.Claims.ClaimsPrincipal(identities);
                 await next(context);
             }));
         return app;

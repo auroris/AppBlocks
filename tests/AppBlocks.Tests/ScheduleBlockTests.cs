@@ -75,7 +75,7 @@ public sealed class ScheduleBlockTests
         Assert.Equal(AppBlockSchema.ScheduleAlias, type.Attribute("Alias")!.Value);
         var aliases = type.Element("GenericProperties")!.Elements("GenericProperty").Select(p => p.Element("Alias")!.Value).ToArray();
         Assert.Equal(new[] { ScheduleSettings.HeadingAlias, ScheduleSettings.HelpAlias, ScheduleSettings.RowsSourceAlias, ScheduleSettings.BarsSourceAlias,
-            ScheduleSettings.DaysBeforeAlias, ScheduleSettings.DaysAfterAlias, ScheduleSettings.ColumnsAlias, ScheduleSettings.LinkTemplateAlias }, aliases);
+            ScheduleSettings.DaysBeforeAlias, ScheduleSettings.DaysAfterAlias, ScheduleSettings.ColumnsAlias, ScheduleSettings.LinkTemplateAlias, ScheduleSettings.HideEmptyRowsAlias }, aliases);
     }
 
     private static ServiceProvider Services()

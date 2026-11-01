@@ -150,6 +150,91 @@ public sealed class ScheduleLayoutTests
     public void A_link_template_takes_the_bars_columns_encoded(string template, string expected)
         => Assert.Equal(expected, ScheduleLayout.Link(template, new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["KEY"] = 4L, ["ROW"] = "Acme Corp", ["LABEL"] = "Order 4" }));
 
+    [Fact]
+    public void Vertical_rows_become_marker_bands_that_shade_their_columns_and_colours_pass_from_rows_to_bars()
+    {
+        // The default window: Tuesday 27 October to Monday 2 November, seven columns.
+        var window = ScheduleWindow.Resolve(Settings, null, Now);
+        var rows = Result([("KEY", "key"), ("LABEL", "label"), ("GROUP", "group"), ("ORIENTATION", "orientation"), ("COLOR", "color"), ("TEXTCOLOR", "textColor"), ("DESCRIPTION", "description")],
+            Row(("KEY", "holidays"), ("LABEL", "Holidays"), ("GROUP", null), ("ORIENTATION", 1L), ("COLOR", "#B00020"), ("TEXTCOLOR", "#FFF"), ("DESCRIPTION", "Statutory holidays")),
+            Row(("KEY", "101"), ("LABEL", "Room 101"), ("GROUP", "Main"), ("ORIENTATION", 0L), ("COLOR", "navy"), ("TEXTCOLOR", "url(evil)"), ("DESCRIPTION", "")),
+            Row(("KEY", "102"), ("LABEL", "Room 102"), ("GROUP", "Main"), ("ORIENTATION", "vertical"), ("COLOR", "red; x"), ("TEXTCOLOR", null), ("DESCRIPTION", null)));
+        var bars = Result([("KEY", "key"), ("ROW", "row"), ("START", "start"), ("END", "end"), ("LABEL", "label"), ("KIND", "kind"), ("LINK", "link"), ("COLOR", "color"), ("DESCRIPTION", "description")],
+            Row(("KEY", 1L), ("ROW", "holidays"), ("START", "2026-10-28"), ("END", null), ("LABEL", "Founders' Day"), ("KIND", "Holiday"), ("LINK", null), ("COLOR", null), ("DESCRIPTION", "Offices closed.")),
+            Row(("KEY", 2L), ("ROW", "holidays"), ("START", "2026-10-31"), ("END", "2026-11-01"), ("LABEL", "Long weekend"), ("KIND", "Holiday"), ("LINK", "/x"), ("COLOR", "#123456"), ("DESCRIPTION", null)),
+            Row(("KEY", 3L), ("ROW", "holidays"), ("START", "2026-10-28"), ("END", "2026-10-28"), ("LABEL", "Second"), ("KIND", ""), ("LINK", null), ("COLOR", null), ("DESCRIPTION", null)),
+            Row(("KEY", 4L), ("ROW", "101"), ("START", "2026-10-27"), ("END", "2026-10-27"), ("LABEL", "Stay"), ("KIND", "Stay"), ("LINK", null), ("COLOR", "#00FF00"), ("DESCRIPTION", "Two nights")),
+            Row(("KEY", 5L), ("ROW", "101"), ("START", "2026-10-29"), ("END", null), ("LABEL", "Repair"), ("KIND", "Repair"), ("LINK", null), ("COLOR", null), ("DESCRIPTION", null)));
+        var layout = ScheduleLayout.Build(window, rows, bars);
+
+        // Vertical rows sit apart from the groups, in source order, even one with no bar in the window.
+        Assert.Equal(new[] { "Holidays", "Room 102" }, layout.Markers.Select(m => m.Label));
+        Assert.Equal((1, 5, 0), (layout.RowCount, layout.BarCount, layout.HiddenRowCount));
+        Assert.Equal("Main", Assert.Single(layout.Groups).Title);
+        Assert.False(layout.IsEmpty);
+        var holidays = layout.Markers[0];
+        Assert.True(holidays.Vertical);
+        Assert.Equal(("#b00020", "#fff", "Statutory holidays", 2), (holidays.Color, holidays.TextColor, holidays.Description, holidays.Lanes));
+        // A marker without an end covers its start column only, and takes its row's colours and keeps its description.
+        var founders = holidays.Bars.Single(b => b.Label == "Founders' Day");
+        Assert.Equal((1, 1, 0, false), (founders.Start, founders.Span, founders.Lane, founders.OpenEnded));
+        Assert.Equal(("#b00020", "#fff", "Offices closed."), (founders.Color, founders.TextColor, founders.Description));
+        Assert.Equal(1, holidays.Bars.Single(b => b.Label == "Second").Lane);
+        var weekend = holidays.Bars.Single(b => b.Label == "Long weekend");
+        Assert.Equal((4, 2, "#123456", "#fff"), (weekend.Start, weekend.Span, weekend.Color, weekend.TextColor));
+        // A column remembers the first marker over it, so the view can shade it; other columns stay plain.
+        Assert.Equal("Founders' Day", layout.Columns[1].Marker?.Label);
+        Assert.Equal(new[] { "Long weekend", "Long weekend" }, layout.Columns.Skip(4).Take(2).Select(c => c.Marker?.Label));
+        Assert.All(new[] { 0, 2, 3, 6 }, index => Assert.Null(layout.Columns[index].Marker));
+        // Only a hex value or a colour name gets through; a bar's own colour wins over its row's.
+        var room = Assert.Single(layout.Rows);
+        Assert.Equal(("navy", null, null), (room.Color, room.TextColor, room.Description));
+        Assert.Null(layout.Markers[1].Color);
+        Assert.Equal(("#00ff00", "Two nights"), (room.Bars[0].Color, room.Bars[0].Description));
+        var repair = room.Bars[1];
+        Assert.Equal(("navy", null, true), (repair.Color, repair.Description, repair.OpenEnded));
+
+        // Hiding empty rows drops Room 102; with no bars at all, nothing is left and the count says why.
+        var busy = ScheduleLayout.Build(window, rows, bars, hideEmptyRows: true);
+        Assert.Equal("Holidays", Assert.Single(busy.Markers).Label);
+        Assert.Equal((1, 1), (busy.RowCount, busy.HiddenRowCount));
+        var quiet = ScheduleLayout.Build(window, rows, Result([("KEY", "key"), ("ROW", "row"), ("START", "start")]), hideEmptyRows: true);
+        Assert.True(quiet.IsEmpty);
+        Assert.Equal(3, quiet.HiddenRowCount);
+        Assert.False(ScheduleLayout.Build(window, rows, Result([("KEY", "key"), ("ROW", "row"), ("START", "start")])).IsEmpty);
+    }
+
+    [Fact]
+    public void Months_and_quarters_to_jump_to_start_from_now_and_keep_to_the_scales_limit()
+    {
+        var window = ScheduleWindow.Resolve(Settings, null, Now);
+        var months = window.Months(3).ToArray();
+        Assert.Equal((new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31)), (months[0].From, months[0].To));
+        Assert.Equal((new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 31)), (months[2].From, months[2].To));
+        var quarters = window.Quarters(2).ToArray();
+        Assert.Equal((new DateOnly(2026, 10, 1), new DateOnly(2026, 12, 31), "Q4 2026"), (quarters[0].From, quarters[0].To, quarters[0].QuarterName));
+        Assert.Equal((new DateOnly(2027, 1, 1), new DateOnly(2027, 3, 31), "Q1 2027"), (quarters[1].From, quarters[1].To, quarters[1].QuarterName));
+        Assert.True(months[0].SameDates(ScheduleWindow.Resolve(Settings, Query(("from", "2026-10-01"), ("to", "2026-10-31")), Now)));
+        Assert.False(window.SameDates(months[0]));
+        // Hour columns cut a quarter to a month of days, as the address would be.
+        Assert.Equal(ScheduleSettings.MaxHourDays, (window with { Scale = ScheduleScale.Hours }).Quarters(1).Single().Days);
+    }
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("1", true)]
+    [InlineData(" Vertical ", true)]
+    [InlineData("yes", true)]
+    [InlineData("0", false)]
+    [InlineData("no", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void A_flag_reads_the_ways_a_toggle_or_a_column_writes_it(string? value, bool expected)
+    {
+        Assert.Equal(expected, ScheduleSettings.ParseFlag(value));
+        Assert.Equal(expected, ScheduleSettings.Read(alias => alias == ScheduleSettings.HideEmptyRowsAlias ? value : null).HideEmptyRows);
+    }
+
     private static Dictionary<string, string> Query(params (string Name, string Value)[] values)
         => values.ToDictionary(v => v.Name, v => v.Value, StringComparer.OrdinalIgnoreCase);
 

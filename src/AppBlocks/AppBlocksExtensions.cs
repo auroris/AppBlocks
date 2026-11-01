@@ -4,7 +4,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Umbraco.Cms.Core.Composing;
 using Umbraco.Cms.Core.Notifications;
+using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Web.Common.ApplicationBuilder;
+using Umbraco.Cms.Web.Website.Routing;
 using AppBlocks.Authentication;
 using AppBlocks.Attachments;
 using AppBlocks.Blocks;
@@ -65,6 +67,10 @@ public static class AppBlocksExtensions
         services.AddTransient<Microsoft.AspNetCore.Razor.TagHelpers.ITagHelperComponent, AppPageAssetsTagHelperComponent>();
         services.AddScoped<AppBindVariableResolver>();
         builder.AddNotificationAsyncHandler<RoutingRequestNotification, AppBlocks.Publishing.ProtectedPageCacheHeaders>();
+        // Umbraco's website routing registers the Public Access check; a backoffice User who may edit a page passes it.
+        if (services.Any(descriptor => descriptor.ServiceType == typeof(IPublicAccessRequestHandler)))
+            Decorate<IPublicAccessRequestHandler>(services, (provider, inner) =>
+                new AppBlocks.Publishing.EditorPublicAccessRequestHandler(inner, provider.GetRequiredService<IPublicAccessService>()));
         services.Configure<UmbracoPipelineOptions>(options => options.AddFilter(new UmbracoPipelineFilter("AppBlocks")
         {
             PostMapEndpoints = endpoints => endpoints.MapAppBlocks(),

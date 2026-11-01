@@ -25,12 +25,12 @@ public sealed class PaperReportRenderer(DataSourceCatalog sources, DataSourceQue
         var definition = PaperReportDefinition.Read(alias => page.GetProperty(alias)?.GetValue());
         var source = sources.DataSources.FirstOrDefault(s => s.Definition.Key == definition.DataSourceKey)
             ?? throw new DataSourceException("The paper report's data source is not published.");
-        var person = await users.ResolveAsync(http.User, ct) ?? throw new UnauthorizedAccessException();
+        var execution = new FormExecutionContext(http.User, page.Key, page.Key, page.UpdateDate.Ticks.ToString(CultureInfo.InvariantCulture));
+        var person = await users.ResolveAsync(execution, ct) ?? throw new UnauthorizedAccessException();
         var values = await variables.ResolveAsync(http.User, PaperReportDefinition.Query(http.Request.Query));
         var parameters = definition.BindParameters(values);
         var culture = definition.ResolveCulture(values);
-        var data = await queries.QueryAsync(source.Definition, new FormExecutionContext(http.User, page.Key, page.Key,
-            page.UpdateDate.Ticks.ToString(CultureInfo.InvariantCulture), Parameters: parameters), definition.MaximumRows, ct);
+        var data = await queries.QueryAsync(source.Definition, execution with { Parameters = parameters }, definition.MaximumRows, ct);
         var theme = await presentation.ResolveAsync(page, ct);
         var model = new PaperReportModel(page, data.Columns, data.Rows, parameters, person, culture, values.Now, theme.Theme);
         var template = page.TemplateId is { } templateId ? await files.GetAsync(templateId) : null;

@@ -12,7 +12,7 @@ public sealed record FormField(string Key, string Label, string Kind, bool Requi
 public sealed record FormCapabilities(bool Create = false, bool Update = false, bool Delete = false);
 public sealed record FormRecord(string? Key, string? Version, IReadOnlyDictionary<string, object?> Values, FormCapabilities Capabilities);
 /// <param name="Member">
-/// Who is calling, never null: an authenticated Umbraco Member or backoffice User, or on a page with no Public Access an
+/// Who is calling, never null: authenticated Umbraco Member and/or backoffice User identities, or on a page with no Public Access an
 /// unauthenticated principal for an anonymous visitor. Resources decide which of them, and which groups, may perform each operation;
 /// a resource with no check is public on an unprotected page.
 /// </param>

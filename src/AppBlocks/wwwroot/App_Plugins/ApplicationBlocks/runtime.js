@@ -636,7 +636,8 @@ function mountTabular(root) {
     } else load();
 }
 // A schedule: the server laid the whole table out, so the runtime only brings today's column into view and shows
-// a bar's details, which sit inside the bar for screen readers, as a tooltip on hover and focus.
+// a bar's details, which sit inside the bar for screen readers, as a tooltip on hover and focus, and places the
+// popover a bar with a description opens.
 let scheduleTooltips = 0;
 function mountSchedule(root) {
     const scroller = root.querySelector(".app-schedule-scroll");
@@ -670,6 +671,22 @@ function mountSchedule(root) {
     root.addEventListener("focusout", event => { if (active && barOf(event.target) === active) hide(); });
     root.addEventListener("keydown", event => { if (event.key === "Escape") hide(); });
     scroller?.addEventListener("scroll", hide, { passive: true });
+    // A bar with a description opens the browser's own popover. The browser centres it; here it goes under its bar,
+    // kept inside the viewport, and the tooltip steps aside for it.
+    root.querySelectorAll(".app-schedule-popover").forEach(popover => popover.addEventListener("toggle", event => {
+        if (event.newState !== "open") return;
+        hide();
+        const opener = root.querySelector(`[popovertarget="${CSS.escape(popover.id)}"]:not(.app-schedule-popover__close)`);
+        if (!opener) return;
+        const bounds = opener.getBoundingClientRect(), gap = 8;
+        popover.style.margin = "0";
+        popover.style.inset = "auto";
+        const left = Math.max(gap, Math.min(bounds.left, window.innerWidth - popover.offsetWidth - gap));
+        let top = bounds.bottom + 4;
+        if (top + popover.offsetHeight > window.innerHeight - gap) top = Math.max(gap, bounds.top - popover.offsetHeight - 4);
+        popover.style.left = `${left}px`;
+        popover.style.top = `${top}px`;
+    }));
 }
 // Attachments and tabular forms listen for their form's record, so they mount before the forms start loading.
 document.querySelectorAll("[data-app-attachments]").forEach(mountAttachments);

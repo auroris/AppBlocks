@@ -43,7 +43,7 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
 
     internal async Task<DataSourceUser> AuthorizeAsync(DataSourceDefinition definition, FormExecutionContext context, DbConnection? connection, CancellationToken ct)
     {
-        var user = await users.ResolveAsync(context.Member, ct);
+        var user = await users.ResolveAsync(context, ct);
         if (user is null || !CanRead(definition, user)) throw new UnauthorizedAccessException();
         foreach (var policy in policies)
             if (!await policy.IsAllowedAsync(new DataSourceRequest(definition.Alias, DataSourceAction.Query, user, context, null, null, null, connection), ct))
