@@ -1,13 +1,362 @@
-.app-form{max-width:72rem;background:var(--app-surface,#fff);padding:1.5rem;border:1px solid #d5d9df;border-radius:.4rem}.app-form-body{border:0;margin:0;padding:0;min-width:0}.app-fieldset{border:1px solid #d5d9df;padding:1rem;min-width:0;margin:0}.app-fieldset legend{font-size:1.1rem;font-weight:600;width:auto;padding:0 .35rem}.app-fieldset-help{margin:0 0 .75rem;color:#515966}.app-form-field{display:flex;flex-direction:column;gap:.3rem;margin-bottom:.6rem}.app-form-field label{font-weight:600}.app-form-field input:not([type=checkbox]),.app-form-field select,.app-form-field textarea{font:inherit;padding:.5rem;border:1px solid #747b85;border-radius:.2rem;width:100%;box-sizing:border-box}.app-form-field input[type=checkbox]{align-self:start;width:1.25rem;height:1.25rem}.app-form-field small{color:#515966}.app-form-actions{display:flex;align-items:center;gap:1rem;margin-top:1rem}.app-form-actions button{font:inherit;padding:.5rem 1rem;border:1px solid #284967;background:#284967;color:white;border-radius:.2rem;cursor:pointer}.app-form-actions [data-delete]{background:#8c2020;border-color:#8c2020;margin-left:auto}.app-form-errors{padding:1rem;border:2px solid #8c2020;margin-bottom:1rem}.app-field-error{color:#8c2020}.app-form-field [aria-invalid=true]{border-color:#8c2020}.app-form-message{margin-bottom:1rem}.app-form [hidden]{display:none!important}@media(max-width:640px){.app-form{padding:1rem}}
-.app-attachments{margin:.5rem 0}.app-attachments-list{list-style:none;margin:0;padding:0}.app-attachment{display:flex;flex-wrap:wrap;align-items:baseline;gap:.25rem 1rem;padding:.5rem 0;border-bottom:1px solid #d5d9df}.app-attachment-name{font-weight:600;overflow-wrap:anywhere}.app-attachment-meta{color:#515966;font-size:.9em}.app-attachment-notes{flex-basis:100%;margin:0;color:#515966}.app-attachment-revisions{flex-basis:100%;font-size:.9em}.app-attachment-revisions ul{margin:.25rem 0 0 1rem;padding:0}.app-attachment-actions{margin-left:auto;display:flex;gap:.5rem}.app-attachment-actions button,.app-attachments-upload button{font:inherit;padding:.3rem .75rem;border:1px solid #284967;background:#fff;color:#284967;border-radius:.2rem;cursor:pointer}.app-attachments-upload{display:flex;flex-wrap:wrap;align-items:end;gap:.75rem;margin-top:.75rem}.app-attachments-upload label{display:flex;flex-direction:column;gap:.3rem;font-weight:600}.app-attachments-upload input[type=text],.app-attachments-upload select{font:inherit;padding:.4rem;border:1px solid #747b85;border-radius:.2rem;min-width:10rem}.app-attachments-errors{padding:.75rem;border:2px solid #8c2020;margin:.5rem 0}.app-attachments [hidden]{display:none!important}
-.app-schedule{position:relative;margin:.5rem 0}.app-schedule-toolbar{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:.5rem 1rem;margin:0 0 .5rem}.app-schedule-window{margin:0;font-weight:600}.app-schedule-nav{display:flex;gap:1rem}.app-schedule-scroll{overflow:auto;max-height:75vh;border:1px solid #d5d9df}.app-schedule-table{border-collapse:separate;border-spacing:0;font-size:.875rem;line-height:1.25}.app-schedule-caption,.app-schedule-bar__details{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.app-schedule-table th,.app-schedule-table td{border-right:1px solid #d5d9df;border-bottom:1px solid #d5d9df;padding:0;box-sizing:border-box}.app-schedule-table th{background:#f3f4f6;font-weight:600;text-align:center;white-space:nowrap}.app-schedule-table thead th{position:sticky;top:0;z-index:3}.app-schedule-period{height:1.5rem;line-height:1.5rem;padding:0 .25rem;overflow:hidden;text-overflow:ellipsis;text-align:left}.app-schedule-table thead tr+tr th{top:1.5rem;height:2.25rem}.app-schedule-col{width:2.25rem;min-width:2.25rem;max-width:2.25rem}.app-schedule-table--hours .app-schedule-col{width:2rem;min-width:2rem;max-width:2rem}.app-schedule-day,.app-schedule-weekday{display:block;line-height:1.1}.app-schedule-weekday{font-size:.7rem;font-weight:400;color:#515966}.app-schedule-corner,.app-schedule-row-label,.app-schedule-group-title th{position:sticky;left:0;z-index:2;text-align:left}.app-schedule-corner{z-index:4}.app-schedule-label{display:block;width:12rem;padding:0 .5rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.app-schedule-row-label{font-weight:500;vertical-align:top;line-height:1.75rem}.app-schedule-group-title th{background:#e7e9ee;line-height:1.5rem}.app-schedule-cell{position:relative;height:calc(var(--ah-lanes,1)*1.75rem);vertical-align:top;background:#fff}.app-schedule-col--weekend{background:#eceef4}.app-schedule-table th.app-schedule-col--weekend{background:#e7e9ee}.app-schedule-col--today{box-shadow:inset 2px 0 0 #b3261e}.app-schedule-table thead .app-schedule-col--today{color:#b3261e}.app-schedule-bar{position:absolute;z-index:1;top:calc(var(--ah-lane,0)*1.75rem + .2rem);left:.1rem;width:calc(var(--ah-span,1)*100% + (var(--ah-span,1) - 1)*1px - .2rem);height:1.35rem;box-sizing:border-box;padding:0 .4rem;border-radius:.25rem;background:var(--ah-schedule-kind-0,#4b5563);color:#fff;font-size:.8125rem;line-height:1.35rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:none;cursor:pointer}.app-schedule-bar:hover{filter:brightness(1.1)}.app-schedule-bar:focus-visible{outline:2px solid #000;outline-offset:1px;z-index:2}.app-schedule-bar--open{border-radius:.25rem 0 0 .25rem;padding-right:1rem;background-image:linear-gradient(90deg,rgba(255,255,255,0) 70%,rgba(255,255,255,.45))}.app-schedule-bar--open::after{content:"\203A";position:absolute;right:.3rem;top:0;font-weight:700}.app-schedule-bar--clipped-start{border-radius:0 .25rem .25rem 0;border-left:3px dotted rgba(255,255,255,.85)}.app-schedule-bar--clipped-end{border-radius:.25rem 0 0 .25rem;border-right:3px dotted rgba(255,255,255,.85)}.app-schedule-kind-1{background-color:var(--ah-schedule-kind-1,#284967)}.app-schedule-kind-2{background-color:var(--ah-schedule-kind-2,#1e7b4f)}.app-schedule-kind-3{background-color:var(--ah-schedule-kind-3,#b35c00)}.app-schedule-kind-4{background-color:var(--ah-schedule-kind-4,#6a3d9a)}.app-schedule-kind-5{background-color:var(--ah-schedule-kind-5,#9c2f2f)}.app-schedule-kind-6{background-color:var(--ah-schedule-kind-6,#0d7a85)}.app-schedule-kind-7{background-color:var(--ah-schedule-kind-7,#5d5d5d)}.app-schedule-kind-8{background-color:var(--ah-schedule-kind-8,#8a6d00)}.app-schedule-legend{display:flex;flex-wrap:wrap;gap:.5rem 1.25rem;list-style:none;margin:.5rem 0 0;padding:0;font-size:.875rem}.app-schedule-swatch{display:inline-block;width:.9rem;height:.9rem;margin-right:.35rem;border-radius:.2rem;vertical-align:-.1rem;background:#4b5563}.app-schedule-tooltip{position:absolute;z-index:10;max-width:20rem;padding:.4rem .6rem;border:1px solid #d5d9df;border-radius:.25rem;background:#fff;color:#1f2733;box-shadow:0 2px 8px rgba(0,0,0,.15);font-size:.875rem;white-space:normal;pointer-events:none}.app-schedule-tooltip[hidden]{display:none}.app-schedule-problem{padding:.75rem;border:2px solid #8c2020;margin:.5rem 0}.app-schedule-empty{color:#515966}
-.app-tabular{margin:.5rem 0}.app-tabular-scroll{overflow-x:auto;max-width:100%}.app-tabular-table{border-collapse:collapse;width:100%;font-size:.9375rem}.app-tabular-table th,.app-tabular-table td{border-bottom:1px solid #d5d9df;padding:.3rem .4rem;text-align:left;vertical-align:middle}.app-tabular-table th{font-weight:600;white-space:nowrap;background:#f3f4f6}.app-tabular-table td input:not([type=checkbox]),.app-tabular-table td select{font:inherit;padding:.3rem;border:1px solid #747b85;border-radius:.2rem;width:100%;min-width:6rem;box-sizing:border-box}.app-tabular-table td input[type=checkbox]{width:1.15rem;height:1.15rem}.app-tabular-table [aria-invalid=true]{border-color:#8c2020;outline:1px solid #8c2020}.app-tabular-actions{width:1%;white-space:nowrap}.app-tabular-actions button,.app-tabular-toolbar button{font:inherit;padding:.3rem .75rem;border:1px solid #284967;background:#fff;color:#284967;border-radius:.2rem;cursor:pointer}.app-tabular-toolbar [data-tabular-save]{background:#284967;color:#fff}.app-tabular-toolbar button:disabled{opacity:.6;cursor:default}.app-tabular-toolbar{display:flex;flex-wrap:wrap;gap:.75rem;margin-top:.75rem}.app-tabular-row--new{background:#f2f7fb}.app-tabular-row--deleted td:not(.app-tabular-actions){opacity:.55;text-decoration:line-through}.app-tabular-row--invalid{box-shadow:inset 3px 0 0 #8c2020}.app-tabular-empty td{color:#515966;font-style:italic}.app-tabular-errors{padding:.75rem;border:2px solid #8c2020;margin:.5rem 0}.app-tabular-errors ul{margin:0 0 .25rem;padding-left:1.25rem}.app-tabular .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.app-tabular [hidden]{display:none!important}
-.app-antispam{margin:.5rem 0}.app-antispam-hp{position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden}.app-antispam-preview{grid-column:1/-1;margin:.5rem 0;padding:.5rem .75rem;border:1px dashed #747b85;color:#515966;font-size:.9em}
+/*
+    AppBlocks runtime styles: forms, attachments, tabular forms, schedules and the notices around them.
 
-/* Native blocks provide layout without requiring a site theme. */
-.appblocks-native .ah-grid{display:grid;grid-template-columns:repeat(var(--umb-block-grid--grid-columns,12),minmax(0,1fr));gap:1rem}
-.appblocks-native .ah-grid__item{min-width:0;grid-column:span var(--umb-block-grid--item-column-span,12);grid-row:span var(--umb-block-grid--item-row-span,1)}
-.appblocks-native .app-form{font:inherit}.appblocks-native .app-form-body{border:0;padding:0;margin:0;min-width:0}
-.appblocks-native input:not([type=checkbox]),.appblocks-native select,.appblocks-native textarea{font:inherit;max-width:100%;box-sizing:border-box}
-.appblocks-native .app-form-actions{display:flex;flex-wrap:wrap;gap:.75rem;margin-block:1rem}.appblocks-native .app-form-errors{color:#a51d25}
-@media(max-width:640px){.appblocks-native .ah-grid__item{grid-column:1/-1}}
+    Everything hangs off the --app-* custom properties below, so a site restyles the blocks by redefining
+    them on :root or on .application-blocks, without touching a rule. Colors meet WCAG AA on the surface
+    they sit on; type and spacing inherit the page's font and come from rem, so the blocks follow the site's
+    base size. The ah-* hooks (ah-region, ah-layout, ah-grid) belong to the site's theme and are styled here
+    only inside .appblocks-native, where no theme exists.
+*/
+:root {
+    --app-accent: #2a5d8f;
+    --app-accent-strong: #1f4a74;
+    --app-accent-soft: #e9f0f8;
+    --app-danger: #b3261e;
+    --app-danger-strong: #8c1d17;
+    --app-danger-soft: #fbecea;
+    --app-surface: #fff;
+    --app-surface-2: #f6f7f9;
+    --app-surface-3: #eceef2;
+    --app-border: #d9dde3;
+    --app-border-strong: #a3abb5;
+    --app-text: #1f2733;
+    --app-muted: #5b6573;
+    --app-on-accent: #fff;
+    --app-radius: .75rem;
+    --app-radius-sm: .45rem;
+    --app-shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 2px 6px rgba(16, 24, 40, .06);
+    --app-shadow-lg: 0 8px 24px rgba(16, 24, 40, .16);
+    --app-focus: 0 0 0 3px color-mix(in srgb, var(--app-accent) 28%, transparent);
+    --app-focus-danger: 0 0 0 3px color-mix(in srgb, var(--app-danger) 25%, transparent);
+    --app-control-padding: .55rem .75rem;
+    --app-transition: .15s ease;
+}
+
+/* ---------- Shared pieces ---------- */
+
+.application-blocks { color: var(--app-text); }
+.application-blocks *, .application-blocks *::before, .application-blocks *::after { box-sizing: border-box; }
+
+/* Text controls, everywhere a block draws one. */
+.app-form-field input:not([type=checkbox]), .app-form-field select, .app-form-field textarea,
+.app-attachments-upload input[type=text], .app-attachments-upload select,
+.app-tabular-table td input:not([type=checkbox]), .app-tabular-table td select {
+    font: inherit; color: var(--app-text); background: var(--app-surface);
+    padding: var(--app-control-padding); border: 1px solid var(--app-border-strong); border-radius: var(--app-radius-sm);
+    width: 100%; min-width: 0; box-sizing: border-box;
+    transition: border-color var(--app-transition), box-shadow var(--app-transition);
+}
+.app-form-field input:not([type=checkbox]):hover, .app-form-field select:hover, .app-form-field textarea:hover,
+.app-attachments-upload input[type=text]:hover, .app-attachments-upload select:hover,
+.app-tabular-table td input:not([type=checkbox]):hover, .app-tabular-table td select:hover { border-color: var(--app-muted); }
+.app-form-field input:focus-visible, .app-form-field select:focus-visible, .app-form-field textarea:focus-visible,
+.app-attachments-upload input:focus-visible, .app-attachments-upload select:focus-visible,
+.app-tabular-table td input:focus-visible, .app-tabular-table td select:focus-visible {
+    outline: none; border-color: var(--app-accent); box-shadow: var(--app-focus);
+}
+.app-form-field input::placeholder, .app-form-field textarea::placeholder, .app-attachments-upload input::placeholder,
+.app-tabular-table td input::placeholder { color: var(--app-muted); opacity: .8; }
+.app-form-field input:read-only:not([type=checkbox]), .app-form-field textarea:read-only, .app-form-field select:disabled,
+.app-tabular-table td input:disabled, .app-tabular-table td select:disabled { background: var(--app-surface-2); color: var(--app-muted); }
+.app-form-field select, .app-attachments-upload select, .app-tabular-table td select {
+    appearance: none; padding-right: 2.25rem;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%235b6573' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right .8rem center;
+}
+.app-form-field input[type=checkbox], .app-tabular-table td input[type=checkbox] {
+    width: 1.15rem; height: 1.15rem; margin: 0; accent-color: var(--app-accent); cursor: pointer;
+}
+.app-form-field input[type=checkbox]:focus-visible, .app-tabular-table td input[type=checkbox]:focus-visible { outline: none; box-shadow: var(--app-focus); border-radius: .2rem; }
+.app-form-field [aria-invalid=true], .app-tabular-table [aria-invalid=true] { border-color: var(--app-danger); }
+.app-form-field [aria-invalid=true]:focus-visible, .app-tabular-table [aria-invalid=true]:focus-visible { border-color: var(--app-danger); box-shadow: var(--app-focus-danger); }
+
+/* Buttons: a filled primary action, outlined secondary actions, and a quiet danger action that only fills on hover. */
+.app-form-actions button, .app-form-actions a, .app-attachment-actions button, .app-attachments-upload button,
+.app-tabular-actions button, .app-tabular-toolbar button, .app-schedule-nav a, .app-report-actions a {
+    display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+    font: inherit; font-weight: 600; line-height: 1.2; text-decoration: none; white-space: nowrap;
+    padding: .55rem 1.1rem; border: 1px solid var(--app-accent); border-radius: var(--app-radius-sm);
+    background: var(--app-surface); color: var(--app-accent); cursor: pointer;
+    transition: background var(--app-transition), color var(--app-transition), border-color var(--app-transition), box-shadow var(--app-transition);
+}
+.app-form-actions button:hover, .app-form-actions a:hover, .app-attachment-actions button:hover, .app-attachments-upload button:hover,
+.app-tabular-actions button:hover, .app-tabular-toolbar button:hover, .app-schedule-nav a:hover, .app-report-actions a:hover { background: var(--app-accent-soft); }
+.app-form-actions button:focus-visible, .app-form-actions a:focus-visible, .app-attachment-actions button:focus-visible, .app-attachments-upload button:focus-visible,
+.app-tabular-actions button:focus-visible, .app-tabular-toolbar button:focus-visible, .app-schedule-nav a:focus-visible, .app-report-actions a:focus-visible {
+    outline: none; box-shadow: var(--app-focus);
+}
+.app-form-actions button:disabled, .app-attachment-actions button:disabled, .app-attachments-upload button:disabled,
+.app-tabular-actions button:disabled, .app-tabular-toolbar button:disabled { opacity: .55; cursor: default; background: var(--app-surface); }
+.app-form-actions [data-save], .app-tabular-toolbar [data-tabular-save], .app-attachments-upload [data-attachment-upload] {
+    background: var(--app-accent); color: var(--app-on-accent); border-color: var(--app-accent);
+}
+.app-form-actions [data-save]:hover, .app-tabular-toolbar [data-tabular-save]:hover, .app-attachments-upload [data-attachment-upload]:hover {
+    background: var(--app-accent-strong); border-color: var(--app-accent-strong);
+}
+.app-form-actions [data-save]:disabled, .app-tabular-toolbar [data-tabular-save]:disabled, .app-attachments-upload [data-attachment-upload]:disabled { background: var(--app-accent); }
+.app-form-actions a { border-color: transparent; color: var(--app-muted); }
+.app-form-actions a:hover { color: var(--app-text); background: var(--app-surface-3); }
+.app-form-actions [data-delete] { margin-left: auto; color: var(--app-danger); border-color: color-mix(in srgb, var(--app-danger) 45%, var(--app-border)); }
+.app-form-actions [data-delete]:hover { background: var(--app-danger); border-color: var(--app-danger); color: var(--app-on-accent); }
+.app-form-actions [data-delete]:focus-visible { box-shadow: var(--app-focus-danger); }
+.app-attachment-actions button, .app-tabular-actions button, .app-schedule-nav a { padding: .35rem .8rem; font-size: .875rem; }
+
+/* Notices: a status line, a sign-in notice, and an error panel that reads as one. */
+.app-form-message, .app-attachments-message, .app-tabular-message { margin: 0 0 1rem; color: var(--app-muted); font-size: .9375rem; }
+.app-form-message:empty, .app-attachments-message:empty, .app-tabular-message:empty { display: none; }
+.app-form-message a, .app-attachments-message a, .app-tabular-message a { color: var(--app-accent); }
+.app-block-signin {
+    display: flex; align-items: center; gap: .6rem; margin: .5rem 0; padding: .75rem 1rem;
+    border: 1px solid var(--app-border); border-left: 4px solid var(--app-accent); border-radius: var(--app-radius-sm);
+    background: var(--app-surface-2); color: var(--app-text);
+}
+.app-form-errors, .app-attachments-errors, .app-tabular-errors, .app-schedule-problem, :where(.application-blocks) p[role=alert]:not(.app-form-field p) {
+    margin: 0 0 1rem; padding: .85rem 1rem; border: 1px solid color-mix(in srgb, var(--app-danger) 35%, var(--app-border));
+    border-left: 4px solid var(--app-danger); border-radius: var(--app-radius-sm); background: var(--app-danger-soft); color: var(--app-danger-strong);
+}
+.app-form-errors:focus-visible, .app-attachments-errors:focus-visible, .app-tabular-errors:focus-visible { outline: none; box-shadow: var(--app-focus-danger); }
+.app-form-errors ul, .app-tabular-errors ul { margin: 0; padding-left: 1.25rem; }
+.app-form-errors li + li, .app-tabular-errors li + li { margin-top: .25rem; }
+.app-form-errors a, .app-tabular-errors a { color: inherit; font-weight: 600; }
+.app-form-errors p, .app-tabular-errors p { margin: 0; }
+.app-form-errors p + ul, .app-tabular-errors p + ul, .app-tabular-errors ul + p { margin-top: .35rem; }
+
+/* ---------- Forms ---------- */
+
+.app-form {
+    max-width: 72rem; margin: 0; padding: 1.75rem; color: var(--app-text);
+    background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--app-radius); box-shadow: var(--app-shadow);
+}
+.app-form > h2 { margin: 0 0 1.25rem; font-size: 1.4rem; line-height: 1.25; letter-spacing: -.01em; }
+.app-form-body { border: 0; margin: 0; padding: 0; min-width: 0; }
+.app-form-body:disabled { opacity: .7; }
+.app-form-field { display: flex; flex-direction: column; gap: .35rem; margin: 0 0 .25rem; min-width: 0; }
+.app-form-field label { font-weight: 600; font-size: .9375rem; line-height: 1.3; }
+.app-form-field label span[aria-hidden] { color: var(--app-danger); }
+.app-form-field small { color: var(--app-muted); font-size: .85rem; line-height: 1.4; }
+.app-form-field small:empty { display: none; }
+.app-form-field textarea { resize: vertical; min-height: 5.5rem; line-height: 1.5; }
+.app-field-error { color: var(--app-danger); font-size: .85rem; font-weight: 500; line-height: 1.4; }
+.app-field-error:empty { display: none; }
+.app-form-field [role=alert] { margin: 0; color: var(--app-danger); font-size: .85rem; }
+/* A checkbox sits in front of its label, with the help text under the label. */
+.app-form-field:has(> input[type=checkbox]) { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: .6rem; row-gap: .2rem; align-items: center; padding-top: .25rem; }
+.app-form-field:has(> input[type=checkbox]) > input[type=checkbox] { grid-row: 1; grid-column: 1; }
+.app-form-field:has(> input[type=checkbox]) > label { grid-row: 1; grid-column: 2; cursor: pointer; }
+.app-form-field:has(> input[type=checkbox]) > small, .app-form-field:has(> input[type=checkbox]) > .app-field-error { grid-column: 2; }
+/* Labels to the left, where the form asks for them. A field in a narrow column, or on a phone, stacks its label again;
+   the grid item is the container that decides, so a twelve-column field and a three-column one each do the right thing. */
+.app-form { --app-label-width: 10rem; }
+.app-form .ah-grid__item { container-type: inline-size; }
+.app-form[data-label-position=left] .app-form-field:not(:has(> input[type=checkbox])) {
+    display: grid; grid-template-columns: var(--app-label-width) minmax(0, 1fr); column-gap: 1rem; row-gap: .25rem; align-items: start;
+}
+.app-form[data-label-position=left] .app-form-field:not(:has(> input[type=checkbox])) > label { grid-column: 1; padding-top: .6rem; }
+.app-form[data-label-position=left] .app-form-field:not(:has(> input[type=checkbox])) > :not(label) { grid-column: 2; }
+.app-form[data-label-position=left] .app-form-field:has(> input[type=checkbox]) { padding-left: calc(var(--app-label-width) + 1rem); }
+@container (max-width: 26rem) {
+    .app-form[data-label-position=left] .app-form-field:not(:has(> input[type=checkbox])) { display: flex; }
+    .app-form[data-label-position=left] .app-form-field:not(:has(> input[type=checkbox])) > label { padding-top: 0; }
+    .app-form[data-label-position=left] .app-form-field:has(> input[type=checkbox]) { padding-left: 0; }
+}
+.app-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--app-border); }
+.app-form > p:has(> [data-print]) { margin: 0 0 1rem; }
+.app-form [data-print] { color: var(--app-accent); font-weight: 600; text-decoration: none; }
+.app-form [data-print]:hover { text-decoration: underline; }
+.app-form [hidden] { display: none !important; }
+
+/* A fieldset frames a group of fields on a quieter surface, its legend lifted out of the border. */
+.app-fieldset { position: relative; min-width: 0; margin: .5rem 0 1rem; padding: 1.25rem 1.25rem 1rem; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-surface-2); }
+.app-fieldset legend { width: auto; padding: .15rem .6rem; margin-left: -.35rem; font-size: 1rem; font-weight: 600; color: var(--app-accent-strong); background: var(--app-surface); border: 1px solid var(--app-border); border-radius: 999px; }
+.app-fieldset-help { margin: 0 0 1rem; color: var(--app-muted); font-size: .9375rem; }
+.app-fieldset .app-form-field input:not([type=checkbox]), .app-fieldset .app-form-field select, .app-fieldset .app-form-field textarea { background: var(--app-surface); }
+
+/* ---------- Attachments ---------- */
+
+.app-attachments { margin: .5rem 0; min-width: 0; }
+.app-attachments .ah-attachments__title, .app-tabular .ah-tabular__title, .app-schedule .ah-schedule__title { margin: 0 0 .35rem; font-size: 1.15rem; line-height: 1.3; }
+.app-attachments .ah-attachments__help, .app-tabular .ah-tabular__help, .app-schedule .ah-schedule__help { margin: 0 0 .85rem; color: var(--app-muted); font-size: .9375rem; }
+.app-attachments-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-surface); overflow: hidden; }
+.app-attachments-list:empty { display: none; }
+.app-attachment { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem 1rem; padding: .7rem .9rem; transition: background var(--app-transition); }
+.app-attachment + .app-attachment { border-top: 1px solid var(--app-border); }
+.app-attachment:hover { background: var(--app-surface-2); }
+.app-attachment-name { font-weight: 600; color: var(--app-accent); text-decoration: none; overflow-wrap: anywhere; }
+.app-attachment-name:hover { text-decoration: underline; }
+.app-attachment-name:focus-visible { outline: none; box-shadow: var(--app-focus); border-radius: .2rem; }
+.app-attachment-meta { color: var(--app-muted); font-size: .875rem; }
+.app-attachment-notes { flex-basis: 100%; margin: 0; color: var(--app-text); font-size: .9375rem; }
+.app-attachment-revisions { flex-basis: 100%; font-size: .875rem; color: var(--app-muted); }
+.app-attachment-revisions summary { cursor: pointer; color: var(--app-accent); font-weight: 500; width: max-content; }
+.app-attachment-revisions ul { margin: .35rem 0 0 1rem; padding: 0; }
+.app-attachment-revisions a { color: var(--app-accent); }
+.app-attachment-actions { margin-left: auto; display: flex; gap: .4rem; align-self: center; }
+.app-attachments-upload {
+    display: flex; flex-wrap: wrap; align-items: end; gap: .75rem 1rem; margin-top: .85rem; padding: .9rem 1rem;
+    border: 1px dashed var(--app-border-strong); border-radius: var(--app-radius-sm); background: var(--app-surface-2);
+}
+.app-attachments-upload label { display: flex; flex-direction: column; gap: .35rem; min-width: 0; font-weight: 600; font-size: .9375rem; }
+.app-attachments-upload input[type=text], .app-attachments-upload select { min-width: 11rem; font-weight: 400; }
+.app-attachments-upload input[type=file] { font: inherit; font-weight: 400; max-width: 100%; color: var(--app-muted); }
+.app-attachments-upload input[type=file]::file-selector-button {
+    font: inherit; font-weight: 600; margin-right: .75rem; padding: .45rem .9rem; border: 1px solid var(--app-border-strong); border-radius: var(--app-radius-sm);
+    background: var(--app-surface); color: var(--app-text); cursor: pointer; transition: background var(--app-transition);
+}
+.app-attachments-upload input[type=file]::file-selector-button:hover { background: var(--app-surface-3); }
+.app-attachments-upload input[type=file]:focus-visible { outline: none; box-shadow: var(--app-focus); border-radius: var(--app-radius-sm); }
+.app-attachments-upload button { margin-left: auto; }
+.app-attachments [hidden] { display: none !important; }
+
+/* ---------- Tabular forms ---------- */
+
+.app-tabular { margin: .5rem 0; min-width: 0; }
+.app-tabular-scroll { overflow-x: auto; max-width: 100%; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-surface); }
+.app-tabular-table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: .9375rem; }
+.app-tabular-table th, .app-tabular-table td { padding: .45rem .6rem; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--app-border); }
+.app-tabular-table th { font-size: .8125rem; font-weight: 600; letter-spacing: .02em; color: var(--app-muted); white-space: nowrap; background: var(--app-surface-2); }
+.app-tabular-table tbody tr:last-child td { border-bottom: 0; }
+.app-tabular-table tbody tr:hover td { background: color-mix(in srgb, var(--app-surface-2) 60%, var(--app-surface)); }
+.app-tabular-table td input:not([type=checkbox]), .app-tabular-table td select { padding: .4rem .6rem; min-width: 6rem; border-color: var(--app-border); }
+.app-tabular-table td input:not([type=checkbox]):hover, .app-tabular-table td select:hover { border-color: var(--app-border-strong); }
+.app-tabular-table td select { padding-right: 2rem; }
+.app-tabular-actions { width: 1%; white-space: nowrap; text-align: right; }
+.app-tabular-row--new td { background: var(--app-accent-soft); }
+.app-tabular-row--new td input:not([type=checkbox]), .app-tabular-row--new td select { border-color: color-mix(in srgb, var(--app-accent) 40%, var(--app-border)); }
+.app-tabular-row--deleted td:not(.app-tabular-actions) { opacity: .5; text-decoration: line-through; }
+.app-tabular-row--deleted td input, .app-tabular-row--deleted td select { text-decoration: line-through; }
+.app-tabular-row--invalid td:first-child { box-shadow: inset 4px 0 0 var(--app-danger); }
+.app-tabular-empty td { padding: 1.1rem .75rem; color: var(--app-muted); font-style: italic; text-align: center; }
+.app-tabular-toolbar { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .85rem; }
+.app-tabular-toolbar [data-tabular-save] { margin-left: auto; }
+.app-tabular .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.app-tabular [hidden] { display: none !important; }
+
+/* ---------- Schedules ---------- */
+
+.app-schedule { position: relative; margin: .5rem 0; min-width: 0; }
+.app-schedule-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; margin: 0 0 .75rem; }
+.app-schedule-window { margin: 0; font-weight: 600; }
+.app-schedule-nav { display: inline-flex; gap: 0; border-radius: var(--app-radius-sm); box-shadow: 0 0 0 1px var(--app-border); overflow: hidden; }
+.app-schedule-nav a { border: 0; border-radius: 0; background: var(--app-surface); color: var(--app-text); }
+.app-schedule-nav a + a { border-left: 1px solid var(--app-border); }
+.app-schedule-nav a:hover { background: var(--app-surface-2); color: var(--app-accent); }
+.app-schedule-nav a:focus-visible { position: relative; z-index: 1; }
+.app-schedule-scroll { overflow: auto; max-height: 75vh; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-surface); }
+.app-schedule-table { min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: .875rem; line-height: 1.25; }
+.app-schedule-caption, .app-schedule-bar__details { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.app-schedule-table th, .app-schedule-table td { border-right: 1px solid var(--app-border); border-bottom: 1px solid var(--app-border); padding: 0; box-sizing: border-box; }
+.app-schedule-table th { background: var(--app-surface-2); font-weight: 600; text-align: center; white-space: nowrap; }
+.app-schedule-table thead th { position: sticky; top: 0; z-index: 3; }
+.app-schedule-period { height: 1.6rem; line-height: 1.6rem; padding: 0 .5rem; overflow: hidden; text-overflow: ellipsis; text-align: left; font-size: .8125rem; color: var(--app-muted); letter-spacing: .02em; }
+.app-schedule-table thead tr + tr th { top: 1.6rem; height: 2.35rem; }
+.app-schedule-col { width: 2.25rem; min-width: 2.25rem; max-width: 2.25rem; }
+.app-schedule-table--hours .app-schedule-col { width: 2rem; min-width: 2rem; max-width: 2rem; }
+.app-schedule-day, .app-schedule-weekday { display: block; line-height: 1.1; }
+.app-schedule-day { padding-top: .2rem; }
+.app-schedule-weekday { font-size: .68rem; font-weight: 400; color: var(--app-muted); text-transform: uppercase; letter-spacing: .04em; }
+.app-schedule-corner, .app-schedule-row-label, .app-schedule-group-title th { position: sticky; left: 0; z-index: 2; text-align: left; background: var(--app-surface); }
+.app-schedule-corner { z-index: 4; width: 1%; background: var(--app-surface-2); }
+.app-schedule-label { display: block; width: 12rem; padding: 0 .75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-schedule-row-label { font-weight: 500; vertical-align: top; line-height: 1.75rem; box-shadow: 1px 0 0 var(--app-border); }
+.app-schedule-group-title th { background: var(--app-surface-3); line-height: 1.6rem; font-size: .8125rem; letter-spacing: .02em; color: var(--app-muted); }
+.app-schedule-cell { position: relative; height: calc(var(--ah-lanes, 1) * 1.75rem); vertical-align: top; background: var(--app-surface); }
+.app-schedule-col--weekend { background: var(--app-surface-2); }
+.app-schedule-table th.app-schedule-col--weekend { background: var(--app-surface-3); }
+.app-schedule-col--today { box-shadow: inset 2px 0 0 var(--app-accent); }
+.app-schedule-table td.app-schedule-col--today { background: color-mix(in srgb, var(--app-accent-soft) 60%, var(--app-surface)); }
+.app-schedule-table thead .app-schedule-col--today { color: var(--app-accent); background: var(--app-accent-soft); }
+.app-schedule-table thead .app-schedule-col--today .app-schedule-weekday { color: var(--app-accent); }
+.app-schedule-bar {
+    position: absolute; z-index: 1; top: calc(var(--ah-lane, 0) * 1.75rem + .2rem); left: .15rem;
+    width: calc(var(--ah-span, 1) * 100% + (var(--ah-span, 1) - 1) * 1px - .3rem); height: 1.35rem; box-sizing: border-box; padding: 0 .5rem;
+    border-radius: .3rem; background: var(--ah-schedule-kind-0, #4b5563); color: #fff; font-size: .8125rem; font-weight: 500; line-height: 1.35rem;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: none; cursor: pointer;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, .2); transition: filter var(--app-transition), box-shadow var(--app-transition);
+}
+.app-schedule-bar:hover { filter: brightness(1.08); box-shadow: 0 2px 6px rgba(16, 24, 40, .25); }
+.app-schedule-bar:focus-visible { outline: 2px solid var(--app-text); outline-offset: 1px; z-index: 2; }
+.app-schedule-bar--open { border-radius: .3rem 0 0 .3rem; padding-right: 1.1rem; background-image: linear-gradient(90deg, rgba(255, 255, 255, 0) 70%, rgba(255, 255, 255, .4)); }
+.app-schedule-bar--open::after { content: "\203A"; position: absolute; right: .35rem; top: 0; font-weight: 700; }
+.app-schedule-bar--clipped-start { border-radius: 0 .3rem .3rem 0; border-left: 3px dotted rgba(255, 255, 255, .85); }
+.app-schedule-bar--clipped-end { border-radius: .3rem 0 0 .3rem; border-right: 3px dotted rgba(255, 255, 255, .85); }
+.app-schedule-legend { display: flex; flex-wrap: wrap; gap: .4rem 1.25rem; list-style: none; margin: .75rem 0 0; padding: 0; font-size: .875rem; color: var(--app-muted); }
+.app-schedule-legend li { display: inline-flex; align-items: center; }
+.app-schedule-swatch { display: inline-block; width: .85rem; height: .85rem; margin-right: .4rem; border-radius: .2rem; background: var(--ah-schedule-kind-0, #4b5563); }
+/* The kind colors come last, so a bar and its legend swatch share them. */
+.app-schedule-kind-1 { background-color: var(--ah-schedule-kind-1, #2a5d8f); }
+.app-schedule-kind-2 { background-color: var(--ah-schedule-kind-2, #1e7b4f); }
+.app-schedule-kind-3 { background-color: var(--ah-schedule-kind-3, #b35c00); }
+.app-schedule-kind-4 { background-color: var(--ah-schedule-kind-4, #6a3d9a); }
+.app-schedule-kind-5 { background-color: var(--ah-schedule-kind-5, #9c2f2f); }
+.app-schedule-kind-6 { background-color: var(--ah-schedule-kind-6, #0d7a85); }
+.app-schedule-kind-7 { background-color: var(--ah-schedule-kind-7, #5d5d5d); }
+.app-schedule-kind-8 { background-color: var(--ah-schedule-kind-8, #8a6d00); }
+.app-schedule-tooltip {
+    position: absolute; z-index: 10; max-width: 20rem; padding: .5rem .75rem; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm);
+    background: var(--app-surface); color: var(--app-text); box-shadow: var(--app-shadow-lg); font-size: .875rem; line-height: 1.4; white-space: normal; pointer-events: none;
+}
+.app-schedule-tooltip[hidden] { display: none; }
+.app-schedule-empty { margin: .75rem 0 0; color: var(--app-muted); font-style: italic; }
+
+/* ---------- Anti-spam, reports ---------- */
+
+.app-antispam { margin: .5rem 0; }
+.app-antispam-hp { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+.app-antispam-preview { grid-column: 1 / -1; margin: .5rem 0; padding: .6rem .85rem; border: 1px dashed var(--app-border-strong); border-radius: var(--app-radius-sm); color: var(--app-muted); font-size: .9em; }
+.app-block-report { min-width: 0; }
+.app-report-actions { display: flex; justify-content: flex-end; margin: 0 0 .5rem; }
+.app-report-actions a { padding: .4rem .9rem; font-size: .875rem; }
+
+/* ---------- Native blocks: layout without a site theme ---------- */
+
+.appblocks-native .ah-grid { display: grid; grid-template-columns: repeat(var(--umb-block-grid--grid-columns, 12), minmax(0, 1fr)); gap: 1rem 1.25rem; }
+.appblocks-native .ah-grid__item { min-width: 0; grid-column: span var(--umb-block-grid--item-column-span, 12); grid-row: span var(--umb-block-grid--item-row-span, 1); }
+.appblocks-native .ah-layout { display: grid; grid-template-columns: repeat(var(--umb-block-grid--area-grid-columns, 12), minmax(0, 1fr)); gap: 1rem 1.5rem; }
+.appblocks-native .ah-area { min-width: 0; grid-column: span var(--umb-block-grid--area-column-span, 12); grid-row: span var(--umb-block-grid--area-row-span, 1); }
+.appblocks-native .ah-region { margin: 0 0 1rem; border: 1px solid var(--app-border); border-radius: var(--app-radius); background: var(--app-surface); box-shadow: var(--app-shadow); overflow: hidden; }
+.appblocks-native .ah-region--untitled { border: 0; border-radius: 0; background: none; box-shadow: none; overflow: visible; }
+.appblocks-native .ah-region__header { padding: .8rem 1.25rem; background: var(--app-surface-2); border-bottom: 1px solid var(--app-border); }
+.appblocks-native .ah-region__title { margin: 0; font-size: 1.1rem; line-height: 1.3; }
+.appblocks-native summary.ah-region__header { cursor: pointer; list-style: none; display: flex; align-items: center; gap: .6rem; }
+.appblocks-native summary.ah-region__header::-webkit-details-marker { display: none; }
+.appblocks-native summary.ah-region__header::before { content: ""; width: .5rem; height: .5rem; border-right: 2px solid var(--app-muted); border-bottom: 2px solid var(--app-muted); transform: rotate(45deg); transition: transform var(--app-transition); flex: none; margin-top: -.2rem; }
+.appblocks-native .ah-region--collapsible:not([open]) > summary.ah-region__header { border-bottom: 0; }
+.appblocks-native .ah-region--collapsible:not([open]) > summary.ah-region__header::before { transform: rotate(-45deg); margin-top: 0; }
+.appblocks-native summary.ah-region__header:focus-visible { outline: none; box-shadow: inset var(--app-focus); }
+.appblocks-native .ah-region__body { padding: 1.25rem; }
+.appblocks-native .ah-region--untitled > .ah-region__body { padding: 0; }
+.appblocks-native .ah-region .app-form { border: 0; border-radius: 0; box-shadow: none; padding: 0; max-width: none; }
+.appblocks-native .app-form { font: inherit; }
+.appblocks-native .app-form-body { border: 0; padding: 0; margin: 0; min-width: 0; }
+.appblocks-native input:not([type=checkbox]), .appblocks-native select, .appblocks-native textarea { font: inherit; max-width: 100%; box-sizing: border-box; }
+.appblocks-native .ah-rich-text > :first-child { margin-top: 0; }
+.appblocks-native .ah-rich-text > :last-child { margin-bottom: 0; }
+
+/* ---------- Small screens, print, motion ---------- */
+
+@media (max-width: 640px) {
+    .app-form { padding: 1.15rem; border-radius: var(--app-radius-sm); }
+    .app-form[data-label-position=left] .app-form-field:not(:has(> input[type=checkbox])) { display: flex; }
+    .app-form[data-label-position=left] .app-form-field:not(:has(> input[type=checkbox])) > label { padding-top: 0; }
+    .app-form[data-label-position=left] .app-form-field:has(> input[type=checkbox]) { padding-left: 0; }
+    .app-form-actions [data-delete] { margin-left: 0; }
+    /* One column, unwrapped: a wrapped column line takes the file input's natural width and overflows the box. */
+    .app-attachments-upload { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+    .app-attachments-upload input[type=text], .app-attachments-upload select { min-width: 0; }
+    .app-attachments-upload input[type=file] { width: 100%; min-width: 0; }
+    .app-attachments-upload button { margin-left: 0; }
+    .app-attachment-actions { margin-left: 0; flex-basis: 100%; }
+    .app-schedule-toolbar { flex-direction: column; align-items: stretch; }
+    .app-schedule-nav a { flex: 1; }
+    .appblocks-native .ah-grid__item, .appblocks-native .ah-area { grid-column: 1 / -1; }
+    .appblocks-native .ah-region__body { padding: 1rem; }
+}
+@media print {
+    .app-form { border: 0; box-shadow: none; padding: 0; }
+    .app-form-actions, .app-attachments-upload, .app-attachment-actions, .app-tabular-toolbar, .app-tabular-actions, .app-tabular-actions-head,
+    .app-schedule-nav, .app-report-actions, .app-schedule-tooltip { display: none !important; }
+    .app-schedule-scroll { max-height: none; overflow: visible; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .application-blocks *, .application-blocks *::before { transition: none !important; }
+}

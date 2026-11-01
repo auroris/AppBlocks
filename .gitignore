@@ -12,3 +12,4 @@ artifacts-*.log
 **/umbraco/Logs/
 **/appsettings.*.local.json
 *.log
+/.claude
