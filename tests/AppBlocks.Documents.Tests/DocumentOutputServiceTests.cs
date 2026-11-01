@@ -54,7 +54,7 @@ public sealed class DocumentOutputServiceTests
             Assert.Equal("https://anonymous.example/root/v1/render", request.RequestUri!.ToString());
             Assert.False(request.Headers.Contains("X-Api-Key"));
             using var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
-            Assert.Equal("inline", body.RootElement.GetProperty("disposition").GetString());
+            Assert.False(body.RootElement.TryGetProperty("disposition", out _));
             Assert.Equal("A4", body.RootElement.GetProperty("options").GetProperty("pageSize").GetString());
             Assert.True(body.RootElement.GetProperty("options").GetProperty("landscape").GetBoolean());
             Assert.True(!body.RootElement.TryGetProperty("printer", out var printer) || printer.ValueKind == JsonValueKind.Null);

@@ -103,89 +103,91 @@ public sealed class SqlServerDataSourceTests
         var database = "ds_test_" + Guid.NewGuid().ToString("N")[..12];
         Execute(master, $"CREATE DATABASE [{database}]");
         var connection = master + $";Initial Catalog={database};Pooling=false";
-        try
-        {
-            Execute(connection, """
-                CREATE TABLE dbo.ORDERS (ORDER_ID int IDENTITY(1,1) PRIMARY KEY, CUSTOMER nvarchar(200) NOT NULL, AMOUNT decimal(12,2) NOT NULL DEFAULT 0,
-                    ORDER_DATE date NOT NULL, NOTES nvarchar(max) NULL, DONE bit NOT NULL DEFAULT 0, OWNER nvarchar(100) NULL,
-                    VERSION int NOT NULL DEFAULT 1, UPDATED_BY nvarchar(100) NULL, UPDATED_AT datetime2 NULL, LEGACY_AT datetime NULL, TOTAL AS (AMOUNT * 2));
-                CREATE TABLE dbo.ORDER_AUDIT (ID int IDENTITY PRIMARY KEY, ORDER_ID int NOT NULL);
-                """);
-            // Triggers that change other rows: their counts must not be taken for the statement's own.
-            Execute(connection, "CREATE TRIGGER dbo.ORDERS_AUDIT ON dbo.ORDERS AFTER INSERT, UPDATE, DELETE AS INSERT INTO dbo.ORDER_AUDIT (ORDER_ID) SELECT ORDER_ID FROM inserted UNION ALL SELECT ORDER_ID FROM deleted;");
-            Execute(connection, "CREATE TABLE dbo.NOTES (ID uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID() PRIMARY KEY, BODY nvarchar(50) NOT NULL, RV rowversion);");
-            var configuration = new ConfigurationBuilder().Build();
-            var collection = new ServiceCollection();
-            collection.AddLogging();
-            collection.AddSingleton<IConfiguration>(configuration);
-            collection.AddTestConnections(connections => connections.AddConnection("LocalDb", _ => new SqlConnection(connection)));
-            collection.AddSingleton<DataSourceRuntime>();
-            using var provider = collection.BuildServiceProvider();
-            var runtime = provider.GetRequiredService<DataSourceRuntime>();
-            var user = new DataSourceUser("1001", "S-1-5-21-1", "jsmith", null, [], false);
-            var context = new FormExecutionContext(new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, "1001")], IdentityConstants.ApplicationScheme)),
-                Guid.NewGuid(), Guid.NewGuid(), "1", Guid.NewGuid().ToString());
-
-            var policy = new CountingPolicy();
-            var orders = Source(runtime, user, new() {
-                ["alias"] = "orders", ["connection"] = "LocalDb", ["source"] = "dbo.ORDERS", ["keyColumns"] = "ORDER_ID", ["concurrency"] = "VERSION",
-                ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1", ["rowRestriction"] = "OWNER = :USER_NAME",
-                ["insertDefaults"] = "OWNER = :USER_NAME\nORDER_DATE = :NOW", ["auditColumns"] = "updatedBy = UPDATED_BY\nupdatedAt = UPDATED_AT",
-            }, policy);
-            Assert.True(orders.Problem is null, orders.Problem);
-            var fields = orders.Fields.ToDictionary(f => f.Key);
-            Assert.True(fields["orderId"] is { ReadOnly: true, Kind: "number" } && fields["total"].ReadOnly && fields["done"].Kind == "checkbox");
-            Assert.True(fields["customer"] is { MaxLength: 200, Required: true } && fields["orderDate"].Kind == "date" && fields["updatedAt"].Kind == "datetime");
-            Assert.Equal(9999999999.99m, fields["amount"].Maximum);
-
-            var created = await orders.CreateAsync(JsonSerializer.SerializeToElement(new { customer = "LocalDB", amount = "12.34", done = true }), context, default);
-            Assert.True(created.Status == 200, JsonSerializer.Serialize(created.Errors));
-            Assert.Equal("1", created.Record!.Key);
-            Assert.Equal("24.68", created.Record.Values["total"]);
-            Assert.Equal(1, Scalar(connection, "SELECT COUNT(*) FROM dbo.ORDER_AUDIT")); // The trigger ran beside OUTPUT INSERTED.
-            var updated = await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { notes = "Through SQL Server", orderDate = "2026-12-24" }), created.Record.Version!, context, default);
-            Assert.True(updated.Status == 200, JsonSerializer.Serialize(updated.Errors));
-            Assert.Equal("2", updated.Record!.Version);
-            // The policy read the table through the engine's connection, inside the transaction holding the row.
-            Assert.Equal((ConnectionState.Open, true, 1), policy.Updates[0]);
-            var legacy = await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { legacyAt = "1700-01-01T00:00:00Z" }), "2", context, default);
-            Assert.Equal(422, legacy.Status);
-            Assert.Contains("1753", legacy.Errors!["legacyAt"][0]);
-            Assert.Equal("2026-12-24", updated.Record.Values["orderDate"]);
-            Assert.Equal("jsmith", Scalar(connection, "SELECT UPDATED_BY FROM dbo.ORDERS WHERE ORDER_ID = 1"));
-            Assert.Equal(409, (await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { notes = "Stale" }), created.Record.Version!, context, default)).Status);
-            Execute(connection, "INSERT INTO dbo.ORDERS (CUSTOMER, ORDER_DATE, OWNER) VALUES ('Someone else', '2026-01-01', 'kjones')");
-            Assert.Equal(404, (await orders.LoadAsync("2", context, default)).Status);
-            Assert.Equal(403, (await orders.CreateAsync(JsonSerializer.SerializeToElement(new { customer = "Not mine", owner = "kjones" }), context with { SubmissionKey = Guid.NewGuid().ToString() }, default)).Status);
-            Assert.Equal(204, (await orders.DeleteAsync("1", "2", context, default)).Status);
-
-            var notes = Source(runtime, user, new() {
-                ["alias"] = "notes", ["connection"] = "LocalDb", ["source"] = "SELECT ID, BODY, RV FROM dbo.NOTES", ["keyColumns"] = "ID", ["concurrency"] = "RV",
-                ["allowInsert"] = "1", ["allowUpdate"] = "1",
-            });
-            Assert.True(notes.Problem is null, notes.Problem);
-            Assert.DoesNotContain(notes.Fields, f => f.Key == "rv");
-            var note = await notes.CreateAsync(JsonSerializer.SerializeToElement(new { body = "First" }), context with { SubmissionKey = Guid.NewGuid().ToString() }, default);
-            Assert.True(Guid.TryParse(note.Record!.Key, out _));
-            Assert.Equal(16, note.Record.Version!.Length);
-            var changed = await notes.UpdateAsync(note.Record.Key!, JsonSerializer.SerializeToElement(new { body = "Second" }), note.Record.Version, context, default);
-            Assert.Equal(200, changed.Status);
-            Assert.NotEqual(note.Record.Version, changed.Record!.Version);
-            Assert.Equal(409, (await notes.UpdateAsync(note.Record.Key!, JsonSerializer.SerializeToElement(new { body = "Stale" }), note.Record.Version, context, default)).Status);
-            Assert.Equal(404, (await notes.LoadAsync("not-a-guid", context, default)).Status);
-
-            var errors = runtime.Validate(Definition(new() {
-                ["alias"] = "broken", ["connection"] = "LocalDb", ["source"] = "dbo.ORDERS", ["keyColumns"] = "ORDER_ID", ["allowUpdate"] = "1",
-                ["customStatements"] = "-- update\nUPDATE dbo.ORDERS SET NOPE = 1 WHERE ORDER_ID = :FIELD.orderId",
-            }));
-            Assert.Contains(errors, e => e.Contains("does not compile"));
-            Assert.Equal(1, Scalar(connection, "SELECT COUNT(*) FROM dbo.ORDERS"));
-        }
+        try { await ExerciseEngine(connection); }
         finally
         {
             SqlConnection.ClearAllPools();
             Execute(master, $"ALTER DATABASE [{database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{database}]");
         }
+    }
+
+    internal static async Task ExerciseEngine(string connection)
+    {
+        Execute(connection, """
+            CREATE TABLE dbo.ORDERS (ORDER_ID int IDENTITY(1,1) PRIMARY KEY, CUSTOMER nvarchar(200) NOT NULL, AMOUNT decimal(12,2) NOT NULL DEFAULT 0,
+                ORDER_DATE date NOT NULL, NOTES nvarchar(max) NULL, DONE bit NOT NULL DEFAULT 0, OWNER nvarchar(100) NULL,
+                VERSION int NOT NULL DEFAULT 1, UPDATED_BY nvarchar(100) NULL, UPDATED_AT datetime2 NULL, LEGACY_AT datetime NULL, TOTAL AS (AMOUNT * 2));
+            CREATE TABLE dbo.ORDER_AUDIT (ID int IDENTITY PRIMARY KEY, ORDER_ID int NOT NULL);
+            """);
+        // Triggers that change other rows: their counts must not be taken for the statement's own.
+        Execute(connection, "CREATE TRIGGER dbo.ORDERS_AUDIT ON dbo.ORDERS AFTER INSERT, UPDATE, DELETE AS INSERT INTO dbo.ORDER_AUDIT (ORDER_ID) SELECT ORDER_ID FROM inserted UNION ALL SELECT ORDER_ID FROM deleted;");
+        Execute(connection, "CREATE TABLE dbo.NOTES (ID uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID() PRIMARY KEY, BODY nvarchar(50) NOT NULL, RV rowversion);");
+        var configuration = new ConfigurationBuilder().Build();
+        var collection = new ServiceCollection();
+        collection.AddLogging();
+        collection.AddSingleton<IConfiguration>(configuration);
+        collection.AddTestConnections(connections => connections.AddConnection("LocalDb", _ => new SqlConnection(connection)));
+        collection.AddSingleton<DataSourceRuntime>();
+        using var provider = collection.BuildServiceProvider();
+        var runtime = provider.GetRequiredService<DataSourceRuntime>();
+        var user = new DataSourceUser("1001", "S-1-5-21-1", "jsmith", null, [], false);
+        var context = new FormExecutionContext(new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, "1001")], IdentityConstants.ApplicationScheme)),
+            Guid.NewGuid(), Guid.NewGuid(), "1", Guid.NewGuid().ToString());
+
+        var policy = new CountingPolicy();
+        var orders = Source(runtime, user, new() {
+            ["alias"] = "orders", ["connection"] = "LocalDb", ["source"] = "dbo.ORDERS", ["keyColumns"] = "ORDER_ID", ["concurrency"] = "VERSION",
+            ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1", ["rowRestriction"] = "OWNER = :USER_NAME",
+            ["insertDefaults"] = "OWNER = :USER_NAME\nORDER_DATE = :NOW", ["auditColumns"] = "updatedBy = UPDATED_BY\nupdatedAt = UPDATED_AT",
+        }, policy);
+        Assert.True(orders.Problem is null, orders.Problem);
+        var fields = orders.Fields.ToDictionary(f => f.Key);
+        Assert.True(fields["orderId"] is { ReadOnly: true, Kind: "number" } && fields["total"].ReadOnly && fields["done"].Kind == "checkbox");
+        Assert.True(fields["customer"] is { MaxLength: 200, Required: true } && fields["orderDate"].Kind == "date" && fields["updatedAt"].Kind == "datetime");
+        Assert.Equal(9999999999.99m, fields["amount"].Maximum);
+
+        var created = await orders.CreateAsync(JsonSerializer.SerializeToElement(new { customer = "LocalDB", amount = "12.34", done = true }), context, default);
+        Assert.True(created.Status == 200, JsonSerializer.Serialize(created.Errors));
+        Assert.Equal("1", created.Record!.Key);
+        Assert.Equal("24.68", created.Record.Values["total"]);
+        Assert.Equal(1, Scalar(connection, "SELECT COUNT(*) FROM dbo.ORDER_AUDIT")); // The trigger ran beside OUTPUT INSERTED.
+        var updated = await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { notes = "Through SQL Server", orderDate = "2026-12-24" }), created.Record.Version!, context, default);
+        Assert.True(updated.Status == 200, JsonSerializer.Serialize(updated.Errors));
+        Assert.Equal("2", updated.Record!.Version);
+        // The policy read the table through the engine's connection, inside the transaction holding the row.
+        Assert.Equal((ConnectionState.Open, true, 1), policy.Updates[0]);
+        var legacy = await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { legacyAt = "1700-01-01T00:00:00Z" }), "2", context, default);
+        Assert.Equal(422, legacy.Status);
+        Assert.Contains("1753", legacy.Errors!["legacyAt"][0]);
+        Assert.Equal("2026-12-24", updated.Record.Values["orderDate"]);
+        Assert.Equal("jsmith", Scalar(connection, "SELECT UPDATED_BY FROM dbo.ORDERS WHERE ORDER_ID = 1"));
+        Assert.Equal(409, (await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { notes = "Stale" }), created.Record.Version!, context, default)).Status);
+        Execute(connection, "INSERT INTO dbo.ORDERS (CUSTOMER, ORDER_DATE, OWNER) VALUES ('Someone else', '2026-01-01', 'kjones')");
+        Assert.Equal(404, (await orders.LoadAsync("2", context, default)).Status);
+        Assert.Equal(403, (await orders.CreateAsync(JsonSerializer.SerializeToElement(new { customer = "Not mine", owner = "kjones" }), context with { SubmissionKey = Guid.NewGuid().ToString() }, default)).Status);
+        Assert.Equal(204, (await orders.DeleteAsync("1", "2", context, default)).Status);
+
+        var notes = Source(runtime, user, new() {
+            ["alias"] = "notes", ["connection"] = "LocalDb", ["source"] = "SELECT ID, BODY, RV FROM dbo.NOTES", ["keyColumns"] = "ID", ["concurrency"] = "RV",
+            ["allowInsert"] = "1", ["allowUpdate"] = "1",
+        });
+        Assert.True(notes.Problem is null, notes.Problem);
+        Assert.DoesNotContain(notes.Fields, f => f.Key == "rv");
+        var note = await notes.CreateAsync(JsonSerializer.SerializeToElement(new { body = "First" }), context with { SubmissionKey = Guid.NewGuid().ToString() }, default);
+        Assert.True(Guid.TryParse(note.Record!.Key, out _));
+        Assert.Equal(16, note.Record.Version!.Length);
+        var changed = await notes.UpdateAsync(note.Record.Key!, JsonSerializer.SerializeToElement(new { body = "Second" }), note.Record.Version, context, default);
+        Assert.Equal(200, changed.Status);
+        Assert.NotEqual(note.Record.Version, changed.Record!.Version);
+        Assert.Equal(409, (await notes.UpdateAsync(note.Record.Key!, JsonSerializer.SerializeToElement(new { body = "Stale" }), note.Record.Version, context, default)).Status);
+        Assert.Equal(404, (await notes.LoadAsync("not-a-guid", context, default)).Status);
+
+        var errors = runtime.Validate(Definition(new() {
+            ["alias"] = "broken", ["connection"] = "LocalDb", ["source"] = "dbo.ORDERS", ["keyColumns"] = "ORDER_ID", ["allowUpdate"] = "1",
+            ["customStatements"] = "-- update\nUPDATE dbo.ORDERS SET NOPE = 1 WHERE ORDER_ID = :FIELD.orderId",
+        }));
+        Assert.Contains(errors, e => e.Contains("does not compile"));
+        Assert.Equal(1, Scalar(connection, "SELECT COUNT(*) FROM dbo.ORDERS"));
     }
 
     private static SqlDataSource Source(DataSourceRuntime runtime, DataSourceUser user, Dictionary<string, object?> values, params IDataSourcePolicy[] policies)

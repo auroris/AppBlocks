@@ -252,7 +252,7 @@ public sealed class PaperReportTests
         var factory = new HttpFactory(request => {
             Assert.False(request.Headers.Contains("X-Api-Key"));
             using var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
-            Assert.Equal("inline", body.RootElement.GetProperty("disposition").GetString());
+            Assert.False(body.RootElement.TryGetProperty("disposition", out _));
             Assert.True(!body.RootElement.TryGetProperty("printer", out var printer) || printer.ValueKind == JsonValueKind.Null);
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
             response.Content.Headers.ContentType = new("application/pdf");

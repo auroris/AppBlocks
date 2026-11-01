@@ -85,18 +85,18 @@ public sealed class OracleDialect : SqlDialect
         var identity = new HashSet<string>(StringComparer.Ordinal);
         if (!legacy)
         {
-            using var command = Command(connection, "SELECT COLUMN_NAME FROM ALL_TAB_IDENTITY_COLS WHERE OWNER = :owner AND TABLE_NAME = :table");
-            Bind(command, ":owner", owner); Bind(command, ":table", table);
+            using var command = Command(connection, "SELECT COLUMN_NAME FROM ALL_TAB_IDENTITY_COLS WHERE OWNER = :owner AND TABLE_NAME = :table_name");
+            Bind(command, ":owner", owner); Bind(command, ":table_name", table);
             using var reader = command.ExecuteReader();
             while (reader.Read()) identity.Add(reader.GetString(0));
         }
         var columns = new List<TableColumn>();
         using (var command = Command(connection, """
             SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DEFAULT_LENGTH, VIRTUAL_COLUMN, CHAR_LENGTH, DATA_PRECISION, DATA_SCALE
-            FROM ALL_TAB_COLS WHERE OWNER = :owner AND TABLE_NAME = :table AND HIDDEN_COLUMN = 'NO' ORDER BY COLUMN_ID
+            FROM ALL_TAB_COLS WHERE OWNER = :owner AND TABLE_NAME = :table_name AND HIDDEN_COLUMN = 'NO' ORDER BY COLUMN_ID
             """))
         {
-            Bind(command, ":owner", owner); Bind(command, ":table", table);
+            Bind(command, ":owner", owner); Bind(command, ":table_name", table);
             using var reader = command.ExecuteReader();
             while (reader.Read())
             {
@@ -112,11 +112,11 @@ public sealed class OracleDialect : SqlDialect
         using (var command = Command(connection, """
             SELECT c.CONSTRAINT_NAME, cc.COLUMN_NAME FROM ALL_CONSTRAINTS c
             JOIN ALL_CONS_COLUMNS cc ON cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME
-            WHERE c.OWNER = :owner AND c.TABLE_NAME = :table AND c.CONSTRAINT_TYPE IN ('P', 'U') AND c.STATUS = 'ENABLED'
+            WHERE c.OWNER = :owner AND c.TABLE_NAME = :table_name AND c.CONSTRAINT_TYPE IN ('P', 'U') AND c.STATUS = 'ENABLED'
             ORDER BY c.CONSTRAINT_TYPE, c.CONSTRAINT_NAME, cc.POSITION
             """))
         {
-            Bind(command, ":owner", owner); Bind(command, ":table", table);
+            Bind(command, ":owner", owner); Bind(command, ":table_name", table);
             using var reader = command.ExecuteReader();
             string? current = null;
             List<string>? key = null;

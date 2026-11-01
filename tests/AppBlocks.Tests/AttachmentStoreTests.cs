@@ -39,7 +39,7 @@ public sealed class AttachmentStoreTests
         }
     }
 
-    private static async Task Exercise(string connectionString, Func<string, DbConnection> open)
+    internal static async Task Exercise(string connectionString, Func<string, DbConnection> open)
     {
         var store = Store(connectionString, open);
         Assert.Empty(await store.ListAsync(Order, default));

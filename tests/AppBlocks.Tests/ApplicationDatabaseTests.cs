@@ -125,35 +125,37 @@ public sealed class ApplicationDatabaseTests
         var database = "app_db_test_" + Guid.NewGuid().ToString("N")[..12];
         ExecuteSqlServer(master, $"CREATE DATABASE [{database}]");
         var connectionString = master + $";Initial Catalog={database};Pooling=false";
-        try
-        {
-            var root = Folder(("sqlserver/001-tables.sql", """
-                IF OBJECT_ID(N'dbo.ITEMS', N'U') IS NULL
-                CREATE TABLE dbo.ITEMS (ID int IDENTITY(1, 1) NOT NULL PRIMARY KEY, NAME nvarchar(50) NOT NULL);
-                GO
-                CREATE OR ALTER VIEW dbo.ITEM_NAMES AS SELECT NAME FROM dbo.ITEMS;
-                  go
-                IF COL_LENGTH('dbo.ITEMS', 'NOTE') IS NULL ALTER TABLE dbo.ITEMS ADD NOTE nvarchar(100) NULL;
-                """));
-            var steps = 0;
-            var schema = ApplicationSchema.FromDirectory(root).Then((_, dialect) => { Assert.Equal("sqlserver", dialect); steps++; });
-            // Two connection strings to one database are two memo entries, so the second ensure runs every batch again.
-            foreach (var name in new[] { "first", "second" })
-            {
-                await using var connection = new SqlConnection(connectionString + $";Application Name={name}");
-                await connection.OpenAsync();
-                await ApplicationDatabase.EnsureAsync(connection, schema);
-            }
-            Assert.Equal(2, steps);
-            Assert.Equal(1, ScalarSqlServer(connectionString, "SELECT COUNT(*) FROM sys.views WHERE name = 'ITEM_NAMES'"));
-            Assert.Equal(1, ScalarSqlServer(connectionString, "SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('dbo.ITEMS') AND name = 'NOTE'"));
-            Assert.Equal(64L, Convert.ToInt64(ScalarSqlServer(connectionString, "SELECT LEN(HASH) FROM APP_SCHEMA WHERE SCRIPT = '001-tables.sql'")));
-        }
+        try { await ExerciseSqlServerSchema(connectionString); }
         finally
         {
             SqlConnection.ClearAllPools();
             ExecuteSqlServer(master, $"ALTER DATABASE [{database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{database}]");
         }
+    }
+
+    internal static async Task ExerciseSqlServerSchema(string connectionString)
+    {
+        var root = Folder(("sqlserver/001-tables.sql", """
+            IF OBJECT_ID(N'dbo.ITEMS', N'U') IS NULL
+            CREATE TABLE dbo.ITEMS (ID int IDENTITY(1, 1) NOT NULL PRIMARY KEY, NAME nvarchar(50) NOT NULL);
+            GO
+            CREATE OR ALTER VIEW dbo.ITEM_NAMES AS SELECT NAME FROM dbo.ITEMS;
+              go
+            IF COL_LENGTH('dbo.ITEMS', 'NOTE') IS NULL ALTER TABLE dbo.ITEMS ADD NOTE nvarchar(100) NULL;
+            """));
+        var steps = 0;
+        var schema = ApplicationSchema.FromDirectory(root).Then((_, dialect) => { Assert.Equal("sqlserver", dialect); steps++; });
+        // Two connection strings to one database are two memo entries, so the second ensure runs every batch again.
+        foreach (var name in new[] { "first", "second" })
+        {
+            await using var connection = new SqlConnection(connectionString + $";Application Name={name}");
+            await connection.OpenAsync();
+            await ApplicationDatabase.EnsureAsync(connection, schema);
+        }
+        Assert.Equal(2, steps);
+        Assert.Equal(1, ScalarSqlServer(connectionString, "SELECT COUNT(*) FROM sys.views WHERE name = 'ITEM_NAMES'"));
+        Assert.Equal(1, ScalarSqlServer(connectionString, "SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('dbo.ITEMS') AND name = 'NOTE'"));
+        Assert.Equal(64L, Convert.ToInt64(ScalarSqlServer(connectionString, "SELECT LEN(HASH) FROM APP_SCHEMA WHERE SCRIPT = '001-tables.sql'")));
     }
 
     private static ServiceProvider Services(string dataRoot, ApplicationSchema schema)

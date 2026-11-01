@@ -34,7 +34,7 @@ public sealed class DocumentOutputService : IDocumentOutputService
         var destination = settings?.Resolve(configurationId)
             ?? (Legacy() is { } legacy && legacy.Id == configurationId ? legacy : throw new KeyNotFoundException("The selected document configuration no longer exists."));
         return SubmitAsync(destination, new RenderRequest { Html = document.Html, FileName = document.FileName,
-            Options = Convert(document.Options), Disposition = PdfDisposition.Inline }, cancellationToken);
+            Options = Convert(document.Options) }, cancellationToken);
     }
 
     internal async Task<DocumentFileResult> RenderDefaultPdfAsync(RenderRequest request, CancellationToken ct)
@@ -72,7 +72,7 @@ public sealed class DocumentOutputService : IDocumentOutputService
                 var receipt = await pressroom.PrintAsync(request, ct);
                 return new DocumentPrintResult(receipt.JobId, receipt.Printer, receipt.PageCount);
             }
-            var pdf = await pressroom.RenderStreamAsync(request with { Printer = null, Disposition = PdfDisposition.Inline }, ct);
+            var pdf = await pressroom.RenderStreamAsync(request with { Printer = null }, ct);
             var owner = new PdfOwner(pdf, client);
             client = null;
             return new DocumentFileResult(pdf.PdfStream, "application/pdf", pdf.FileName, false, owner);

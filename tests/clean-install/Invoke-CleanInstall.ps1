@@ -61,7 +61,6 @@ try {
         (Join-Path $InteractiveReportsRoot 'src/InteractiveReport.AspNetCore'),
         (Join-Path $InteractiveReportsRoot 'src/InteractiveReport.Client.Json'),
         (Join-Path $InteractiveReportsRoot 'src/InteractiveReport.Client.FileDownload'),
-        (Join-Path $PressroomRoot 'src/Pressroom.Contracts'),
         (Join-Path $PressroomRoot 'src/Pressroom.Client'),
         'src/AppBlocks', 'src/AppBlocks.InteractiveReports', 'src/AppBlocks.Documents'
     )
