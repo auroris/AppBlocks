@@ -13,7 +13,7 @@ Every C# namespace in this repository is `AppBlocks.*`, and no namespace spans t
 | Old namespace | New namespace | Moved separately |
 | --- | --- | --- |
 | `UmbracoAppHost.Attachments` | `AppBlocks.Attachments` | |
-| `UmbracoAppHost.Authentication` (`ApplicationAccessPolicy`) | `AppBlocks.Authentication` | Identity helpers; AppBlocks does not override Umbraco Public Access for administrators |
+| `UmbracoAppHost.Authentication` (`ApplicationAccessPolicy`) | `AppBlocks.Authentication` | Identity helpers. AppBlocks no longer admits anyone Umbraco's Public Access refuses; AppHost's rule for a page's editors becomes its own `IProtectedPageAdmission`. `CanEditAsync` and `BackOfficeEditorAsync` are gone from `ApplicationAccessPolicy` |
 | `UmbracoAppHost.Blocks` | `AppBlocks.Blocks` | `AppReportDefinitionStore`, `ConfiguredReportStore`: `AppBlocks.InteractiveReports.Blocks` |
 | `UmbracoAppHost.Databases` | `AppBlocks.Databases` | `ReportApplicationDatabases` is gone: register with `AppBlocksBuilder.AddApplicationDatabase` |
 | `UmbracoAppHost.DataSources` | `AppBlocks.DataSources` | `PublishedReport`, `PublishedReportCatalog`, `PublishedReportValidator`, `DataSourceReportAccess`, `DataSourceReportBindings`, `DataSourceContextParameters`, `OriginalContextParameters`: `AppBlocks.InteractiveReports.DataSources` |

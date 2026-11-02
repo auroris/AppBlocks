@@ -27,7 +27,7 @@ Home                                    (/en/)
 
 The unit home pages use a document type with a text property aliased `tenantId`. That property is the whole definition of a tenant: the C# below walks up from the calling page to the nearest page that has one. Depth, naming and language do not matter, which is why 4 Wing can sit at the root and 10 FTTS under Units.
 
-No page needs Public Access for the rules to work. The Schedule block, the categories report and the category form read through the data source engine, which shows a sign-in notice to anyone it does not know, and the activity form's class refuses anyone it does not know. Protecting the subtree with Public Access as well is fine, and keeps the pages out of the menu for visitors.
+No page needs Public Access for the rules to work. The Schedule block, the categories report and the category form read through the data source engine, which shows a sign-in notice to anyone it does not know, and the activity form's class refuses anyone it does not know. Protecting the subtree with Public Access as well keeps the pages out of the menu for visitors, but Umbraco then refuses a backoffice User who has no Member session, editors included, unless the host registers an `IProtectedPageAdmission` that admits them.
 
 ## The tables
 

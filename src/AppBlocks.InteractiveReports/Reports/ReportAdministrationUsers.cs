@@ -1,26 +1,33 @@
 using System.Security.Claims;
 using InteractiveReport.AspNetCore;
+using Microsoft.Extensions.Options;
+using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Services;
 
 namespace AppBlocks.InteractiveReports.Reports;
 
 /// <summary>Directory choices use the same identifiers as Umbraco's backoffice and member cookies.</summary>
-public sealed class ReportAdministrationUsers(IUserService users, IMemberService members)
+public sealed class ReportAdministrationUsers(IUserService users, IMemberService members, IOptionsMonitor<InteractiveReportOptions> options)
+    : IInteractiveReportUserProvider
 {
-    public ValueTask<IEnumerable<ClaimsIdentity>?> Search(InteractiveReportUserSearch search, CancellationToken ct)
+    public ValueTask<IReadOnlyCollection<InteractiveReportUser>?> SearchUsers(InteractiveReportUserSearch search, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        var choices = users.GetAll(0, search.Limit, out _, filter: search.Search)
+        var choices = users.GetAll(0, search.Limit, out _, "Name", Direction.Ascending, null, null, search.Search)
             .Where(user => user.IsApproved && !user.IsLockedOut)
-            .Select(user => Identity(user.Key.ToString(), user.Name ?? user.Username, user.Email, "Backoffice"))
-            .Concat(members.GetAll(0L, search.Limit, out _, filter: search.Search)
+            .Select(user => Choice(user.Key.ToString(), user.Username, user.Name, user.Email, "Backoffice"))
+            .Concat(members.GetAll(0L, search.Limit, out _, "Name", Direction.Ascending, true, null, search.Search ?? "")
                 .Where(member => member.IsApproved && !member.IsLockedOut)
-                .Select(member => Identity(member.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), member.Name ?? member.Username, member.Email, "Member")))
+                .Select(member => Choice(member.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), member.Username, member.Name, member.Email, "Member")))
+            .OfType<InteractiveReportUser>()
             .ToArray();
-        return ValueTask.FromResult<IEnumerable<ClaimsIdentity>?>(choices);
+        return ValueTask.FromResult<IReadOnlyCollection<InteractiveReportUser>?>(choices);
     }
 
-    private static ClaimsIdentity Identity(string key, string name, string email, string kind) => new([
-        new(ClaimTypes.NameIdentifier, key), new(ClaimTypes.Name, $"{name} ({kind})"), new(ClaimTypes.Email, email),
-    ]);
+    private InteractiveReportUser? Choice(string key, string username, string? name, string email, string kind)
+    {
+        var identity = new ClaimsIdentity([new(ClaimTypes.NameIdentifier, key), new(ClaimTypes.Name, username), new(ClaimTypes.Email, email)]);
+        var choice = InteractiveReportUser.FromIdentity(identity, options.CurrentValue.IdentityClaim);
+        return choice is null ? null : choice with { Display = $"{name ?? username} / {username} ({kind})" };
+    }
 }

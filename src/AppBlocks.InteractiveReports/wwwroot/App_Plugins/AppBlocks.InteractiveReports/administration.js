@@ -34,7 +34,7 @@ export default class ReportAdministration extends UmbLitElement {
     `;
     constructor() {
         super(); this.loading = true; this.allowed = false; this.sources = []; this.sourceIndex = "";
-        this.reports = []; this.search = ""; this.page = 0; this.owners = [];
+        this.reports = []; this.search = ""; this.page = 0; this.owners = []; this.ownerSearch = 0;
         this.consumeContext(UMB_AUTH_CONTEXT, auth => { if (auth) { this.auth = auth; void this.load(); } });
     }
     async load() {
@@ -42,10 +42,12 @@ export default class ReportAdministration extends UmbLitElement {
         try {
             this.allowed = (await request(this.auth, "report-administration/access")).allowed;
             if (!this.allowed) return;
-            await import(`${reportsBase}/ui/ir.js`);
-            [this.sources, this.reports] = await Promise.all([
+            const results = await Promise.allSettled([
                 request(this.auth, "report-administration/sources"), request(this.auth, "report-administration/reports"),
             ]);
+            this.sources = results[0].status === "fulfilled" ? results[0].value : [];
+            this.reports = results[1].status === "fulfilled" ? results[1].value : [];
+            this.error = results.filter(result => result.status === "rejected").map(result => result.reason.message).join(" ") || undefined;
         } catch (error) { this.error = error.message; }
         finally { this.loading = false; }
     }
@@ -102,8 +104,12 @@ export default class ReportAdministration extends UmbLitElement {
     }
     async selectSource(event) {
         this.sourceIndex = event.target.value; this.preview = undefined; this.error = undefined;
+        const selectedIndex = this.sourceIndex;
         const source = this.sources[Number(this.sourceIndex)];
         if (this.sourceIndex === "" || !source) return;
+        try { await import(`${reportsBase}/ui/ir.js`); }
+        catch { if (this.sourceIndex === selectedIndex) this.error = "The report viewer could not be loaded. Refresh and try again."; return; }
+        if (this.sourceIndex !== selectedIndex || !this.creating) return;
         // Both viewer and save requests retain the block's culture and the backoffice session.
         const element = document.createElement("interactive-report");
         element.setAttribute("report", source.name);
@@ -152,9 +158,10 @@ export default class ReportAdministration extends UmbLitElement {
     render() {
         return html`<umb-body-layout headline="Interactive Reports Administration">
             <h1 slot="header">Interactive Reports Administration</h1>
+            <div aria-live="polite">${this.error ? html`<p class="error" role="alert">${this.error}</p>` : ""}${this.message ? html`<p class="notice" role="status">${this.message}</p>` : ""}</div>
             ${this.loading ? html`<p role="status">Loading report administration…</p>` : !this.allowed ? html`<p>You need the Interactive Reports Administrator or Administrator group to manage reports.</p>` : html`
                 <div class="toolbar"><p>Manage public and private reports created by users. Reassign ownership or delete reports.</p>
-                    <button type="button" ?disabled=${this.busy} @click=${this.load}>Refresh</button>
+                    <button type="button" ?disabled=${this.busy || this.creating || this.editing} @click=${this.load}>Refresh</button>
                     <button type="button" class="primary" ?disabled=${this.creating || this.busy || !this.sources.length} @click=${() => { this.creating = true; this.editing = undefined; this.error = undefined; this.message = undefined; }}>Create public report</button>
                 </div>
                 ${this.editing ? html`<uui-box headline="Reassign report"><form @submit=${this.saveOwner}>
@@ -175,7 +182,6 @@ export default class ReportAdministration extends UmbLitElement {
                         <button type="button" ?disabled=${this.busy} @click=${() => { this.creating = false; this.preview = undefined; this.sourceIndex = ""; }}>Cancel</button></div>
                 </form></uui-box>` : this.renderReports()}
             `}
-            <div aria-live="polite">${this.error ? html`<p class="error" role="alert">${this.error}</p>` : ""}${this.message ? html`<p class="notice" role="status">${this.message}</p>` : ""}</div>
         </umb-body-layout>`;
     }
 }

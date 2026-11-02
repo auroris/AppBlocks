@@ -90,6 +90,47 @@ public sealed class ReportAccessPolicyTests
         Assert.Equal(allowed, await policy.AuthorizeAsync(request, default));
     }
 
+    private const string MemberId = "42";
+    private static readonly string BackOfficeKey = Guid.NewGuid().ToString();
+
+    [Theory]
+    // Signed in to both, Member first as the website builds it: a private view saved under either identity is theirs.
+    [InlineData("both", "member", true)]
+    [InlineData("both", "backoffice", true)]
+    [InlineData("both", "other member", false)]
+    [InlineData("both", "other backoffice", false)]
+    // One session only owns what was saved under that identity.
+    [InlineData("backoffice", "backoffice", true)]
+    [InlineData("backoffice", "member", false)]
+    [InlineData("member", "member", true)]
+    [InlineData("member", "backoffice", false)]
+    public async Task Someone_signed_in_to_both_owns_private_views_saved_under_either_identity(string signedIn, string savedBy, bool owner)
+    {
+        var user = Stub<IUser>((method, _) => method.Name switch {
+            "get_IsApproved" => true, "get_IsLockedOut" => false, "get_Groups" => Array.Empty<IReadOnlyUserGroup>(),
+            _ => throw new NotImplementedException(method.Name),
+        });
+        var users = Stub<IUserService>((method, _) => method.Name == "GetAsync" ? Task.FromResult<IUser?>(user) : throw new NotImplementedException());
+        // A reserved report name keeps the published catalogue out of this test; it only governs reading the report itself.
+        var policy = new DefaultReportAccessPolicy(users, Options.Create(new AppBlocksOptions()), null!);
+        var member = new ClaimsIdentity([new(ClaimTypes.NameIdentifier, MemberId)], IdentityConstants.ApplicationScheme);
+        var backOffice = new ClaimsIdentity([new(ClaimTypes.NameIdentifier, BackOfficeKey)], Constants.Security.BackOfficeAuthenticationType);
+        var principal = new ClaimsPrincipal(signedIn switch {
+            "both" => new[] { member, backOffice }, "member" => new[] { member }, _ => new[] { backOffice },
+        });
+        var saved = new InteractiveReport.Core.SavedReports.SavedReportMetadata(7, "__views", null, "Mine", savedBy switch {
+            "member" => MemberId, "backoffice" => BackOfficeKey, "other member" => "43", _ => Guid.NewGuid().ToString(),
+        }, IsGlobal: false, IsDefault: false, DateTime.UtcNow, InteractiveReport.Core.SavedReports.SavedReportOrigin.User);
+        foreach (var action in new[] { InteractiveReportAction.ReadSavedReport, InteractiveReportAction.UpdateSavedReport, InteractiveReportAction.DeleteSavedReport })
+        {
+            var request = new InteractiveReportAuthorizationRequest {
+                User = principal, Action = action, RequestServices = null!,
+                Resource = new InteractiveReportAuthorizationResource { ReportName = "__views", SavedReport = saved },
+            };
+            Assert.True(owner == await policy.AuthorizeAsync(request, default), $"{action} by {signedIn} on a view saved by {savedBy}");
+        }
+    }
+
     private static T Stub<T>(Func<MethodInfo, object?[]?, object?> invoke) where T : class {
         var proxy = DispatchProxy.Create<T, ServiceStub>(); ((ServiceStub)(object)proxy).Call = invoke; return proxy;
     }

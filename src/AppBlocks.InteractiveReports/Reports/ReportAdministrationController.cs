@@ -116,3 +116,4 @@ public sealed class ReportAdministrationController(IReportAccessPolicy access, P
 }
 
 public sealed record AdministrationSource(string Name, string Title, string? Culture);
+public sealed record ReassignReport(string? Owner, DateTime ModifiedUtc);

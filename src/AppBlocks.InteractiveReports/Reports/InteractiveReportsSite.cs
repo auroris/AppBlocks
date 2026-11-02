@@ -68,7 +68,6 @@ public static class InteractiveReportsSite
         Action<InteractiveReportBuilder>? configure = null)
     {
         var services = builder.Services;
-        services.AddScoped<ReportAdministrationUsers>();
 
         var reports = services.AddInteractiveReports(configuration)
             .AddConnection(ReportsConnection, provider => new SqliteConnection(
@@ -79,8 +78,7 @@ public static class InteractiveReportsSite
                 cancellationToken.ThrowIfCancellationRequested();
                 return await request.RequestServices.GetRequiredService<IReportAccessPolicy>().IsAdministratorAsync(request.User);
             })
-            .UseUserDirectory((request, cancellationToken) =>
-                request.RequestServices.GetRequiredService<ReportAdministrationUsers>().Search(request, cancellationToken))
+            .UseUserProvider<ReportAdministrationUsers>()
             .UseRowRestrictions((request, cancellationToken) =>
                 request.RequestServices.GetRequiredService<RecentPagesReport>().RestrictAsync(request, cancellationToken))
             .UseRowRestrictions((request, cancellationToken) =>

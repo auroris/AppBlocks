@@ -10,7 +10,7 @@ using AppBlocks.Authentication;
 namespace AppBlocks.Blocks;
 
 public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker access, IHttpContextAccessor http,
-    ApplicationAccessPolicy applicationAccess, IPublicAccessService publicAccess)
+    ApplicationAccessPolicy applicationAccess, IPublicAccessService publicAccess, IEnumerable<IProtectedPageAdmission> admissions)
 {
     /// <summary>Retains member-only access for hosts that explicitly require it.</summary>
     public async Task<ClaimsPrincipal?> MemberAsync(Guid pageKey)
@@ -40,10 +40,23 @@ public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker 
             return backOfficeUser is null ? member.Principal
                 : new ClaimsPrincipal(member.Principal.Identities.Concat(backOfficeUser.Identities));
         }
-        // Umbraco Public Access protects pages for Members. A backoffice User passes it only on a page
-        // they may edit, and is never looked up in the Member store using a coincidentally matching identifier.
-        if (publicAccess.IsProtected(page.Path).Success) return await applicationAccess.BackOfficeEditorAsync(context, page);
+        // Umbraco Public Access protects pages for Members. Without a Member session, Umbraco refuses the page, and only a rule
+        // the host registers admits anyone else; a backoffice User is never looked up in the Member store using a coincidentally matching identifier.
+        if (publicAccess.IsProtected(page.Path).Success) return await AdmittedAsync(context, page);
         return await applicationAccess.BackOfficeUserAsync(context);
+    }
+
+    /// <summary>
+    /// Who the host's <see cref="IProtectedPageAdmission"/> rules admit to a page Umbraco's Public Access refuses: the first
+    /// authenticated answer, or null when there is none or when a Member session is present, since Umbraco itself decides for a Member.
+    /// </summary>
+    public async Task<ClaimsPrincipal?> AdmittedAsync(HttpContext context, IPublishedContent page)
+    {
+        var member = await context.AuthenticateAsync(IdentityConstants.ApplicationScheme);
+        if (member.Succeeded && member.Principal?.Identity?.IsAuthenticated == true) return null;
+        foreach (var admission in admissions)
+            if (await admission.AdmitAsync(context, page, context.RequestAborted) is { Identity.IsAuthenticated: true } admitted) return admitted;
+        return null;
     }
 
     /// <summary>

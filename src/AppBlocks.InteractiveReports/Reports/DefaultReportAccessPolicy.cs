@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using InteractiveReport.AspNetCore;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core.Services;
 using AppBlocks.Authentication;
@@ -46,8 +47,7 @@ public sealed class DefaultReportAccessPolicy(IUserService users, IOptions<AppBl
             && request.Action == InteractiveReportAction.SelectDefaultReport) return false;
         var admin = await IsAdministratorAsync(request.User);
         var saved = request.Resource.SavedReport;
-        var id = request.User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var owner = id is not null && saved is not null && saved.Owner == id;
+        var owner = saved is not null && OwnerKeys(request.User).Contains(saved.Owner, StringComparer.Ordinal);
         var name = request.Resource.SourceReportName ?? request.Resource.ReportName;
         var restricted = name.StartsWith("__", StringComparison.Ordinal)
             || definitions.Reports.TryGetValue(name, out var report) && report.Authorization?.Policy == ReportAdministratorRequirement.Policy;
@@ -60,4 +60,16 @@ public sealed class DefaultReportAccessPolicy(IUserService users, IOptions<AppBl
             _ => admin,
         };
     }
+
+    /// <summary>
+    /// The keys a saved view may be owned under: every signed-in Member identity, then every signed-in backoffice User identity,
+    /// then any other signed-in identity a host adds. A view belongs to the Member when one is signed in, so someone signed in
+    /// to both owns views saved under either key.
+    /// </summary>
+    private static IEnumerable<string> OwnerKeys(ClaimsPrincipal principal)
+        => principal.Identities.Where(identity => identity.IsAuthenticated)
+            .OrderBy(identity => identity.AuthenticationType == IdentityConstants.ApplicationScheme ? 0
+                : identity.AuthenticationType is Constants.Security.BackOfficeAuthenticationType or Constants.Security.BackOfficeExposedAuthenticationType ? 1 : 2)
+            .Select(identity => identity.FindFirst(ClaimTypes.NameIdentifier)?.Value)
+            .OfType<string>();
 }

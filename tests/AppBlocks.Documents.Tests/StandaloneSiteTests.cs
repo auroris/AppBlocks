@@ -216,8 +216,8 @@ public sealed class StandaloneSiteTests
             Assert.Equal(HttpStatusCode.Forbidden, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
 
-            // Member Public Access is a separate site rule: a backoffice User passes it only on a page they
-            // may edit. Editors and Administrators may update this page; a group that may only browse may not.
+            // What a User may do to the page is a fact the application reads, not access to it. Editors and
+            // Administrators may update this page; a group that may only browse may not.
             applicationRule.Allow = _ => true;
             var groups = accountScope.ServiceProvider.GetRequiredService<IUserGroupService>();
             var viewers = new UserGroup(accountScope.ServiceProvider.GetRequiredService<IShortStringHelper>()) {
@@ -255,8 +255,10 @@ public sealed class StandaloneSiteTests
             var publicAccess = accountScope.ServiceProvider.GetRequiredService<IPublicAccessService>();
             publicAccess.Save(new PublicAccessEntry(reportContent, reportContent, reportContent, []));
             Assert.True(publicAccess.IsProtected(reportContent.Path).Success);
-            Assert.Equal(HttpStatusCode.OK, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
-            Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            // Umbraco's Public Access protects the page for Members and refuses every backoffice User here, whatever
+            // they may edit, because this site registers no IProtectedPageAdmission to admit anyone it refuses.
+            Assert.Equal(HttpStatusCode.Forbidden, (await editor.GetAsync("/api/paper-reports/" + key)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/paper-reports/" + key)).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await viewer.GetAsync("/api/paper-reports/" + key)).StatusCode);
         }
         finally { await app.StopAsync(); }

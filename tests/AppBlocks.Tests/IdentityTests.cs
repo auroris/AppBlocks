@@ -157,27 +157,22 @@ public sealed class IdentityTests
     }
 
     [Theory]
-    [InlineData(false, false, true)]
-    [InlineData(true, false, true)]
-    [InlineData(false, true, false)]
+    [InlineData(false, null, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, null, false)]
+    [InlineData(true, false, false)]
     [InlineData(true, true, true)]
-    public async Task Backoffice_accounts_reach_public_pages_and_pass_Member_Public_Access_only_where_they_may_edit(bool canEdit, bool protectedPage, bool allowed)
+    public async Task Backoffice_users_reach_open_pages_and_pass_Public_Access_only_when_a_host_admission_admits_them(bool protectedPage, bool? admits, bool allowed)
     {
         var key = Guid.NewGuid();
         var pageKey = Guid.NewGuid();
         var principal = Principal(Constants.Security.BackOfficeAuthenticationType, key.ToString());
+        var admitted = Principal("HostAdmission", "7");
         var user = Stub<IUser>((method, _) => method.Name switch {
             "get_IsApproved" => true, "get_IsLockedOut" => false,
             _ => throw new NotImplementedException(method.Name),
         });
         var users = Stub<IUserService>((method, _) => method.Name == "GetAsync" ? Task.FromResult<IUser?>(user) : throw new NotImplementedException(method.Name));
-        // Umbraco's own Update permission decides, and only a protected page asks for it.
-        var permissions = Stub<IContentPermissionService>((method, args) => {
-            Assert.Equal("AuthorizeAccessAsync", method.Name);
-            Assert.True(protectedPage);
-            Assert.Same(user, args![0]); Assert.Equal(pageKey, args[1]); Assert.Equal(ActionUpdate.ActionLetter, args[2]);
-            return Task.FromResult(canEdit ? ContentAuthorizationStatus.Success : ContentAuthorizationStatus.UnauthorizedMissingPermissionAccess);
-        });
         var authentication = Stub<IAuthenticationService>((method, args) => method.Name == "AuthenticateAsync"
             ? Task.FromResult((string)args![1]! == Constants.Security.BackOfficeAuthenticationType
                 ? AuthenticateResult.Success(new AuthenticationTicket(principal, Constants.Security.BackOfficeAuthenticationType)) : AuthenticateResult.NoResult())
@@ -190,8 +185,27 @@ public sealed class IdentityTests
         var page = Stub<IPublishedContent>((method, _) => method.Name switch {
             "get_Path" => "-1,42", "get_Key" => pageKey, _ => throw new NotImplementedException(method.Name),
         });
-        var access = new AppPageAccess(null!, Stub<IPublicAccessChecker>(Never), new HttpContextAccessor { HttpContext = context }, new ApplicationAccessPolicy(users, permissions), protection);
-        Assert.Equal(allowed, await access.UserAsync(page) is not null);
+        // A host's rule is asked only once Umbraco has refused: a protected page and no Member session.
+        var asked = 0;
+        IProtectedPageAdmission Admission(ClaimsPrincipal? answer) => Stub<IProtectedPageAdmission>((method, args) => {
+            Assert.Equal("AdmitAsync", method.Name); Assert.True(protectedPage);
+            Assert.Same(context, args![0]); Assert.Same(page, args[1]);
+            asked++; return Task.FromResult(answer);
+        });
+        // No rule at all is AppBlocks' own default. An unauthenticated answer counts as no answer, and the first
+        // authenticated answer decides without asking the rules after it.
+        IProtectedPageAdmission[] admissions = admits switch {
+            null => [],
+            false => [Admission(AppPageAccess.Anonymous)],
+            true => [Admission(null), Admission(admitted), Stub<IProtectedPageAdmission>(Never)],
+        };
+        var access = new AppPageAccess(null!, Stub<IPublicAccessChecker>(Never), new HttpContextAccessor { HttpContext = context },
+            new ApplicationAccessPolicy(users), protection, admissions);
+        var result = await access.UserAsync(page);
+        Assert.Equal(allowed, result is not null);
+        if (!protectedPage) { Assert.Equal(0, asked); Assert.Same(principal, result); }
+        else Assert.Equal(admits switch { null => 0, false => 1, true => 2 }, asked);
+        if (protectedPage && allowed) Assert.Same(admitted, result);
     }
 
     [Theory]
@@ -278,9 +292,11 @@ public sealed class IdentityTests
             Assert.Same(member, args![1]); return Task.FromResult(status);
         });
         var page = Stub<IPublishedContent>((method, _) => method.Name == "get_Id" ? 42 : throw new NotImplementedException(method.Name));
+        // Umbraco decides for a Member. A refused Member is never replaced by another account, so a host's admission is not asked.
         var access = new AppPageAccess(null!, checker, new HttpContextAccessor { HttpContext = context },
-            new ApplicationAccessPolicy(Stub<IUserService>(Never), Stub<IContentPermissionService>(Never)), Stub<IPublicAccessService>(Never));
+            new ApplicationAccessPolicy(Stub<IUserService>(Never)), Stub<IPublicAccessService>(Never), [Stub<IProtectedPageAdmission>(Never)]);
         Assert.Equal(allowed, await access.UserAsync(page) is not null);
+        Assert.Null(await access.AdmittedAsync(context, page));
     }
 
     private static IReadOnlyUserGroup Group(string name, string alias) => Stub<IReadOnlyUserGroup>((method, _) => method.Name switch {

@@ -210,6 +210,35 @@ public sealed class AnonymousAccessSiteTests
         var open = await Load(visitor, PublicSite.FormUrl(PublicSite.ContactPage, PublicSite.ContactForm));
         using var posted = await Post(visitor, PublicSite.FormUrl(PublicSite.ProtectedPage, PublicSite.ProtectedForm), open.GetProperty("antiforgeryToken").GetString(), open, new { name = "Pat" }, new Dictionary<string, object>());
         Assert.Equal(HttpStatusCode.Forbidden, posted.StatusCode);
+
+        // A backoffice session is no Member session: Umbraco refuses even an administrator, and AppBlocks admits no one it refuses.
+        using var admin = await site.Administrator();
+        html = await admin.GetStringAsync("/members/inside/");
+        Assert.DoesNotContain("data-app-form", html);
+        Assert.DoesNotContain("data-app-report", html);
+        Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync(PublicSite.FormUrl(PublicSite.ProtectedPage, PublicSite.ProtectedForm))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync(PublicSite.FilesUrl(PublicSite.ProtectedPage, PublicSite.ProtectedFiles))).StatusCode);
+        // The report engine answers someone signed in that it refuses as it answers a report that is not there.
+        foreach (var path in new[] { "/default", "/schema", "" })
+            Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync(report + path)).StatusCode);
+
+        // Only a rule the host registers admits someone Umbraco refuses, and then the page and every block endpoint on it agree.
+        site.Switch.AdmitBackOfficeAdministrators = true;
+        try
+        {
+            html = await admin.GetStringAsync("/members/inside/");
+            Assert.Contains("data-app-form", html);
+            Assert.Contains("data-app-report", html);
+            Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync(PublicSite.FormUrl(PublicSite.ProtectedPage, PublicSite.ProtectedForm))).StatusCode);
+            var files = await admin.GetFromJsonAsync<JsonElement>(PublicSite.FilesUrl(PublicSite.ProtectedPage, PublicSite.ProtectedFiles));
+            Assert.True(files.GetProperty("canWrite").GetBoolean());
+            foreach (var path in new[] { "/default", "/schema", "" })
+                Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync(report + path)).StatusCode);
+            // The rule admits backoffice administrators, not someone with no account.
+            Assert.DoesNotContain("data-app-form", await visitor.GetStringAsync("/members/inside/"));
+            Assert.Equal(HttpStatusCode.Forbidden, (await visitor.GetAsync(PublicSite.FormUrl(PublicSite.ProtectedPage, PublicSite.ProtectedForm))).StatusCode);
+        }
+        finally { site.Switch.AdmitBackOfficeAdministrators = false; }
     }
 
     private static async Task A_report_block_runs_anonymously_without_saved_views(PublicSite site)
@@ -468,10 +497,13 @@ public sealed class AnonymousAccessSiteTests
             });
             Assert.Equal(HttpStatusCode.Forbidden, (await visitor.GetAsync(engine + "?id=1")).StatusCode);
             Assert.DoesNotContain("data-app-form", await visitor.GetStringAsync("/engine/?id=1"));
+            // Umbraco refuses a backoffice User there too, until a rule the host registers admits them.
             using var admin = await site.Administrator();
+            Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync(engine + "?id=1")).StatusCode);
+            site.Switch.AdmitBackOfficeAdministrators = true;
             Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync(engine + "?id=1")).StatusCode);
         }
-        finally { site.Switch.PublicEngine = false; site.Switch.DataPolicyRefuses = false; }
+        finally { site.Switch.PublicEngine = false; site.Switch.DataPolicyRefuses = false; site.Switch.AdmitBackOfficeAdministrators = false; }
     }
 
     private static async Task An_account_that_presented_itself_and_failed_is_refused_not_taken_for_anonymous(PublicSite site)

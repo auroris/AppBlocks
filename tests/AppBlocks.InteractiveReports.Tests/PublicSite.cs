@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using AppBlocks.Attachments;
+using AppBlocks.Authentication;
 using AppBlocks.Blocks;
 using AppBlocks.Connections;
 using AppBlocks.DataSources;
@@ -34,6 +35,7 @@ using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Configuration.Models;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Models.Blocks;
+using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Cms.Core.PropertyEditors;
 using Umbraco.Cms.Core.Serialization;
 using Umbraco.Cms.Core.Services;
@@ -139,6 +141,7 @@ internal sealed class PublicSite : IAsyncDisposable
             KeyColumns = ["id"], AllowInsert = true, AllowUpdate = true, AllowDelete = true,
         }, services.GetRequiredService<DataSourceRuntime>(), services.GetRequiredService<IDataSourceUserResolver>(), services.GetServices<IDataSourcePolicy>()));
         builder.Services.AddSingleton<IDataSourcePolicy, SwitchedPolicy>();
+        builder.Services.AddScoped<IProtectedPageAdmission, SwitchedAdmission>();
         builder.Services.Replace(ServiceDescriptor.Scoped<IReportAccessPolicy, SwitchedReportPolicy>());
         builder.Services.AddScoped<DefaultReportAccessPolicy>();
         builder.Services.Replace(ServiceDescriptor.Singleton<IServerRoleAccessor, SingleServerRoleAccessor>());
@@ -409,11 +412,21 @@ internal sealed class RecordedForms
     public ConcurrentQueue<ClaimsPrincipal> Initialized { get; } = new();
 }
 
-/// <summary>What a test turns on to see a developer's rule refuse someone anonymous.</summary>
+/// <summary>What a test turns on to see a developer's rule refuse someone anonymous, or a host's rule admit someone Umbraco refuses.</summary>
 internal sealed class Switches
 {
     public DataSourceUser? LastDataAccount;
-    public volatile bool ReportPolicyRefuses, DataPolicyRefuses, PublicEngine;
+    public volatile bool ReportPolicyRefuses, DataPolicyRefuses, PublicEngine, AdmitBackOfficeAdministrators;
+}
+
+/// <summary>
+/// What a host might register for a page Umbraco's Public Access refuses: while switched on, the current backoffice User
+/// is admitted if they are in Umbraco's Administrators group. AppBlocks registers no rule of its own.
+/// </summary>
+internal sealed class SwitchedAdmission(Switches switches, ApplicationAccessPolicy access) : IProtectedPageAdmission
+{
+    public async Task<ClaimsPrincipal?> AdmitAsync(HttpContext context, IPublishedContent page, CancellationToken ct)
+        => switches.AdmitBackOfficeAdministrators ? await access.BackOfficeAdministratorAsync(context) : null;
 }
 
 /// <summary>A create-only public form: no record to load, a captcha token checked from the form's other controls.</summary>

@@ -16,6 +16,7 @@ The other layers are there for rules a page cannot express. Requests pass throug
 | --- | --- | --- |
 | Sign-in | Who the caller is: an Umbraco Member or a backoffice User | Umbraco, including its external login providers |
 | Public Access (the baseline) | Which Members may reach a page | The page's **Public Access** in the backoffice |
+| `IProtectedPageAdmission` | Who the site admits to a page Umbraco's Public Access refuses, asked only when Umbraco refuses | C#, registered with dependency injection; UmbracoAppHost registers one that admits a page's editors |
 | Read groups and Write groups | Which Member Groups may use a data source | The data source |
 | Row restriction | Which rows a caller can see and write | The data source's **Row restriction** |
 | `IDataSourcePolicy` | Any rule a data source's settings cannot state | C#, registered with dependency injection |
@@ -23,7 +24,7 @@ The other layers are there for rules a page cannot express. Requests pass throug
 | `IAttachmentOwner` | Who may change a record's files | C#, on your resource |
 | `IReportAccessPolicy` | What may be done with reports and saved views | C#, or `AppBlocks:ReportAdministratorGroups` |
 
-Two things apply to every layer. First, Umbraco's Public Access is the baseline, and there is no site setting beside it. A block under Public Access, the page's own or inherited from an ancestor, refuses whoever that rule refuses. On a page without it, an anonymous visitor reaches the block, and whatever is behind the block decides what they get. **A C# class with no check is public on an unprotected page**, because your code is trusted to know what it is doing. And AppBlocks recognizes only Umbraco's Member and backoffice sign-ins, so a caller authenticated another way, such as with a bearer token or an API key, is not recognized: they count as anonymous on an unprotected page and are refused under Public Access. To use another identity system, sign people in through it as Umbraco Members or Users.
+Two things apply to every layer. First, Umbraco's Public Access is the baseline, and there is no site setting beside it; the only exception is an `IProtectedPageAdmission` the host registers, which AppBlocks itself never does. A block under Public Access, the page's own or inherited from an ancestor, refuses whoever that rule refuses. On a page without it, an anonymous visitor reaches the block, and whatever is behind the block decides what they get. **A C# class with no check is public on an unprotected page**, because your code is trusted to know what it is doing. And AppBlocks recognizes only Umbraco's Member and backoffice sign-ins, so a caller authenticated another way, such as with a bearer token or an API key, is not recognized: they count as anonymous on an unprotected page and are refused under Public Access. To use another identity system, sign people in through it as Umbraco Members or Users.
 
 | Block on an unprotected page | What an anonymous visitor gets |
 | --- | --- |
@@ -117,7 +118,7 @@ if (account is not { CanEditPage: true })
     return FormResult.Denied();
 ```
 
-Umbraco's Public Access restrictions still protect Member pages. A backoffice User visiting without a Member session passes them only on a page they may edit, which is Umbraco's Update permission on it within their start nodes. When a Member session is present, its Public Access check still decides admission to the page; a refused Member is not replaced by a backoffice session. Once admitted, both signed-in accounts are available to your business rules. On pages without Member Public Access restrictions, either account type can reach your resource, where your code must enforce the application's rules.
+Umbraco's Public Access restrictions protect Member pages for everyone. Without a Member session, Umbraco refuses a protected page, a backoffice User included, unless the host registers an `IProtectedPageAdmission` that admits them; AppBlocks registers none, and the page and its block endpoints follow the same answer. When a Member session is present, its Public Access check alone decides admission to the page; a refused Member is never replaced by a backoffice session. Once admitted, both signed-in accounts are available to your business rules. On pages without Member Public Access restrictions, either account type can reach your resource, where your code must enforce the application's rules.
 
 ## Group membership
 
@@ -170,16 +171,16 @@ if (!canEdit)
 
 Avoid granting a Member access by comparing their email address with a backoffice User's email. Sign-in, page access and permission to update a particular record are separate checks.
 
-For the built-in data-source engine, choose **Public** for the normal rule: **if you can see the page, you can read its data**. The page and its data API requests enforce the same Umbraco Public Access rules. **Access** on the SQL data source's **Access** tab is required; choose a value for every source:
+For the built-in data-source engine, **Public** is the normal rule: **if you can see the page, you can read its data**. It defers to the decision Umbraco already made about the page, so a new SQL data source created in the backoffice starts with **Public** selected. The page and its data API requests enforce the same Umbraco Public Access rules. **Access** on the SQL data source's **Access** tab is still required: an existing source keeps the value it stores, and one created in code or imported without a value starts empty, which is an error until a value is chosen:
 
 | Access | Who may read |
 | --- | --- |
-| Public | Anyone admitted by the page, including visitors without an account |
+| Public (where a new source starts) | Anyone admitted by the page, including visitors without an account: data access follows the page |
 | Not public | Any signed-in Umbraco Member or backoffice User admitted by the page |
 | Specific groups | Members in any selected Read group or Write group; at least one Read group is required |
 | Empty or unknown | Configuration error: publishing is refused and the source cannot run |
 
-**Read groups** and **Write groups** select Umbraco Member Groups. Public and Not public ignore Read groups. Write groups still limit writes in every mode: when empty, any signed-in reader may write; when set, only readers in a selected Write group may write. Allow insert/update/delete and all other checks still apply. Public never allows anonymous row or attachment changes.
+**Read groups** and **Write groups** select Umbraco Member Groups. Public and Not public ignore Read groups, and selecting them does not change Access: choose Specific groups for them to apply. Write groups still limit writes in every mode: when empty, any signed-in reader may write; when set, only readers in a selected Write group may write. Allow insert/update/delete and all other checks still apply. Public never allows anonymous row or attachment changes.
 
 Page Public Access, row restrictions and every `IDataSourcePolicy` still apply to public reads. Policies receive `DataSourceUser.Anonymous` for a visitor without an account. A query or row restriction that uses `:USER_*` binds still requires sign-in, even on a Public source; this prevents an absent identity from broadening a predicate such as `:USER_KEY IS NULL`. An authenticated account that fails resolution cannot fall back to anonymous access.
 
@@ -187,7 +188,7 @@ There is no administrator exception to Specific groups: backoffice User groups d
 
 In C#, the required `DataSourceDefinition.Access` property must be `DataSourceAccess.Public`, `NotPublic` or `SpecificGroups`. Null and unknown values fail runtime validation before a connection is opened. Read groups never supply a missing Access value. Changing the access setting changes the definition fingerprint and form contract version.
 
-Fresh installations include the required Access editor. Existing sites retain their installed document types: add the mandatory `access` property to `sqlDataSource` using the **Application: Data source access** radio-button data type, with the choices **Public**, **Not public**, and **Specific groups**, or apply the updated packaged schema through the site's schema-management process. Set and publish an explicit Access value on every existing source. Previously published sources with no value are unavailable until corrected, including sources that already have Read groups.
+Fresh installations include the required Access editor. Existing sites retain their installed document types: add the mandatory `access` property to `sqlDataSource` using the **Application: Data source access** radio-button data type, with the choices **Public**, **Not public**, and **Specific groups**, or apply the updated packaged schema through the site's schema-management process. Set and publish an explicit Access value on every existing source. Previously published sources with no value are unavailable until corrected, including sources that already have Read groups. Public as the starting value comes from the AppBlocks backoffice extension rather than the stored definitions, so it applies on existing sites as soon as the package is updated, and only to sources created in the backoffice: opening an existing source never fills in its Access.
 
 **Row restriction** limits rows without any C#. It is added to every fetch and write, for example `OWNER_KEY = :USER_KEY` or `REGION IN (:USER_GROUPS)`, and a write that would leave the restriction is refused. It may use `:USER_KEY`, `:USER_SID`, `:USER_NAME`, `:USER_EMAIL`, `:USER_GROUPS` and `:NOW`. `:USER_GROUPS` holds the account's group display names, so a Member and a backoffice User are matched against different lists.
 
@@ -218,7 +219,7 @@ Register it with `services.AddScoped<IBindVariableProvider, TenantProvider>()`. 
 
 By default, whoever can read a record can read its files and, for a custom resource, change them too if they are signed in. An anonymous visitor can change them only through this interface. They are not told which account filed a file, only that someone signed in did. Implement `IAttachmentOwner` on the resource when the rule for changing files is narrower. The data source engine already limits changes to its write groups.
 
-Interactive Reports exposes `IReportAccessPolicy` for report permissions. By default, any signed-in account that can reach a report's page can view, query and export it, and manage its own saved views. Backoffice Users in either the Administrators group (`admin`) or the automatically installed Interactive Reports Administrator group (`interactiveReportsAdministrator`) can manage public and private saved reports through **Settings → Interactive Reports → Administration**. `AppBlocks:ReportAdministratorGroups` grants additional User Group aliases the same access. Member groups never grant report administration; to change this rule, supply your own policy. Umbraco's own backoffice management permissions remain separate from application business rules.
+Interactive Reports exposes `IReportAccessPolicy` for report permissions. By default, any signed-in account that can reach a report's page can view, query and export it, and manage its own saved views. A saved view belongs to the Member when a Member is signed in, otherwise to the backoffice User, and the policy treats someone signed in to both as the owner of views saved under either identity. The Interactive Reports engine still lists and checks a person's own views by the first identity only, which on the website is the Member's, so while both sessions are active a view saved from the backoffice is listed, opened and changed from the backoffice only; lifting that limit is a change for the engine, not AppBlocks. Backoffice Users in either the Administrators group (`admin`) or the automatically installed Interactive Reports Administrator group (`interactiveReportsAdministrator`) can manage public and private saved reports through **Settings → Interactive Reports → Administration**. `AppBlocks:ReportAdministratorGroups` grants additional User Group aliases the same access. Member groups never grant report administration; to change this rule, supply your own policy. Umbraco's own backoffice management permissions remain separate from application business rules.
 
 ## Common scenarios
 

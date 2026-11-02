@@ -68,10 +68,10 @@ public static class AppBlocksExtensions
         services.AddTransient<Microsoft.AspNetCore.Razor.TagHelpers.ITagHelperComponent, AppPageAssetsTagHelperComponent>();
         services.AddScoped<AppBindVariableResolver>();
         builder.AddNotificationAsyncHandler<RoutingRequestNotification, AppBlocks.Publishing.ProtectedPageCacheHeaders>();
-        // Umbraco's website routing registers the Public Access check; a backoffice User who may edit a page passes it.
+        // Umbraco's website routing registers the Public Access check; whoever a host's IProtectedPageAdmission admits passes it, as on the blocks' endpoints.
         if (services.Any(descriptor => descriptor.ServiceType == typeof(IPublicAccessRequestHandler)))
             Decorate<IPublicAccessRequestHandler>(services, (provider, inner) =>
-                new AppBlocks.Publishing.EditorPublicAccessRequestHandler(inner, provider.GetRequiredService<IPublicAccessService>()));
+                new AppBlocks.Publishing.ProtectedPageAdmissionRequestHandler(inner, provider.GetRequiredService<IPublicAccessService>()));
         services.Configure<UmbracoPipelineOptions>(options => options.AddFilter(new UmbracoPipelineFilter("AppBlocks")
         {
             PostMapEndpoints = endpoints => endpoints.MapAppBlocks(),

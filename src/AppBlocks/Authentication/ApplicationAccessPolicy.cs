@@ -2,16 +2,17 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
 using Umbraco.Cms.Core;
-using Umbraco.Cms.Core.Actions;
 using Umbraco.Cms.Core.Models.Membership;
-using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Cms.Core.Services;
-using Umbraco.Cms.Core.Services.AuthorizationStatus;
 
 namespace AppBlocks.Authentication;
 
-/// <summary>Backoffice authentication helpers. The application decides how to use the resulting identity.</summary>
-public sealed class ApplicationAccessPolicy(IUserService users, IContentPermissionService permissions)
+/// <summary>
+/// Backoffice authentication helpers. The application decides how to use the resulting identity: nothing here admits anyone
+/// to a page or grants an application permission, and a page Umbraco's Public Access protects stays protected unless the
+/// host registers an <see cref="IProtectedPageAdmission"/>.
+/// </summary>
+public sealed class ApplicationAccessPolicy(IUserService users)
 {
     /// <summary>Whether the primary identity is a backoffice User. Combined principals keep their Member first for ownership keys.</summary>
     public static bool IsBackOfficeIdentity(ClaimsPrincipal user) => user.Identity?.AuthenticationType
@@ -23,6 +24,7 @@ public sealed class ApplicationAccessPolicy(IUserService users, IContentPermissi
     public static ClaimsIdentity? BackOfficeIdentity(ClaimsPrincipal principal) => principal.Identities.FirstOrDefault(identity =>
         identity.IsAuthenticated && identity.AuthenticationType is Constants.Security.BackOfficeAuthenticationType or Constants.Security.BackOfficeExposedAuthenticationType);
 
+    /// <summary>Whether the backoffice User is in Umbraco's Administrators group, for the backoffice's own management screens; no application permission follows from it.</summary>
     public async Task<bool> IsBackOfficeAdministratorAsync(ClaimsPrincipal principal)
     {
         var user = await ActiveUserAsync(principal);
@@ -30,29 +32,10 @@ public sealed class ApplicationAccessPolicy(IUserService users, IContentPermissi
             && user.Groups.Any(group => group.Alias.Equals(Constants.Security.AdminGroupAlias, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>
-    /// Whether the backoffice User may edit the page: Umbraco's own Update permission on it, through
-    /// the User's groups and within their start nodes, as the backoffice grants it. Such a User sees
-    /// the page's content in the backoffice already, so a site may show them the page itself.
-    /// </summary>
-    public async Task<bool> CanEditAsync(ClaimsPrincipal principal, IPublishedContent page)
-    {
-        var user = await ActiveUserAsync(principal);
-        return user is not null
-            && await permissions.AuthorizeAccessAsync(user, page.Key, ActionUpdate.ActionLetter) == ContentAuthorizationStatus.Success;
-    }
-
     public async Task<ClaimsPrincipal?> BackOfficeAdministratorAsync(HttpContext context)
     {
         var principal = await BackOfficeUserAsync(context);
         return principal is not null && await IsBackOfficeAdministratorAsync(principal) ? principal : null;
-    }
-
-    /// <summary>The current backoffice User when they may edit the page (<see cref="CanEditAsync"/>).</summary>
-    public async Task<ClaimsPrincipal?> BackOfficeEditorAsync(HttpContext context, IPublishedContent page)
-    {
-        var principal = await BackOfficeUserAsync(context);
-        return principal is not null && await CanEditAsync(principal, page) ? principal : null;
     }
 
     /// <summary>Authenticates a current backoffice User, without requiring a particular User Group.</summary>

@@ -20,6 +20,7 @@ using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Configuration.Models;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Models.Membership;
+using Umbraco.Cms.Core.PropertyEditors;
 using Umbraco.Cms.Core.Security;
 using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Core.Sync;
@@ -107,6 +108,7 @@ public sealed class DataSourceAuthoringHttpTests
             var changed = await manager.ChangePasswordWithResetAsync(identity.Id, await manager.GeneratePasswordResetTokenAsync(identity), password);
             Assert.True(changed.Succeeded, string.Join("; ", changed.Errors.Select(error => error.Description)));
             using var client = await SignInAsync(address, editor.Username, password);
+            await AssertNewSourcesStartPublic(scope.ServiceProvider, client, sources);
             using var response = await client.PostAsJsonAsync(path, request);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var result = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -137,6 +139,33 @@ public sealed class DataSourceAuthoringHttpTests
             Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
         }
         finally { await app.StopAsync(); }
+    }
+
+    /// <summary>
+    /// A fresh install keeps Access mandatory, with Public one of its stored choices, and the backoffice registers the value
+    /// preset that starts a new SQL data source at Public. The server never fills the value in: a source created in code starts empty.
+    /// </summary>
+    private static async Task AssertNewSourcesStartPublic(IServiceProvider services, HttpClient client, IContent sources)
+    {
+        var type = services.GetRequiredService<IContentTypeService>().Get(DataSourceSchema.SqlAlias)!;
+        var access = type.PropertyTypes.Single(property => property.Alias == "access");
+        Assert.True(access.Mandatory);
+        var dataType = (await services.GetRequiredService<IDataTypeService>().GetAsync(access.DataTypeKey))!;
+        Assert.Equal(Constants.PropertyEditors.Aliases.RadioButtonList, dataType.EditorAlias);
+        Assert.Equal(["Public", "Not public", "Specific groups"], dataType.ConfigurationAs<ValueListConfiguration>()!.Items);
+#pragma warning disable CS0618
+        Assert.Null(services.GetRequiredService<IContentService>().Create("Code source", sources.Id, DataSourceSchema.SqlAlias).GetValue("access"));
+#pragma warning restore CS0618
+
+        using var manifests = JsonDocument.Parse(await client.GetStringAsync("/umbraco/management/api/v1/manifest/manifest/private"));
+        var preset = Assert.Single(manifests.RootElement.EnumerateArray().SelectMany(package => package.GetProperty("extensions").EnumerateArray()),
+            extension => extension.GetProperty("type").GetString() == "propertyValuePreset"
+                && extension.TryGetProperty("forPropertyEditorSchemaAlias", out var schema) && schema.GetString() == dataType.EditorAlias
+                && extension.GetProperty("alias").GetString()!.StartsWith("AppBlocks.", StringComparison.Ordinal));
+        var script = await client.GetStringAsync(preset.GetProperty("api").GetString());
+        Assert.Contains($"\"{type.Key}\"", script);
+        Assert.Contains("\"access\"", script);
+        Assert.Contains("\"Public\"", script);
     }
 
     private static async Task<HttpClient> SignInAsync(Uri address, string username, string password)
