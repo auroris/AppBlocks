@@ -166,6 +166,12 @@ public sealed record DataSourceDefinition
             errors.Add("Select an access value: Public, Not public or Specific groups.");
         else if (Access == DataSourceAccess.SpecificGroups && ReadGroups.Count == 0)
             errors.Add("Select at least one read group for Specific groups access.");
+        if (!AllowAnonymousWrites) return;
+        // The engine refuses these combinations at run time; say so when the source is published, where the editor can act on it.
+        if (Access != DataSourceAccess.Public) errors.Add("Allow anonymous writes needs Public access: a visitor without an account must be able to read the source.");
+        if (WriteGroups.Count > 0) errors.Add("Allow anonymous writes cannot be combined with write groups, which name signed-in Members.");
+        foreach (var value in InsertDefaults.Where(d => d.Variable?.Kind is BindVariableKind.UserSid or BindVariableKind.UserName or BindVariableKind.UserKey or BindVariableKind.UserEmail))
+            errors.Add($"Allow anonymous writes cannot be combined with the insert default for {value.Column}, which uses {value.Variable}: a visitor without an account has no such value.");
     }
 
     private static DataSourceAccess? ReadAccess(string text) => text.ToLowerInvariant() switch {

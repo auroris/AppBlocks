@@ -127,18 +127,6 @@ public static class InteractiveReportsSite
         });
 
     /// <summary>
-    /// Schemes tried, in order, for report requests: the member cookie, then the cookie Umbraco
-    /// issues to expose a backoffice login to non-management endpoints, then the classic
-    /// backoffice cookie.
-    /// </summary>
-    public static readonly string[] ReportAuthenticationSchemes =
-    [
-        IdentityConstants.ApplicationScheme,
-        Constants.Security.BackOfficeExposedAuthenticationType,
-        Constants.Security.BackOfficeAuthenticationType,
-    ];
-
-    /// <summary>
     /// Authenticates report requests with each Umbraco scheme so the package sees whichever
     /// identity the browser carries. Umbraco's authentication middleware only applies the
     /// default (member) scheme. Add this inside <c>UseUmbraco().WithMiddleware(...)</c>, after

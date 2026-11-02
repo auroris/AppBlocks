@@ -6,10 +6,10 @@ namespace AppBlocks.Tests;
 public sealed class WebPageBlocksTests
 {
     [Theory]
-    [InlineData("All pages", true)]
-    [InlineData("App Blocks Pages", true)]
-    [InlineData("Off", false)]
-    public void Page_cache_setting_controls_rendered_blocks_without_erasing_host_headers(string mode, bool noStore)
+    [InlineData(NoStorePages.AllPages, true)]
+    [InlineData(NoStorePages.AppBlocksPages, true)]
+    [InlineData(NoStorePages.Off, false)]
+    public void Page_cache_setting_controls_rendered_blocks_without_erasing_host_headers(NoStorePages mode, bool noStore)
     {
         using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
             .Configure<PageCacheOptions>(options => options.NoStorePages = mode).BuildServiceProvider();

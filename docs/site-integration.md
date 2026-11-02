@@ -38,12 +38,12 @@ The `AppBlocks:NoStorePages` setting controls AppBlocks' page cache headers:
 
 | Value | Behavior |
 | --- | --- |
-| **App Blocks Pages** (default) | Send `no-store` and prevent output-cache storage for pages containing AppBlocks, including their Public Access login/denied responses. |
-| **All pages** | Apply that behavior to every Umbraco-routed website page. |
-| **Off** | Add no page cache restrictions from AppBlocks; the host and Umbraco control caching. |
+| `AppBlocksPages` (default) | Send `no-store` and prevent output-cache storage for pages with a block whose output depends on who asks: a form, attachments, a schedule, a tabular form or a plugin block that requires a user. Their Public Access login/denied responses follow. A page of content blocks alone is cached as Umbraco and the host decide. |
+| `AllPages` | Apply that behavior to every Umbraco-routed website page. |
+| `Off` | Add no page cache restrictions from AppBlocks; the host and Umbraco control caching. |
 
 ```json
-{ "AppBlocks": { "NoStorePages": "App Blocks Pages" } }
+{ "AppBlocks": { "NoStorePages": "AppBlocksPages" } }
 ```
 
 The blocks' `/api/` endpoints keep their own `no-store` headers in every mode, but do not opt out of output caching, so exclude them from any output cache policy you add. Antiforgery and other host middleware may also set their own cache headers, including when the setting is Off. A cookie for a disabled or locked-out account stays refused by AppBlocks on an open page; it is not treated as an anonymous visitor.

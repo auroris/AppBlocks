@@ -63,8 +63,8 @@ public static class AppBlocksExtensions
         services.AddSingleton<IAuthorizationHandler, AppPageAuthorizationHandler>();
         Decorate<IAuthorizationPolicyProvider>(services, (_, inner) => new AppPagePolicyProvider(inner));
         builder.AddNotificationHandler<ContentPublishingNotification, AppBlocksValidator>();
-        services.AddOptions<Publishing.PageCacheOptions>().Bind(builder.Config.GetSection(Publishing.PageCacheOptions.Section))
-            .Validate(options => options.IsValid, "AppBlocks:NoStorePages must be All pages, App Blocks Pages or Off.").ValidateOnStart();
+        // Bound at startup, so a value that is not AppBlocksPages, AllPages or Off is reported then rather than on the first page.
+        services.AddOptions<Publishing.PageCacheOptions>().Bind(builder.Config.GetSection(Publishing.PageCacheOptions.Section)).ValidateOnStart();
         services.AddScoped<AppPageAssets>();
         services.AddTransient<Microsoft.AspNetCore.Razor.TagHelpers.ITagHelperComponent, AppPageAssetsTagHelperComponent>();
         services.AddScoped<AppBindVariableResolver>();

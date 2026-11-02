@@ -198,10 +198,7 @@ public sealed class DataSourceTests : IDisposable
     }
 
     [Theory]
-    [InlineData("access", "Not public")]
-    [InlineData("writeGroups", "Planners")]
     [InlineData("rowRestriction", "OWNER_SID = :USER_SID OR :USER_SID IS NULL")]
-    [InlineData("insertDefaults", "OWNER_SID = :USER_SID")]
     [InlineData("customStatements", "-- insert\nINSERT INTO TASKS (TITLE, OWNER_SID) VALUES (:FIELD.title, :USER_KEY) RETURNING TASK_ID")]
     [InlineData("allowInsert", "0")]
     public async Task Anonymous_write_opt_in_preserves_other_access_and_identity_requirements(string setting, string value)
@@ -209,6 +206,22 @@ public sealed class DataSourceTests : IDisposable
         var source = Working(Tasks(("allowAnonymousWrites", true), ("insertDefaults", "OWNER_SID = visitor"), (setting, value)));
         Assert.Equal(403, (await source.CreateAsync(Json(new { title = "Refused" }), AnonymousContext, default)).Status);
         Assert.Equal(3, Count());
+    }
+
+    /// <summary>A combination the engine would refuse at run time is refused when the source is published, where the editor can act on it.</summary>
+    [Theory]
+    [InlineData("access", "Not public", "needs Public access")]
+    [InlineData("writeGroups", "Planners", "cannot be combined with write groups")]
+    [InlineData("insertDefaults", "OWNER_SID = :USER_SID", "insert default for OWNER_SID, which uses :USER_SID")]
+    public void Anonymous_write_opt_in_is_refused_at_publish_when_the_source_needs_an_account(string setting, string value, string problem)
+    {
+        var values = Tasks(("allowAnonymousWrites", true), ("insertDefaults", "OWNER_SID = visitor"), (setting, value));
+        var errors = new List<string>();
+        Assert.Null(DataSourceDefinition.Read(Guid.NewGuid(), "Tasks", alias => values.GetValueOrDefault(alias), picked => picked.Split(','), errors));
+        Assert.Contains(errors, error => error.Contains(problem));
+        // Without the opt-in the same source publishes.
+        values.Remove("allowAnonymousWrites");
+        Assert.NotNull(Definition(values));
     }
 
     [Fact]

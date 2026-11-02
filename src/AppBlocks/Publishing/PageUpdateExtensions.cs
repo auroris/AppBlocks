@@ -118,7 +118,7 @@ namespace AppBlocks.Publishing
         /// <summary>Applies the host's page cache setting when a template renders an AppBlocks component.</summary>
         public static void KeepAppBlockPageOutOfCaches(this HttpContext context)
         {
-            if (!context.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<PageCacheOptions>>().Value.Is(PageCacheOptions.Off))
+            if (context.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<PageCacheOptions>>().Value.NoStorePages != NoStorePages.Off)
                 context.KeepOutOfCaches();
         }
 

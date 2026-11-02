@@ -22,6 +22,16 @@ public sealed class AppBlockContent(IUmbracoContextFactory contexts, IHttpContex
         culture is not null && page.Cultures.Count > 0 && !page.Cultures.ContainsKey(culture) ? BlockGridModel.Empty
             : new(NestedBlocks(page, culture).ToList(), 12);
 
+    /// <summary>
+    /// Whether the page has a block whose output depends on who asks: a form, attachments, a schedule, a tabular form, or a
+    /// plugin block that requires a user. Such a page is rendered for this request and kept out of caches; a page of content
+    /// blocks alone is cached as Umbraco and the host decide.
+    /// </summary>
+    public static bool IsInteractive(IPublishedContent page, IEnumerable<IAppBlockPlugin> plugins, string? culture = null)
+        => AppBlockSchema.HasBlocks(page.ContentType) && Flatten(Blocks(page, culture), culture).Any(block =>
+            block.Content.ContentType.Alias is "appForm" or AppBlockSchema.AttachmentsAlias or AppBlockSchema.ScheduleAlias or AppBlockSchema.TabularAlias
+            || plugins.Any(plugin => plugin.RequiresUser && plugin.Alias == block.Content.ContentType.Alias));
+
     public static BlockGridItem AsGridItem(BlockListItem item) => new(item.ContentKey, item.Content, item.SettingsKey, item.Settings)
         { ColumnSpan = 12, RowSpan = 1, Areas = [] };
 

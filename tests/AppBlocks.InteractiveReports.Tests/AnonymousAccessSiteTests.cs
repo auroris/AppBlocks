@@ -67,8 +67,8 @@ public sealed class AnonymousAccessSiteTests
     }
 
     [Theory]
-    [InlineData("All pages", true)]
-    [InlineData("App Blocks Pages", false)]
+    [InlineData("AllPages", true)]
+    [InlineData("appblockspages", false)]
     [InlineData("Off", false)]
     public async Task Page_cache_setting_controls_ordinary_pages(string mode, bool noStore)
     {

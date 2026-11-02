@@ -70,10 +70,6 @@ public static class AppBlockSchema
     /// </summary>
     public const string AntiSpamAlias = "appAntiSpam";
 
-    public static bool IsAppBlock(string alias) => alias is FormsContainerAlias or "appForm" or "appFormInterface" or "appActions" or "appFieldset"
-        or AttachmentsAlias or ScheduleAlias or TabularAlias or AntiSpamAlias
-        || FieldAliases.Contains(alias) || LayoutAliases.Contains(alias) || ContentAliases.Contains(alias);
-
     // The seed is older than the namespace rename. Every stored content key derives from it, so it does not change.
     public static Guid Key(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes("UmbracoAppHost.Blocks.v1:" + value))[..16]);
 }
