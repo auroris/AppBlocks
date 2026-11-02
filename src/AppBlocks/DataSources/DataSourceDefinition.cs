@@ -79,6 +79,14 @@ public sealed record DataSourceDefinition
     [JsonIgnore]
     public bool AllowsWrites => AllowInsert || AllowUpdate || AllowDelete;
 
+    /// <summary>
+    /// The alias of the <see cref="IDataSourceHandler"/>, the backing class, that runs around each operation; null for none. A class that is
+    /// not registered makes the data source unavailable, never unguarded. Left out of the fingerprint while null, so adding the setting
+    /// changed no existing definition's contract.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Handler { get; init; }
+
     /// <summary>A hash of every setting, so a changed definition gets a new plan and invalidates loaded forms.</summary>
     public string ComputeFingerprint() => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(this)));
 
@@ -115,8 +123,11 @@ public sealed record DataSourceDefinition
         IReadOnlyList<string> versionColumns = concurrency.Length == 0 || concurrency.Equals("checksum", StringComparison.OrdinalIgnoreCase)
             ? [] : Columns(concurrency, "concurrency", errors);
         if (versionColumns.Count > 1) errors.Add("Concurrency names one version column, or stays empty to compare a checksum of the row.");
+        var handler = Text("handler");
+        if (handler.Length > 0 && !IsAlias(handler)) errors.Add($"The backing class '{handler}' is not an alias a class can have.");
 
         var definition = new DataSourceDefinition {
+            Handler = handler.Length == 0 ? null : handler,
             Key = key, Name = name, Alias = alias, Connection = connection, Source = source,
             KeyColumns = Columns(Text("keyColumns"), "key columns", errors),
             KeySequences = ReadKeySequences(Text("keySequences"), errors),
@@ -306,6 +317,7 @@ public sealed record DataSourceDefinition
                 var variable = BindVariable.Parse(value[1..]);
                 if (variable is null) errors.Add($"The insert default for {column} uses {value}, which is not a bind variable.");
                 else if (variable.Kind == BindVariableKind.UserGroups) errors.Add($"The insert default for {column} cannot use :USER_GROUPS, which is a list.");
+                else if (variable.Kind == BindVariableKind.Arg) errors.Add($"The insert default for {column} cannot use {value}: :ARG. values are what a backing class passes with its own statements.");
                 else defaults.Add(new(column, variable, null));
             }
             else if (value.Equals("NULL", StringComparison.OrdinalIgnoreCase)) defaults.Add(new(column, null, null));

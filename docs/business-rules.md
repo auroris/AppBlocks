@@ -19,6 +19,7 @@ The other layers are there for rules a page cannot express. Requests pass throug
 | `IProtectedPageAdmission` | Who the site admits to a page Umbraco's Public Access refuses, asked only when Umbraco refuses | C#, registered with dependency injection; UmbracoAppHost registers one that admits a page's editors |
 | Read groups and Write groups | Which Member Groups may use a data source | The data source |
 | Row restriction | Which rows a caller can see and write | The data source's **Row restriction** |
+| Backing class (`IDataSourceHandler`) | What a data source writes and shows, rows it writes itself, refusals, and a form's rows saved with its record | C#, registered with dependency injection and picked on the data source's **Advanced** tab |
 | `IDataSourcePolicy` | Any rule a data source's settings cannot state | C#, registered with dependency injection |
 | `IFormResource` | Everything about a custom form's operations | C#, your resource |
 | `IAttachmentOwner` | Who may change a record's files | C#, on your resource |
@@ -219,7 +220,7 @@ Register it with `services.AddScoped<IBindVariableProvider, TenantProvider>()`. 
 
 By default, whoever can read a record can read its files and, for a custom resource, change them too if they are signed in. An anonymous visitor can change them only through this interface. They are not told which account filed a file, only that someone signed in did. Implement `IAttachmentOwner` on the resource when the rule for changing files is narrower. The data source engine already limits changes to its write groups.
 
-Interactive Reports exposes `IReportAccessPolicy` for report permissions. By default, any signed-in account that can reach a report's page can view, query and export it, and manage its own saved views. A saved view belongs to the Member when a Member is signed in, otherwise to the backoffice User, and the policy treats someone signed in to both as the owner of views saved under either identity. The Interactive Reports engine still lists and checks a person's own views by the first identity only, which on the website is the Member's, so while both sessions are active a view saved from the backoffice is listed, opened and changed from the backoffice only; lifting that limit is a change for the engine, not AppBlocks. Backoffice Users in either the Administrators group (`admin`) or the automatically installed Interactive Reports Administrator group (`interactiveReportsAdministrator`) can manage public and private saved reports through **Settings → Interactive Reports → Administration**. `AppBlocks:ReportAdministratorGroups` grants additional User Group aliases the same access. Member groups never grant report administration; to change this rule, supply your own policy. Umbraco's own backoffice management permissions remain separate from application business rules.
+Interactive Reports exposes `IReportAccessPolicy` for report permissions. By default, any signed-in account that can reach a report's page can view, query and export it, and manage its own saved views. A saved view belongs to one identity: the Member when a Member is signed in, otherwise the backoffice User, so someone signed in to both saves and owns views as the Member on the website and as the User on the backoffice routes. Backoffice Users in either the Administrators group (`admin`) or the automatically installed Interactive Reports Administrator group (`interactiveReportsAdministrator`) can manage public and private saved reports through **Settings → Interactive Reports → Administration**. `AppBlocks:ReportAdministratorGroups` grants additional User Group aliases the same access. Member groups never grant report administration; to change this rule, supply your own policy. Umbraco's own backoffice management permissions remain separate from application business rules.
 
 ## Common scenarios
 
@@ -508,6 +509,74 @@ public sealed class DraftOrderPolicy : IDataSourcePolicy
 ```
 
 Register it with `builder.Services.AddScoped<IDataSourcePolicy, DraftOrderPolicy>()` in your application's startup or composer. Write policies run inside the engine's transaction. A policy may query `request.Connection` with `request.Transaction`; it must not close, commit or roll back either one. Protect ownership fields from reassignment in your resource or a policy comparing `Current` with `Proposed`.
+
+## The backing class of a data source
+
+A SQL data source writes its rows with statements it generates, or with the custom statements an editor writes. When a rule needs code, such as a status the server decides, a procedure that does the writing, or a log row beside every change, give the data source a **backing class**: a C# class implementing `IDataSourceHandler`, registered with dependency injection, and picked by its alias in **Backing class** on the data source's **Advanced** tab. It plays the part of an Oracle APEX page process. The engine asks it at each step of an operation, after its own checks and before the policies, and the class can change the values, write the row itself in the engine's transaction, or refuse.
+
+```csharp
+builder.Services.AddScoped<IDataSourceHandler, OrderRules>();
+```
+
+Every hook passes through by default, so a class implements only the ones it needs:
+
+| Hook | When the engine asks | What the class can do |
+| --- | --- | --- |
+| `InitializeAsync` | A new record's starting values, after the insert defaults | Change what the form starts with, or refuse |
+| `LoadAsync` | A record read by key through the row restriction | Change what the form shows, or refuse |
+| `CreateAsync` | A new row, once the submitted values are parsed and the defaults filled | Change what is written, write the row itself, or refuse |
+| `UpdateAsync` | A changed row, locked, after the version check | The same, with the stored row beside the row as it would be stored |
+| `DeleteAsync` | A row about to be deleted, locked, after the version check | Delete it its own way, such as marking it cancelled, or refuse |
+| `ListAsync` | The rows a Tabular form block shows for one record, once read | Change what the rows show, or refuse |
+| `QueryAsync` | A report, list of values, schedule or paper report about to read | Refuse |
+
+Each hook receives one `DataSourceOperation`. `Action`, `User` (an anonymous visitor, a Member, a backoffice User or both, as policies see them), `Context` and `Key` say who asks for what. `Current` is the record as stored. `Values` holds what the engine is about to write or show, by field alias, in the form's JSON shape: text, numbers as text, true or false, ISO dates and times. Change, add or remove entries; a field removed from an update stays as stored. A value the class sets is converted and checked by its field's kind, length, range and choices, as a submitted value is. The class may set a read-only field of the written table, which a form never can, but not a key once the record exists, the version, an audit column or a column the database computes. `Rows` holds a list's rows, and `Details` a form's rows saved with the record, described in the next section. `Connection` and `Transaction` are the engine's, and `Dialect` names the database; a class never opens, commits, rolls back or disposes either.
+
+A hook answers with a `DataSourceOutcome`:
+
+- `DataSourceOutcome.Continue`: the engine carries on with the values as the class left them.
+- `DataSourceOutcome.Handled(key)`: the class wrote the row itself, so the engine writes nothing and only reads the row back. A create returns the new row's key, as a form shows it, unless the values already hold every key field. On a read hook it means the same as `Continue`.
+- `DataSourceOutcome.Refuse(status, errors)`, or `DataSourceOutcome.Invalid(field, message)` for a 422: nothing is written, whatever the class wrote is rolled back, and the caller gets the status and the field errors as a `FormResult` would give them.
+
+`operation.Sql` runs the class's own SQL: a statement or a block, whole, as one command, on the engine's connection and inside its transaction, with every value a bound parameter. It takes the bind variables of a custom statement: `:USER_*`, `:PARAM.name`, `:APP.name`, `:NOW`, and `:FIELD.alias` from the operation's values as they stand, or the stored record on a delete. A value the class supplies itself is `:ARG.name`, passed as a dictionary or an object whose properties are the names; editor SQL cannot use `:ARG.`. `ExecuteAsync` returns the rows affected, `ScalarAsync` the first value, and `QueryAsync` the rows as dictionaries. An Oracle anonymous block runs as written. `:USER_*` values need a signed-in account, as everywhere, and only a create, update or delete may change data: `ExecuteAsync` refuses on a read, which has no transaction.
+
+This class refuses to change a shipped order and otherwise writes the change through the application's own procedure, as the signed-in person and with a reason of its own:
+
+```csharp
+using AppBlocks.DataSources;
+
+public sealed class OrderRules : IDataSourceHandler
+{
+    public string Alias => "orders.rules";
+
+    public async ValueTask<DataSourceOutcome> UpdateAsync(DataSourceOperation operation, CancellationToken ct)
+    {
+        if (Equals(operation.Current!["status"], "SHIPPED"))
+            return DataSourceOutcome.Invalid("status", "A shipped order cannot change.");
+
+        await operation.Sql.ExecuteAsync("""
+            BEGIN
+              orders_api.revise(p_order => :FIELD.orderId, p_customer => :FIELD.customer, p_by => :USER_KEY, p_reason => :ARG.reason);
+            END;
+            """, new { reason = "Changed on the website" }, ct);
+        return DataSourceOutcome.Handled();
+    }
+}
+```
+
+Everything else still applies around the class. Before it is asked, the engine checks Access, the read and write groups and the allow flags, refuses anonymous writes, and checks the version and the submitted values. After it answers, every `IDataSourcePolicy` runs and sees the values as the class left them, and a refusal there rolls back what the class wrote. The written row is read back through the row restriction, so a class cannot place a row outside what the caller may see. Publishing refuses a backing class that is not registered, and a data source whose class is no longer registered is unavailable, like one whose column is gone, rather than running without it. A form class registered in code still wins an alias over a data source.
+
+Two limits follow from where the class sits. A value `LoadAsync` changes is what the form shows and sends back, so a form that saves it writes the changed value: change only fields the form cannot edit, or expect that. And `QueryAsync` can only refuse: a report runs its own SELECT in Interactive Reports, so its rows never pass through AppBlocks, and lists of values, schedules and paper reports get the same check so that every reader is judged alike. Put a rule about which rows they may read in the row restriction, which every reader applies.
+
+## A form and its rows in one save
+
+A Tabular form block inside a form edits the rows of the form's record. When the caller can save that record, the block shows no save control of its own: its pending changes go with the form's save, in the same request, as an Oracle APEX page saves a form and its interactive grids. A record not saved yet can take rows too, and they are linked to its key once it has one; the block lists them from `/api/tabular/{page}/{block}/new`. A block on its own, or inside a form the caller cannot save, keeps its own save control and saves its rows as before.
+
+When the form is on a SQL data source and each block's data source uses the same connection, the save is one transaction. The record is written first, so a new record's key becomes its new rows' link value, whatever a change says. Its backing class sees the record's values and every block's pending changes in `operation.Details`: each `DataSourceDetail` names the block, its data source, the link field and the record's key, which is still null while a new record's hook runs unless the class writes the record itself. The class may apply a change itself and remove it, replace it, add one, or refuse the whole save. The engine then applies what is left to each block's rows with the checks a block's own save makes: the allow flags, at most 200 changes, the versions, the row restriction, and the block's data source's own backing class and policies. One commit keeps the record and all of its rows, or none of them, and a refused change is named by its block and its place in the batch.
+
+When the form is a C# class, or a block's data source uses another connection, nothing can share a transaction, so the save is not atomic. The record is saved first through its class, then each block's rows in a transaction of their own. A block whose rows fail leaves the record, and any block before it, saved: the answer carries the saved record with the refusal, the form shows it, and the next save is an update.
+
+Each batch keeps its own submission key, so a request retried after a lost answer saves nothing twice. A developer sending the request without the runtime adds `details`, a list of `{ block, revision, submissionKey, changes }`, to the form's submission, where `revision` is the one the block's rows were listed under and `changes` takes the shape a block's own save does.
 
 ## Public contact form
 

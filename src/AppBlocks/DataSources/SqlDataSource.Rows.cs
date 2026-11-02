@@ -41,7 +41,7 @@ public sealed partial class SqlDataSource
 
     /// <summary>Whether the caller may write this data source at all: a writable table, and membership of the write groups.</summary>
     public async Task<bool> MayWriteAsync(ClaimsPrincipal member, CancellationToken ct)
-        => Entry.Plan is { Writable: true } && await users.ResolveAsync(member, ct) is { } user && CanWrite(user);
+        => Ready is { Writable: true } && await users.ResolveAsync(member, ct) is { } user && CanWrite(user);
 
     /// <summary>The rows linked to the scope's key, at most <paramref name="maximumRows"/>, and the record a new row starts from.</summary>
     public async Task<DataSourceRowsResult> ListRowsAsync(DataSourceScope scope, FormExecutionContext context, int maximumRows, CancellationToken ct)
@@ -50,15 +50,39 @@ public sealed partial class SqlDataSource
     /// <summary>The rows with the application values already resolved, so a save answers with the same values it wrote with.</summary>
     private async Task<DataSourceRowsResult> ListRowsAsync(DataSourceScope scope, FormExecutionContext context, int maximumRows, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
     {
-        if (Entry.Plan is not { } plan) return DataSourceRowsResult.From(Unavailable());
+        if (Ready is not { } plan) return DataSourceRowsResult.From(Unavailable());
         if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !CanRead(user)) return new(403);
         if (Link(plan, scope, out var link, out var value) is { } problem) return DataSourceRowsResult.From(problem);
         var binder = new Binder(plan, user, context, runtime.Now(), null, app);
         return await RunAsync(plan, write: false, async (connection, _) => {
             if (!await AllowedAsync(DataSourceAction.Query, user, context, null, null, null, connection, null, ct)) return new DataSourceRowsResult(403);
             var rows = await ReadScopeAsync(plan, connection, null, link, value, binder, maximumRows, ct);
-            return new DataSourceRowsResult(200, rows.Select(row => Record(plan, row, user)).ToArray(), NewRow(plan, user, binder, link, value));
+            var records = rows.Select(row => Record(plan, row, user)).ToArray();
+            if (Handler is not null)
+            {
+                // The class sees what the block is about to show, and may change what it shows, never which rows.
+                var shown = records.Select(record => (IDictionary<string, object?>)new Dictionary<string, object?>(record.Values)).ToArray();
+                var operation = Operation(plan, DataSourceAction.Query, user, context, connection, null, rows: shown);
+                var outcome = await AskAsync(plan, operation, binder, static (handler, operation, ct) => handler.ListAsync(operation, ct), ct);
+                if (outcome.Kind == DataSourceOutcomeKind.Refused) return DataSourceRowsResult.From(outcome.Result());
+                records = records.Select((record, i) => record with { Values = Shown(plan, shown[i]) }).ToArray();
+            }
+            return new DataSourceRowsResult(200, records, NewRow(plan, user, binder, link, value));
         }, result => DataSourceRowsResult.From(result), ct);
+    }
+
+    /// <summary>
+    /// What a tabular form inside a form shows before that form's record is saved: no rows, and the record a new row starts
+    /// from, whose link field the master's key fills when the two are saved together.
+    /// </summary>
+    public async Task<DataSourceRowsResult> NewRowsAsync(string linkField, FormExecutionContext context, CancellationToken ct)
+    {
+        if (Ready is not { } plan) return DataSourceRowsResult.From(Unavailable());
+        if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !CanRead(user)) return new(403);
+        if (plan.Columns.FirstOrDefault(c => c.Field.Equals(linkField, StringComparison.OrdinalIgnoreCase)) is not { } link)
+            return DataSourceRowsResult.From(FormResult.Invalid("", $"'{linkField}' is not a field of the data source."));
+        if (!await AllowedAsync(DataSourceAction.Query, user, context, null, null, null, null, null, ct)) return new(403);
+        return new(200, [], NewRow(plan, user, new Binder(plan, user, context, runtime.Now(), null, await AppAsync(context, ct)), link, null));
     }
 
     /// <summary>
@@ -69,12 +93,35 @@ public sealed partial class SqlDataSource
     public async Task<DataSourceRowsResult> SaveRowsAsync(DataSourceScope scope, IReadOnlyList<DataSourceChange> changes, FormExecutionContext context,
         int maximumRows, CancellationToken ct)
     {
-        if (Entry.Plan is not { } plan) return DataSourceRowsResult.From(Unavailable());
+        if (Ready is not { } plan) return DataSourceRowsResult.From(Unavailable());
         if (await users.ResolveAsync(context, ct) is not { } user || !plan.Writable || !CanWrite(user)) return new(403);
         if (Link(plan, scope, out var link, out var value) is { } problem) return DataSourceRowsResult.From(problem);
         if (changes.Count == 0) return await ListRowsAsync(scope, context, maximumRows, ct);
         if (changes.Count > MaxChanges) return new(422, Errors: new Dictionary<string, string[]> { [""] = [$"Save at most {MaxChanges} rows at a time."] });
         if (!Guid.TryParse(context.SubmissionKey, out var submission)) return new(422, Errors: new Dictionary<string, string[]> { [""] = ["A submission identifier is required."] });
+        if (Unaccepted(changes) is { } unaccepted) return unaccepted;
+        // One receipt for the whole batch, so a retried request neither writes twice nor fails on versions it already moved.
+        var (receipt, hash) = BatchReceipt(user, context, submission, changes);
+        using var gate = await runtime.Receipts.EnterAsync(receipt, ct);
+        if (runtime.Receipts.Find(receipt) is { } earlier)
+            return earlier.Hash == hash ? await ListRowsAsync(scope, context with { SubmissionKey = null }, maximumRows, ct)
+                : new(422, Errors: new Dictionary<string, string[]> { [""] = ["This submission was already used with different rows. Reload the page."] });
+        var now = runtime.Now();
+        var app = await AppAsync(context, ct);
+        var outcome = await RunAsync(plan, write: true, async (connection, transaction) => {
+            // Returning without a commit rolls every earlier change of the batch back.
+            if (await ApplyAllAsync(plan, user, context, link, value, changes, i => i, now, connection, transaction!, app, ct) is { } refused) return refused;
+            await transaction!.CommitAsync(ct);
+            return new DataSourceRowsResult(200);
+        }, result => DataSourceRowsResult.From(result), ct);
+        if (outcome.Status != 200) return outcome;
+        runtime.Receipts.Add(receipt, "rows", hash);
+        return await ListRowsAsync(scope, context with { SubmissionKey = null }, maximumRows, app, ct);
+    }
+
+    /// <summary>The first change the allow flags refuse, or that is not a create, an update or a delete; null when every one may run.</summary>
+    private DataSourceRowsResult? Unaccepted(IReadOnlyList<DataSourceChange> changes)
+    {
         for (var i = 0; i < changes.Count; i++)
         {
             var refused = changes[i].Operation switch {
@@ -86,36 +133,35 @@ public sealed partial class SqlDataSource
             if (refused is not null)
                 return new(changes[i].Operation is "create" or "update" or "delete" ? 403 : 422, Index: i, Errors: new Dictionary<string, string[]> { [""] = [refused] });
         }
-        // One receipt for the whole batch, so a retried request neither writes twice nor fails on versions it already moved.
-        var receipt = $"{definition.Key:N}:{user.Key}:{context.PageKey:N}:{context.FormKey:N}:{submission:N}:rows";
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(changes))));
-        using var gate = await runtime.Receipts.EnterAsync(receipt, ct);
-        if (runtime.Receipts.Find(receipt) is { } earlier)
-            return earlier.Hash == hash ? await ListRowsAsync(scope, context with { SubmissionKey = null }, maximumRows, ct)
-                : new(422, Errors: new Dictionary<string, string[]> { [""] = ["This submission was already used with different rows. Reload the page."] });
-        var now = runtime.Now();
-        var app = await AppAsync(context, ct);
-        var outcome = await RunAsync(plan, write: true, async (connection, transaction) => {
-            for (var i = 0; i < changes.Count; i++)
+        return null;
+    }
+
+    /// <summary>The receipt of one batch, by data source, person, page, block and submission, and the hash of its changes.</summary>
+    private (string Receipt, string Hash) BatchReceipt(DataSourceUser user, FormExecutionContext context, Guid submission, IReadOnlyList<DataSourceChange> changes)
+        => ($"{definition.Key:N}:{user.Key}:{context.PageKey:N}:{context.FormKey:N}:{submission:N}:rows",
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(changes)))));
+
+    /// <summary>
+    /// Applies the changes in order inside the caller's transaction and returns the first refusal, its position given by
+    /// <paramref name="index"/>; null when every change was applied. The caller commits on null.
+    /// </summary>
+    private async Task<DataSourceRowsResult?> ApplyAllAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, PlanColumn link, object? value,
+        IReadOnlyList<DataSourceChange> changes, Func<int, int?> index, DateTime now, DbConnection connection, DbTransaction transaction, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
+    {
+        for (var i = 0; i < changes.Count; i++)
+        {
+            FormResult result;
+            try { result = await ApplyAsync(plan, user, context, link, value, changes[i], now, connection, transaction, app, ct); }
+            catch (DataSourceFieldException error) { result = FormResult.Invalid(error.Field, error.Message); }
+            catch (DataSourceException error) { result = FormResult.Invalid("", error.Message); }
+            catch (DbException error)
             {
-                FormResult result;
-                try { result = await ApplyAsync(plan, user, context, link, value, changes[i], now, connection, transaction!, app, ct); }
-                catch (DataSourceFieldException error) { result = FormResult.Invalid(error.Field, error.Message); }
-                catch (DataSourceException error) { result = FormResult.Invalid("", error.Message); }
-                catch (DbException error)
-                {
-                    runtime.Logger.LogWarning(error, "Data source {Alias}: the database refused a change of a batch.", definition.Alias);
-                    result = FormResult.Invalid("", "The database refused this change. Check the values and try again.");
-                }
-                // Returning without a commit rolls every earlier change of the batch back.
-                if (result.Status is not (200 or 204)) return DataSourceRowsResult.From(result, i);
+                runtime.Logger.LogWarning(error, "Data source {Alias}: the database refused a change of a batch.", definition.Alias);
+                result = FormResult.Invalid("", "The database refused this change. Check the values and try again.");
             }
-            await transaction!.CommitAsync(ct);
-            return new DataSourceRowsResult(200);
-        }, result => DataSourceRowsResult.From(result), ct);
-        if (outcome.Status != 200) return outcome;
-        runtime.Receipts.Add(receipt, "rows", hash);
-        return await ListRowsAsync(scope, context with { SubmissionKey = null }, maximumRows, app, ct);
+            if (result.Status is not (200 or 204)) return DataSourceRowsResult.From(result, index(i));
+        }
+        return null;
     }
 
     private async Task<FormResult> ApplyAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, PlanColumn link, object? value,

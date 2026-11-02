@@ -62,6 +62,7 @@ internal sealed class PublicSite : IAsyncDisposable
     public static readonly Guid SizesPage = Key("sizes"), UnsizedReport = Key("unsized-report"), ZeroSizedReport = Key("zero-sized-report"), EmptySizedReport = Key("empty-sized-report");
     public static readonly Guid FilesPage = Key("files"), ClosedFiles = Key("closed-files"), OpenFiles = Key("open-files"), HiddenFiles = Key("hidden-files");
     public static readonly Guid DataPage = Key("data"), Rows = Key("rows"), Schedule = Key("schedule");
+    public static readonly Guid OrderPage = Key("order"), OrderForm = Key("order-form"), OrderLines = Key("order-lines");
     public static readonly Guid MembersPage = Key("members"), ProtectedPage = Key("protected"), ProtectedForm = Key("protected-form"), ProtectedReport = Key("protected-report"), ProtectedFiles = Key("protected-files");
     public const string AdminEmail = "public.admin@example.test";
 
@@ -140,6 +141,18 @@ internal sealed class PublicSite : IAsyncDisposable
             Access = services.GetRequiredService<Switches>().PublicEngine ? DataSourceAccess.Public : DataSourceAccess.NotPublic,
             KeyColumns = ["id"], AllowInsert = true, AllowUpdate = true, AllowDelete = true,
         }, services.GetRequiredService<DataSourceRuntime>(), services.GetRequiredService<IDataSourceUserResolver>(), services.GetServices<IDataSourcePolicy>()));
+        // An order and its lines on the engine, the order with a backing class: a form and its tabular block that save together.
+        builder.Services.AddSingleton<OrderRules>();
+        builder.Services.AddSingleton<IDataSourceHandler>(services => services.GetRequiredService<OrderRules>());
+        builder.Services.AddScoped<IFormResource>(services => new SqlDataSource(new DataSourceDefinition {
+            Key = Key("orders-source"), Name = "Orders", Alias = "public.orders", Connection = ConnectionCatalog.ApplicationConnection, Source = "PUBLIC_ORDERS",
+            Access = DataSourceAccess.NotPublic, KeyColumns = ["id"], AllowInsert = true, AllowUpdate = true, AllowDelete = true, Handler = OrderRules.HandlerAlias,
+        }, services.GetRequiredService<DataSourceRuntime>(), services.GetRequiredService<IDataSourceUserResolver>(), services.GetServices<IDataSourcePolicy>(),
+            null, services.GetRequiredService<DataSourceHandlers>()));
+        builder.Services.AddScoped<IFormResource>(services => new SqlDataSource(new DataSourceDefinition {
+            Key = Key("order-lines-source"), Name = "Order lines", Alias = "public.orders.lines", Connection = ConnectionCatalog.ApplicationConnection, Source = "PUBLIC_ORDER_LINES",
+            Access = DataSourceAccess.NotPublic, KeyColumns = ["id"], AllowInsert = true, AllowUpdate = true, AllowDelete = true,
+        }, services.GetRequiredService<DataSourceRuntime>(), services.GetRequiredService<IDataSourceUserResolver>(), services.GetServices<IDataSourcePolicy>()));
         builder.Services.AddSingleton<IDataSourcePolicy, SwitchedPolicy>();
         builder.Services.AddScoped<IProtectedPageAdmission, SwitchedAdmission>();
         builder.Services.Replace(ServiceDescriptor.Scoped<IReportAccessPolicy, SwitchedReportPolicy>());
@@ -193,6 +206,8 @@ internal sealed class PublicSite : IAsyncDisposable
                 INSERT INTO PUBLIC_ROWS (id, title, owner) VALUES (1, 'First public row', 'someone'), (2, 'Second public row', '');
                 CREATE TABLE SCHEDULE_ROWS ("key" TEXT PRIMARY KEY, label TEXT, "group" TEXT);
                 CREATE TABLE SCHEDULE_BARS ("key" TEXT PRIMARY KEY, "row" TEXT, "start" TEXT, "end" TEXT, label TEXT, kind TEXT, link TEXT);
+                CREATE TABLE PUBLIC_ORDERS (id INTEGER PRIMARY KEY, customer TEXT NOT NULL, lines INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE PUBLIC_ORDER_LINES (id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES PUBLIC_ORDERS (id), item TEXT NOT NULL);
                 """;
             await command.ExecuteNonQueryAsync();
         }
@@ -241,6 +256,8 @@ internal sealed class PublicSite : IAsyncDisposable
         Page("Contact", ContactPage, home.Id, Container(FormBlock(ContactForm, "public.contact", Field("name", "Your name", ("defaultValue", ":USER_NAME")), Field("message", "Message", ("defaultValue", ":PARAM.topic")))));
         Page("Refusing", RefusingPage, home.Id, Container(FormBlock(RefusingForm, "public.refuses", Field("name", "Your name"))));
         Page("Engine", EnginePage, home.Id, Container(FormBlock(EngineForm, "public.engine", Field("title", "Title"))));
+        Page("Order", OrderPage, home.Id, Container(FormBlock(OrderForm, "public.orders", Field("customer", "Customer"),
+            Block(OrderLines, AppBlockSchema.TabularAlias, ("heading", "Lines"), ("dataSource", "public.orders.lines"), ("linkField", "orderId"), ("fields", "item")))));
         Page("Reports", ReportPage, home.Id, Reports((PublicReport, Source("table", "PUBLIC_ROWS")),
             (PersonalReport, Source("sql", "SELECT id, title FROM PUBLIC_ROWS WHERE owner = :USER_KEY OR :USER_KEY IS NULL"))));
         Page("Sizes", SizesPage, home.Id, Reports((UnsizedReport, Source("table", "PUBLIC_ROWS"), null), (ZeroSizedReport, Source("table", "PUBLIC_ROWS"), JsonValue.Create(0)), (EmptySizedReport, Source("table", "PUBLIC_ROWS"), JsonValue.Create(""))));
@@ -354,6 +371,9 @@ internal sealed class PublicSite : IAsyncDisposable
         http.Response.Headers.SetCookie = http.Response.Headers.SetCookie.Select(cookie => System.Text.RegularExpressions.Regex.Replace(cookie!, "; *secure(?=;|$)", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase)).ToArray();
         return Results.Ok();
     });
+
+    /// <summary>One of the site's singletons, such as what a registered class recorded.</summary>
+    public T Service<T>() where T : notnull => app.Services.GetRequiredService<T>();
 
     /// <summary>Runs something against the site's services, in a scope of its own.</summary>
     public async Task WithServices(Func<IServiceProvider, Task> work)
@@ -503,6 +523,32 @@ internal sealed class SwitchedReportPolicy(DefaultReportAccessPolicy inner, Swit
     public Task<bool> IsAdministratorAsync(ClaimsPrincipal user) => inner.IsAdministratorAsync(user);
     public ValueTask<bool> AuthorizeAsync(InteractiveReportAuthorizationRequest request, CancellationToken cancellationToken)
         => switches.ReportPolicyRefuses && request.User.Identity?.IsAuthenticated != true ? ValueTask.FromResult(false) : inner.AuthorizeAsync(request, cancellationToken);
+}
+
+/// <summary>
+/// The order's backing class: it counts the lines an order will have from the batches saved with it, and refuses an order with a line
+/// it does not sell, so a form and its rows are judged together, as an APEX page process judges a form and its grid.
+/// </summary>
+internal sealed class OrderRules : IDataSourceHandler
+{
+    public const string HandlerAlias = "public.orders.rules";
+    public string Alias => HandlerAlias;
+    public ConcurrentQueue<(DataSourceAction Action, int Changes)> Seen { get; } = new();
+
+    public ValueTask<DataSourceOutcome> CreateAsync(DataSourceOperation operation, CancellationToken ct) => CountAsync(operation, 0, ct);
+
+    public async ValueTask<DataSourceOutcome> UpdateAsync(DataSourceOperation operation, CancellationToken ct)
+        => await CountAsync(operation, Convert.ToInt32(await operation.Sql.ScalarAsync("SELECT COUNT(*) FROM PUBLIC_ORDER_LINES WHERE order_id = :ARG.id", new { id = operation.Key }, ct)), ct);
+
+    private ValueTask<DataSourceOutcome> CountAsync(DataSourceOperation operation, int stored, CancellationToken ct)
+    {
+        var changes = operation.Details.SelectMany(detail => detail.Changes).ToArray();
+        Seen.Enqueue((operation.Action, changes.Length));
+        if (changes.Any(change => change.Values.TryGetProperty("item", out var item) && item.GetString() == "Forbidden"))
+            return ValueTask.FromResult(DataSourceOutcome.Invalid("", "Forbidden is not sold."));
+        operation.Values!["lines"] = stored + changes.Count(change => change.Operation == "create") - changes.Count(change => change.Operation == "delete");
+        return ValueTask.FromResult(DataSourceOutcome.Continue);
+    }
 }
 
 internal sealed class SwitchedPolicy(Switches switches) : IDataSourcePolicy

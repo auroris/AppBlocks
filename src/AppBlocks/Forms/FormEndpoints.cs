@@ -6,11 +6,24 @@ using Microsoft.Extensions.Options;
 using AppBlocks.AntiSpam;
 using AppBlocks.Blocks;
 using AppBlocks.DataSources;
+using AppBlocks.Tabular;
 
 namespace AppBlocks.Forms;
 
 /// <param name="FormData">The form's other named controls by name, apart from <paramref name="Values"/> so validation and strict binding never see them.</param>
-public sealed record FormSubmission(string DefinitionVersion, string? Version, JsonElement Values, string? SubmissionKey, JsonElement? FormData = null);
+/// <param name="Details">The pending changes of the form's tabular blocks, saved with the record in the same request.</param>
+public sealed record FormSubmission(string DefinitionVersion, string? Version, JsonElement Values, string? SubmissionKey, JsonElement? FormData = null,
+    IReadOnlyList<FormDetailSubmission>? Details = null);
+
+/// <summary>
+/// A tabular block's pending changes, sent with its form's record so the two save together: in one transaction when the form is on
+/// a data source and the block's data source shares its connection, otherwise the record first and then the rows.
+/// </summary>
+/// <param name="Block">The tabular block's key, inside this form.</param>
+/// <param name="Revision">The revision its rows were listed under, so a changed data source is noticed before anything is written.</param>
+/// <param name="SubmissionKey">The block's own key for this batch, so a retry does not write it twice; the form's when absent.</param>
+/// <param name="Changes">The changes in the shape <c>/api/tabular</c> takes.</param>
+public sealed record FormDetailSubmission(Guid Block, string? Revision, string? SubmissionKey, IReadOnlyList<TabularChange>? Changes);
 
 public static class FormEndpoints
 {
@@ -180,6 +193,14 @@ public static class FormEndpoints
         }
         var errors = form.Validate(submission.Values, key is null);
         if (errors.Count > 0) return Result(new(422, Errors: errors));
+        // The rows sent with the record, checked as the tabular endpoint checks a batch before anything is written.
+        IReadOnlyList<FormDetail>? details = null;
+        if (submission.Details is { Count: > 0 } sent)
+        {
+            var (resolved, unresolved) = await DetailsAsync(form, sent, member, pageKey, context, http, ct);
+            if (unresolved is not null) return unresolved;
+            details = resolved;
+        }
         // After the fields, so a typo does not spend a token that works once, and before anything can reach the class, the load of an update included.
         var check = await antiSpam.CheckAsync(form, context.FormData, ct);
         if (check.Refusal is { } refusal) {
@@ -205,11 +226,109 @@ public static class FormEndpoints
         }
         var choiceErrors = await http.RequestServices.GetRequiredService<ListOfValuesService>().ValidateAsync(form, values, context, ct, stored?.Values);
         if (choiceErrors.Count > 0) return Result(new(422, Errors: choiceErrors));
+        if (details is not null) return await SaveWithDetailsAsync(form, key, values, submission.Version, details, context, operation, member, http, ct);
         var result = key is null ? await form.Resource.CreateAsync(values, context, ct)
             : await form.Resource.UpdateAsync(key, values, submission.Version!, context, ct);
         Audit(http, operation, form.Resource.Alias, key ?? result.Record?.Key, member, result.Status);
         return Result(result.Record is null ? result : result with { Record = Project(result.Record, form) });
     }
+
+    /// <summary>One tabular block of a submission, resolved: the block, its data source, its changes as the engine takes them and its own context.</summary>
+    private sealed record FormDetail(Guid Key, TabularBlock Block, SqlDataSource Source, List<DataSourceChange> Changes, FormExecutionContext Context);
+
+    /// <summary>
+    /// A refusal of a detail batch, naming the block and, when one change caused it, that change's position. When the record and earlier
+    /// blocks were saved before it, as without a shared transaction, it carries the saved record and those blocks' rows.
+    /// </summary>
+    private static IResult DetailRefusal(Guid block, int status, int? index, IReadOnlyDictionary<string, string[]>? errors, FormRecord? record = null,
+        IReadOnlyList<object>? saved = null)
+        => Results.Json(new { status, block, index, errors = errors ?? new Dictionary<string, string[]>(), record, details = saved }, statusCode: status);
+
+    private static IResult DetailRefusal(Guid block, int status, string message) => DetailRefusal(block, status, null, new Dictionary<string, string[]> { [""] = [message] });
+
+    /// <summary>
+    /// Resolves the tabular blocks a submission sends rows for: each a tabular block of this form, owned by the form's record, once;
+    /// its data source available and writable to the caller, at the revision the rows were listed under; and its changes ones the
+    /// block accepts. The engine makes the per-change checks a tabular save makes, in the save.
+    /// </summary>
+    private static async Task<(IReadOnlyList<FormDetail>? Details, IResult? Refusal)> DetailsAsync(FormDefinition form, IReadOnlyList<FormDetailSubmission> sent,
+        ClaimsPrincipal member, Guid pageKey, FormExecutionContext context, HttpContext http, CancellationToken ct)
+    {
+        var blocks = AppBlockContent.Flatten(form.Block.Areas.SelectMany(a => a)).Where(b => b.Content.ContentType.Alias == AppBlockSchema.TabularAlias).ToArray();
+        var resources = http.RequestServices.GetRequiredService<FormResourceRegistry>();
+        var details = new List<FormDetail>(sent.Count);
+        foreach (var detail in sent)
+        {
+            if (detail is null) return (null, Results.BadRequest());
+            if (details.Any(d => d.Key == detail.Block)) return (null, DetailRefusal(detail.Block, 422, "The rows of a block are sent once."));
+            if (blocks.FirstOrDefault(b => b.ContentKey == detail.Block) is not { } item) return (null, DetailRefusal(detail.Block, 422, "This form has no such Tabular form block."));
+            var block = TabularBlock.Read(item.Content);
+            if (!block.OwnedByForm) return (null, DetailRefusal(detail.Block, 422, "This Tabular form block names its own owner, so its rows save on their own."));
+            if (resources.Find(block.DataSource) is not SqlDataSource source || block.LinkField.Length == 0)
+                return (null, DetailRefusal(detail.Block, 422, $"The data source {block.DataSource} is not a published data source."));
+            if (source.Problem is { } problem) return (null, DetailRefusal(detail.Block, 503, $"The data source {block.DataSource} is not available: {problem}"));
+            if (block.ReadOnly || !await source.MayWriteAsync(member, ct)) return (null, DetailRefusal(detail.Block, 403, "This tabular form is read only."));
+            if (detail.Revision != TabularEndpoints.Revision(source)) return (null, DetailRefusal(detail.Block, 409, "These rows have changed. Reload the page before saving."));
+            if (detail.Changes is null) return (null, Results.BadRequest());
+            if (TabularEndpoints.Changes(block, source, detail.Changes, out var changes) is { } refused)
+                return (null, DetailRefusal(detail.Block, refused.Status, refused.Index, new Dictionary<string, string[]> { [refused.Field] = [refused.Message] }));
+            details.Add(new(detail.Block, block, source, changes!, new FormExecutionContext(member, pageKey, detail.Block, TabularEndpoints.Revision(source),
+                detail.SubmissionKey ?? context.SubmissionKey, context.Parameters)));
+        }
+        return (details, null);
+    }
+
+    /// <summary>
+    /// The record and its blocks' rows. A form on a data source whose blocks' data sources share its connection saves them in one
+    /// transaction. Otherwise nothing can be shared, so the record is saved first and then each block's rows, each batch whole or not at
+    /// all: a block that fails leaves the record and any earlier block saved, and the answer carries the saved record with the refusal.
+    /// </summary>
+    private static async Task<IResult> SaveWithDetailsAsync(FormDefinition form, string? key, JsonElement values, string? version, IReadOnlyList<FormDetail> details,
+        FormExecutionContext context, string operation, ClaimsPrincipal member, HttpContext http, CancellationToken ct)
+    {
+        FormResult result;
+        var answers = new List<object>(details.Count);
+        if (form.Resource is SqlDataSource master && details.All(d => master.SharesConnectionWith(d.Source)))
+        {
+            var saved = await master.SaveWithDetailsAsync(key, values, version, details.Select(d => new DataSourceDetailBatch(d.Key, d.Source, d.Block.LinkField, d.Changes,
+                d.Block.MaxRows, d.Context)).ToArray(), context, ct);
+            result = saved.Master;
+            Audit(http, operation, form.Resource.Alias, key ?? result.Record?.Key, member, saved.Status);
+            if (saved.Refusal is { } refusal)
+            {
+                var failed = details[saved.Detail!.Value];
+                TabularEndpoints.Audit(http, "save", failed.Source.Alias, form.Resource.Alias, key, member, refusal.Status);
+                return DetailRefusal(failed.Key, refusal.Status, refusal.Index, refusal.Errors);
+            }
+            if (result.Status != 200 || result.Record is null) return Result(result);
+            for (var i = 0; i < details.Count; i++)
+            {
+                TabularEndpoints.Audit(http, "save", details[i].Source.Alias, form.Resource.Alias, result.Record.Key, member, 200);
+                answers.Add(await DetailAnswerAsync(details[i], form, result.Record.Key, saved.Details![i], member, http, ct));
+            }
+            return Results.Json(new { record = Project(result.Record, form), details = answers });
+        }
+
+        result = key is null ? await form.Resource.CreateAsync(values, context, ct) : await form.Resource.UpdateAsync(key, values, version!, context, ct);
+        Audit(http, operation, form.Resource.Alias, key ?? result.Record?.Key, member, result.Status);
+        if (result.Status != 200 || result.Record is null) return Result(result);
+        var record = Project(result.Record, form);
+        if (result.Record.Key is not { } owner)
+            return DetailRefusal(details[0].Key, 422, null, new Dictionary<string, string[]> { [""] = ["This record keeps no key, so its rows cannot be saved with it."] }, record);
+        foreach (var detail in details)
+        {
+            var rows = await detail.Source.SaveRowsAsync(new DataSourceScope(detail.Block.LinkField, owner), detail.Changes, detail.Context, detail.Block.MaxRows, ct);
+            TabularEndpoints.Audit(http, "save", detail.Source.Alias, form.Resource.Alias, owner, member, rows.Status);
+            if (rows.Status != 200) return DetailRefusal(detail.Key, rows.Status, rows.Index, rows.Errors, record, answers);
+            answers.Add(await DetailAnswerAsync(detail, form, owner, rows, member, http, ct));
+        }
+        return Results.Json(new { record, details = answers });
+    }
+
+    /// <summary>A block's rows as its own endpoint answers them, with the block's key.</summary>
+    private static async Task<object> DetailAnswerAsync(FormDetail detail, FormDefinition form, string? owner, DataSourceRowsResult rows, ClaimsPrincipal member,
+        HttpContext http, CancellationToken ct)
+        => new { block = detail.Key, list = await TabularEndpoints.Answer(detail.Block, detail.Source, member, form.Resource.Alias, owner, rows, http, ct) };
 
     private static void Audit(HttpContext http, string operation, string resource, string? key, ClaimsPrincipal member, int status)
         => http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("ApplicationForms").LogInformation(

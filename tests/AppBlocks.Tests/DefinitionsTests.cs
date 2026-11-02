@@ -172,6 +172,82 @@ public sealed class DefinitionsTests
         Assert.Equal(declared, Assert.Single(again.GetProperty("packages").EnumerateArray()).GetProperty("installed").GetInt32());
     }
 
+    [Fact]
+    public async Task The_backing_class_step_gives_an_existing_site_what_a_fresh_install_has_and_skips_a_site_without_the_type()
+    {
+        await using (var site = await BlockSite.StartAsync())
+        {
+            using var scope = site.CreateScope();
+            var services = scope.ServiceProvider;
+            var types = services.GetRequiredService<IContentTypeService>();
+            var dataTypes = services.GetRequiredService<IDataTypeService>();
+            var fresh = types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes.Single(p => p.Alias == AddDataSourceBackingClass.Property);
+            var freshGroup = types.Get(DataSourceSchema.SqlAlias)!.PropertyGroups.Single(g => g.PropertyTypes!.Contains(fresh.Alias)).Alias;
+            var picker = (await dataTypes.GetAsync(fresh.DataTypeKey))!;
+            Assert.Equal("AppBlocks.BackingClassPicker", picker.EditorUiAlias);
+            // The picker lists the registered backing classes, of which this site has none.
+            using (var admin = await site.SignInAsAdministratorAsync())
+                Assert.Empty((await admin.GetFromJsonAsync<JsonElement>("/umbraco/management/api/v1/application-blocks/catalogue")).GetProperty("dataSourceHandlers").EnumerateArray());
+
+            // The site as it was before the step: no property, no picker data type, and the plan at its first state.
+            await BeforeTheStepAsync(services);
+            var source = Assert.Single(services.GetRequiredService<IContentService>().GetPagedOfType(types.Get(DataSourceSchema.SqlAlias)!.Id, 0, 10, out _, null!));
+            await RunPlanAsync(services);
+
+            var type = types.Get(DataSourceSchema.SqlAlias)!;
+            var added = type.PropertyTypes.Single(p => p.Alias == AddDataSourceBackingClass.Property);
+            Assert.Equal((fresh.Key, fresh.Name, fresh.Description, fresh.SortOrder, fresh.Mandatory, fresh.DataTypeKey),
+                (added.Key, added.Name, added.Description, added.SortOrder, added.Mandatory, added.DataTypeKey));
+            Assert.Equal(freshGroup, type.PropertyGroups.Single(g => g.PropertyTypes!.Contains(added.Alias)).Alias);
+            var restored = (await dataTypes.GetAsync(fresh.DataTypeKey))!;
+            Assert.Equal((picker.Name, picker.EditorUiAlias, picker.EditorAlias, picker.ParentId), (restored.Name, restored.EditorUiAlias, restored.EditorAlias, restored.ParentId));
+            Assert.Equal("orders.lines", services.GetRequiredService<IContentService>().GetById(source.Id)!.GetValue<string>("alias"));
+
+            // Run again over a site that has it: nothing changes.
+            services.GetRequiredService<IKeyValueService>().SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-02-tracked");
+            await RunPlanAsync(services);
+            Assert.Single(types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes, p => p.Alias == AddDataSourceBackingClass.Property);
+        }
+
+        await using var bare = await BlockSite.BootAsync();
+        using var bareScope = bare.CreateScope();
+        var bareServices = bareScope.ServiceProvider;
+        var bareTypes = bareServices.GetRequiredService<IContentTypeService>();
+        await WaitForInstallAsync(bareTypes);
+        var pickerKey = bareTypes.Get(DataSourceSchema.SqlAlias)!.PropertyTypes.Single(p => p.Alias == AddDataSourceBackingClass.Property).DataTypeKey;
+        Assert.Equal(ContentTypeOperationStatus.Success, await bareTypes.DeleteAsync(bareTypes.Get(DataSourceSchema.SqlAlias)!.Key, Constants.Security.SuperUserKey));
+        await BeforeTheStepAsync(bareServices);
+        await RunPlanAsync(bareServices);
+        Assert.Null(bareTypes.Get(DataSourceSchema.SqlAlias));
+        Assert.Null(await bareServices.GetRequiredService<IDataTypeService>().GetAsync(pickerKey));
+    }
+
+    /// <summary>Takes the backing class away again, as a site that has not run its step has it, and sets the plan back before the step.</summary>
+    private static async Task BeforeTheStepAsync(IServiceProvider services)
+    {
+        var types = services.GetRequiredService<IContentTypeService>();
+        var dataTypes = services.GetRequiredService<IDataTypeService>();
+        Guid? picker = null;
+        if (types.Get(DataSourceSchema.SqlAlias) is { } type)
+        {
+            picker = type.PropertyTypes.Single(p => p.Alias == AddDataSourceBackingClass.Property).DataTypeKey;
+            type.RemovePropertyType(AddDataSourceBackingClass.Property);
+            Assert.True((await types.UpdateAsync(type, Constants.Security.SuperUserKey)).Success);
+        }
+        foreach (var dataType in await dataTypes.GetAllAsync())
+            if (dataType.EditorUiAlias == "AppBlocks.BackingClassPicker" && (picker is null || dataType.Key == picker))
+                Assert.True((await dataTypes.DeleteAsync(dataType.Key, Constants.Security.SuperUserKey)).Success);
+        services.GetRequiredService<IKeyValueService>().SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-02-tracked");
+    }
+
+    private static async Task RunPlanAsync(IServiceProvider services)
+    {
+        var results = await services.GetRequiredService<Umbraco.Cms.Infrastructure.Install.PackageMigrationRunner>().RunPackagePlansAsync(["AppBlocks"]);
+        Assert.All(results, result => Assert.True(result.Successful, result.Exception?.ToString()));
+        var plan = Assert.Single(services.GetRequiredService<PackageMigrationPlanCollection>().OfType<AppBlocksPackagePlan>());
+        Assert.Equal(plan.FinalState, services.GetRequiredService<IKeyValueService>().GetValue(Constants.Conventions.Migrations.KeyValuePrefix + plan.Name));
+    }
+
     /// <summary>The started notification installs after the site is up; the SQL data source type is in the last of it.</summary>
     private static async Task WaitForInstallAsync(IContentTypeService types)
     {

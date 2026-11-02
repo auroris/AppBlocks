@@ -10,7 +10,8 @@
     The rows of a record, edited several at a time. The server renders the frame and the column headings; the runtime
     loads the rows from /api/tabular, draws one input per cell, and saves every change in one batch. Inside a form the
     block waits for the form's record (the app-form:loaded and app-form:saved events) and asks with the record's key;
-    on its own it asks at once with the page's address. The controls carry form="" so the enclosing form never submits
+    on its own it asks at once with the page's address. Inside a form the caller can save, its changes go with the form's
+    own save, which names the block by data-block. The controls carry form="" so the enclosing form never submits
     them, and buttons are type="button" for the same reason. The runtime's inputs carry data-column, never data-field,
     so the enclosing form does not collect them. Anonymous readers need a public data source and access to the owner.
 *@
@@ -42,7 +43,7 @@ else if (block.OwnedByForm && Model.Form is null)
 }
 else
 {
-    <section class="app-tabular ah-tabular" id="@id" data-app-tabular data-api="@api" data-owner="@(ownedByForm ? "form" : "page")"
+    <section class="app-tabular ah-tabular" id="@id" data-app-tabular data-api="@api" data-block="@item.ContentKey" data-owner="@(ownedByForm ? "form" : "page")"
         data-key-parameter="@(Model.Form?.KeyParameter ?? "id")" data-read-only="@block.ReadOnly.ToString().ToLowerInvariant()"
         data-max-rows="@block.MaxRows" data-empty-message="@(block.EmptyMessage ?? "No rows yet.")" aria-labelledby="@(block.Heading is null ? null : id + "-title")">
         @if (block.Heading is not null) { @heading }

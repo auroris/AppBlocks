@@ -13,13 +13,20 @@ namespace AppBlocks.DataSources;
 /// handling, field blocks and pickers work with it as they do with a C# resource. The engine fetches a row by key
 /// through the row restriction and writes it back with statements it generates from the schema, or with the
 /// editor's custom statements. Every operation re-checks the caller, the groups, the allow flags and the policies,
-/// whatever the displayed capabilities said; every value is a bound parameter.
+/// whatever the displayed capabilities said; every value is a bound parameter. A backing class the definition names
+/// (<see cref="IDataSourceHandler"/>) is asked between the engine's own checks and the policies.
 /// </summary>
 public sealed partial class SqlDataSource(DataSourceDefinition definition, DataSourceRuntime runtime, IDataSourceUserResolver users,
-    IEnumerable<IDataSourcePolicy> policies, BindVariableProviders? providers = null) : IFormResource, Attachments.IAttachmentOwner
+    IEnumerable<IDataSourcePolicy> policies, BindVariableProviders? providers = null, DataSourceHandlers? handlers = null) : IFormResource, Attachments.IAttachmentOwner
 {
     private DataSourceRuntime.PlanEntry? entry;
     private DataSourceRuntime.PlanEntry Entry => entry ??= runtime.Plan(definition);
+    /// <summary>The backing class the definition names; null for none, and for one that is not registered, which <see cref="Problem"/> reports.</summary>
+    private IDataSourceHandler? Handler => definition.Handler is { } alias ? handlers?.Find(alias) : null;
+    private string? HandlerProblem => definition.Handler is { } alias && Handler is null
+        ? $"The backing class {alias} is not registered in code. Register it, or clear the data source's backing class and publish it again." : null;
+    /// <summary>The plan, unless the data source cannot run: its schema cannot be read, or its backing class is missing.</summary>
+    private DataSourcePlan? Ready => HandlerProblem is null ? Entry.Plan : null;
 
     public DataSourceDefinition Definition => definition;
     /// <summary>Whether anonymous reads can reach the policies, subject to the calling page and owning record's access.</summary>
@@ -29,45 +36,72 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public string Alias => definition.Alias;
     public string ContractVersion => Entry.Plan?.ContractVersion ?? "unavailable";
     public IReadOnlyList<FormField> Fields => Entry.Plan?.Fields ?? [];
-    /// <summary>Why the data source cannot run, such as an unreachable database or a column that is gone; null when it can.</summary>
-    public string? Problem => Entry.Problem;
+    /// <summary>Why the data source cannot run, such as an unreachable database, a column that is gone or a missing backing class; null when it can.</summary>
+    public string? Problem => HandlerProblem ?? Entry.Problem;
 
     /// <summary>What the back-office catalogue shows: the columns behind the fields and what the data source allows.</summary>
     public object Describe() => new {
         key = definition.Key, name = definition.Name, connection = definition.Connection, source = definition.Source,
         allowInsert = definition.AllowInsert, allowUpdate = definition.AllowUpdate, allowDelete = definition.AllowDelete,
-        keyColumns = definition.KeyColumns, problem = Problem,
+        keyColumns = definition.KeyColumns, handler = definition.Handler, problem = Problem,
         columns = Entry.Plan?.Columns.Select(c => new { field = c.Field, column = c.Column, kind = c.Kind, readOnly = c.ReadOnly, required = c.Required,
             key = Entry.Plan.Keys.Contains(c) }) ?? [],
     };
 
     public async Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct)
     {
-        if (Entry.Plan is not { } plan) return Unavailable();
+        if (Ready is not { } plan) return Unavailable();
         if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !CanRead(user)) return FormResult.Denied();
         var binder = new Binder(plan, user, context, runtime.Now(), null, await AppAsync(context, ct));
         var values = plan.Columns.ToDictionary(c => c.Field, c => (object?)null, StringComparer.Ordinal);
         foreach (var value in plan.Defaults) values[value.Column.Field] = FieldValues.ToJson(binder.Default(value, out _));
+        if (Handler is not null)
+        {
+            // No connection is open yet: the class's statements open one, closed again once it answers.
+            var operation = Operation(plan, DataSourceAction.Initialize, user, context, null, null, values: new Dictionary<string, object?>(values));
+            try
+            {
+                var outcome = await AskAsync(plan, operation, binder, static (handler, operation, ct) => handler.InitializeAsync(operation, ct), ct);
+                if (outcome.Kind == DataSourceOutcomeKind.Refused) return outcome.Result();
+                values = Shown(plan, operation.Values!);
+            }
+            catch (DataSourceFieldException error) { return FormResult.Invalid(error.Field, error.Message); }
+            catch (DataSourceException error) { return FormResult.Invalid("", error.Message); }
+            catch (DbException error)
+            {
+                runtime.Logger.LogWarning(error, "Data source {Alias}: the database refused a statement of the backing class.", definition.Alias);
+                return FormResult.Invalid("", "The record could not be read with these values.");
+            }
+        }
         if (!await AllowedAsync(DataSourceAction.Initialize, user, context, null, null, values, null, null, ct)) return FormResult.Denied();
         return FormResult.Ok(new(null, null, values, new(Create: definition.AllowInsert && plan.Writable && CanWrite(user))));
     }
 
     public async Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct)
     {
-        if (Entry.Plan is not { } plan) return Unavailable();
+        if (Ready is not { } plan) return Unavailable();
         if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !CanRead(user)) return FormResult.Denied();
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
         var binder = new Binder(plan, user, context, runtime.Now(), null, await AppAsync(context, ct));
         return await RunAsync(plan, write: false, async (connection, _) => {
             if (await ReadAsync(plan, connection, null, keys, binder, ct) is not { } row) return FormResult.Missing();
-            if (!await AllowedAsync(DataSourceAction.Load, user, context, key, Json(plan, row.Values), null, connection, null, ct)) return FormResult.Denied();
-            return FormResult.Ok(Record(plan, row, user));
+            var stored = Json(plan, row.Values);
+            var shown = stored;
+            if (Handler is not null)
+            {
+                var operation = Operation(plan, DataSourceAction.Load, user, context, connection, null, key, stored, new Dictionary<string, object?>(stored));
+                var outcome = await AskAsync(plan, operation, binder, static (handler, operation, ct) => handler.LoadAsync(operation, ct), ct);
+                if (outcome.Kind == DataSourceOutcomeKind.Refused) return outcome.Result();
+                shown = Shown(plan, operation.Values!);
+            }
+            if (!await AllowedAsync(DataSourceAction.Load, user, context, key, stored, null, connection, null, ct)) return FormResult.Denied();
+            return FormResult.Ok(Record(plan, row, user) with { Values = shown });
         }, ct);
     }
 
     public async Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct)
     {
-        if (Entry.Plan is not { } plan) return Unavailable();
+        if (Ready is not { } plan) return Unavailable();
         if (await users.ResolveAsync(context, ct) is not { } user || !definition.AllowInsert || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
         if (!Guid.TryParse(context.SubmissionKey, out var submission)) return FormResult.Invalid("", "A submission identifier is required.");
         if (Parse(plan, input, null, out var rejected) is not { } values) return rejected!;
@@ -90,12 +124,14 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     }
 
     /// <summary>
-    /// One insert inside the caller's transaction: the defaults, the audit columns and the version fill the row, the
-    /// required fields are checked, the policies are asked, the row is written and read back through the restriction.
-    /// The caller commits on 200; any other result means nothing should be.
+    /// One insert inside the caller's transaction: the defaults fill the row, the backing class may change it or write it
+    /// itself, the audit columns and the version are set, the required fields are checked, the policies are asked, the row
+    /// is written and read back through the restriction. The caller commits on 200; any other result means nothing should be.
     /// </summary>
+    /// <param name="details">The detail blocks of a master/detail submission, which the backing class sees with the master.</param>
     private async Task<FormResult> InsertRecordAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context,
-        Dictionary<PlanColumn, object?> values, DateTime now, DbConnection connection, DbTransaction transaction, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
+        Dictionary<PlanColumn, object?> values, DateTime now, DbConnection connection, DbTransaction transaction, IReadOnlyDictionary<string, object?>? app, CancellationToken ct,
+        IReadOnlyList<DataSourceDetail>? details = null)
     {
         var binder = new Binder(plan, user, context, now, values, app);
         var row = new Dictionary<PlanColumn, object?>(values);
@@ -107,6 +143,16 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
             if (filled is null && value.Column.Target is { HasDefault: true }) continue;
             row[value.Column] = filled;
         }
+        var outcome = DataSourceOutcome.Continue;
+        if (Handler is not null)
+        {
+            var shown = Json(plan, row);
+            var operation = Operation(plan, DataSourceAction.Create, user, context, connection, transaction, values: new Dictionary<string, object?>(shown), details: details);
+            outcome = await AskAsync(plan, operation, binder.With(row), static (handler, operation, ct) => handler.CreateAsync(operation, ct), ct);
+            if (outcome.Kind == DataSourceOutcomeKind.Refused) return outcome.Result();
+            row = Written(plan, row, shown, operation.Values!);
+            binder = binder.With(row);
+        }
         if (plan.CreatedBy is { } createdBy) row[createdBy] = user.Name;
         if (plan.UpdatedBy is { } updatedBy) row[updatedBy] = user.Name;
         if (plan.CreatedAt is { } createdAt) row[createdAt] = FieldValues.FromValue(now, createdAt.Kind, out _);
@@ -116,11 +162,14 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         var missing = plan.Columns.Where(c => c.Required && c.Target is { HasDefault: false, AutoValue: false, Computed: false }
             && (!row.TryGetValue(c, out var v) || v is null)).ToArray();
         if (missing.Length > 0) return new(422, Errors: missing.ToDictionary(c => c.Field, _ => new[] { "A value is required." }));
-        // Asked inside the transaction, so a rule that counts other rows sees what the insert will join.
-        if (!await AllowedAsync(DataSourceAction.Create, user, context, null, null, Json(plan, row), connection, transaction, ct)) return FormResult.Denied();
-        var keys = plan.InsertStatement is { } statement
-            ? await InsertCustomAsync(plan, statement, connection, transaction, row, binder.With(row), ct)
-            : await InsertAsync(plan, connection, transaction, row, ct);
+        // Asked inside the transaction, so a rule that counts other rows sees what the insert will join; a refusal also undoes what the class wrote.
+        var handled = outcome.Kind == DataSourceOutcomeKind.Handled ? HandledKey(plan, outcome, row) : null;
+        var handledKey = handled is null ? null : FormatKey(plan, plan.Keys.Zip(handled).ToDictionary(p => p.First, p => p.Second));
+        if (!await AllowedAsync(DataSourceAction.Create, user, context, handledKey, null, Json(plan, row), connection, transaction, ct)) return FormResult.Denied();
+        var keys = handled
+            ?? (plan.InsertStatement is { } statement
+                ? await InsertCustomAsync(plan, statement, connection, transaction, row, binder.With(row), ct)
+                : await InsertAsync(plan, connection, transaction, row, ct));
         // The new row must be one the caller may see, or a write could place rows outside the restriction.
         if (await ReadAsync(plan, connection, transaction, keys, binder, ct) is not { } created) return FormResult.Denied();
         return FormResult.Ok(Record(plan, created, user));
@@ -128,7 +177,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
 
     public async Task<FormResult> UpdateAsync(string key, JsonElement input, string version, FormExecutionContext context, CancellationToken ct)
     {
-        if (Entry.Plan is not { } plan) return Unavailable();
+        if (Ready is not { } plan) return Unavailable();
         if (await users.ResolveAsync(context, ct) is not { } user || !definition.AllowUpdate || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
         if (input.ValueKind != JsonValueKind.Object) return FormResult.Invalid("", "Form values must be an object.");
@@ -143,11 +192,14 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
 
     /// <summary>
     /// One update inside the caller's transaction, on the locked row: the version must match, only what differs from
-    /// the stored record is checked and written, a key or a scope's link field cannot change, and the row is read back
-    /// through the restriction. A row outside <paramref name="scope"/> is not found. The caller commits on 200.
+    /// the stored record is checked and written, the backing class may change the row or write it itself, a key or a
+    /// scope's link field cannot change, and the row is read back through the restriction. A row outside
+    /// <paramref name="scope"/> is not found. The caller commits on 200.
     /// </summary>
+    /// <param name="details">The detail blocks of a master/detail submission, which the backing class sees with the master.</param>
     private async Task<FormResult> UpdateRecordAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, string key, object?[] keys,
-        JsonElement input, string version, DateTime now, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
+        JsonElement input, string version, DateTime now, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct,
+        IReadOnlyList<DataSourceDetail>? details = null)
     {
         var binder = new Binder(plan, user, context, now, null, app);
         await LockAsync(plan, connection, transaction, keys, ct);
@@ -161,18 +213,39 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
             return FormResult.Invalid(scope.Column.Field, "This field cannot be changed here.");
         var proposed = new Dictionary<PlanColumn, object?>(current.Values);
         foreach (var (column, value) in values) proposed[column] = value;
+        var outcome = DataSourceOutcome.Continue;
+        if (Handler is not null)
+        {
+            var shown = Json(plan, proposed);
+            var operation = Operation(plan, DataSourceAction.Update, user, context, connection, transaction, key, Json(plan, current.Values),
+                new Dictionary<string, object?>(shown), details);
+            outcome = await AskAsync(plan, operation, binder.With(proposed), static (handler, operation, ct) => handler.UpdateAsync(operation, ct), ct);
+            if (outcome.Kind == DataSourceOutcomeKind.Refused) return outcome.Result();
+            // A field the class removed stays as stored.
+            var written = Written(plan, proposed, shown, operation.Values!);
+            foreach (var (column, value) in current.Values) written.TryAdd(column, value);
+            proposed = written;
+            if (plan.Keys.FirstOrDefault(k => !FieldValues.Same(proposed[k], current.Values[k])) is { } rekeyed)
+                return FormResult.Invalid(rekeyed.Field, "This field cannot be changed once the record exists.");
+            if (scope is not null && !FieldValues.Same(proposed[scope.Column], scope.Value))
+                return FormResult.Invalid(scope.Column.Field, "This field cannot be changed here.");
+        }
         if (!await AllowedAsync(DataSourceAction.Update, user, context, key, Json(plan, current.Values), Json(plan, proposed), connection, transaction, ct))
             return FormResult.Denied();
-        var changes = values.Where(v => !FieldValues.Same(v.Value, current.Values.GetValueOrDefault(v.Key))).ToArray();
-        if (plan.UpdateStatement is { } statement)
+        var changes = proposed.Where(v => !FieldValues.Same(v.Value, current.Values.GetValueOrDefault(v.Key))).ToArray();
+        // A class that wrote the row itself leaves the engine only the read back.
+        if (outcome.Kind != DataSourceOutcomeKind.Handled)
         {
-            var parameters = new SqlParameters(plan.Dialect);
-            await using var command = parameters.Command(connection, transaction, statement.Render(parameters, binder.With(proposed).Value));
-            await command.ExecuteNonQueryAsync(ct);
+            if (plan.UpdateStatement is { } statement)
+            {
+                var parameters = new SqlParameters(plan.Dialect);
+                await using var command = parameters.Command(connection, transaction, statement.Render(parameters, binder.With(proposed).Value));
+                await command.ExecuteNonQueryAsync(ct);
+            }
+            // Nothing changed, so nothing is written: no new version and no audit entry.
+            else if (changes.Length == 0) return FormResult.Ok(Record(plan, current, user));
+            else if (await UpdateRowAsync(plan, connection, transaction, keys, current, changes, user, now, binder, ct) != 1) return FormResult.Conflict();
         }
-        // Nothing changed, so nothing is written: no new version and no audit entry.
-        else if (changes.Length == 0) return FormResult.Ok(Record(plan, current, user));
-        else if (await UpdateRowAsync(plan, connection, transaction, keys, current, changes, user, now, binder, ct) != 1) return FormResult.Conflict();
         // The row must still be one the caller may see; an update cannot hand it to someone else.
         if (await ReadAsync(plan, connection, transaction, keys, binder, ct) is not { } updated) return FormResult.Denied();
         return FormResult.Ok(Record(plan, updated, user));
@@ -180,7 +253,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
 
     public async Task<FormResult> DeleteAsync(string key, string version, FormExecutionContext context, CancellationToken ct)
     {
-        if (Entry.Plan is not { } plan) return Unavailable();
+        if (Ready is not { } plan) return Unavailable();
         if (await users.ResolveAsync(context, ct) is not { } user || !definition.AllowDelete || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
         var app = await AppAsync(context, ct);
@@ -192,8 +265,8 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     }
 
     /// <summary>
-    /// One delete inside the caller's transaction, on the locked row, with the version check and the policies; a row
-    /// outside <paramref name="scope"/> is not found. The caller commits on 204.
+    /// One delete inside the caller's transaction, on the locked row, with the version check, the backing class and the
+    /// policies; a row outside <paramref name="scope"/> is not found. The caller commits on 204.
     /// </summary>
     private async Task<FormResult> DeleteRecordAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, string key, object?[] keys,
         string version, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
@@ -202,7 +275,15 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         await LockAsync(plan, connection, transaction, keys, ct);
         if (await ReadAsync(plan, connection, transaction, keys, binder, ct) is not { } current || !InScope(current, scope)) return FormResult.Missing();
         if (Token(plan, current) != version) return FormResult.Conflict();
+        var outcome = DataSourceOutcome.Continue;
+        if (Handler is not null)
+        {
+            var operation = Operation(plan, DataSourceAction.Delete, user, context, connection, transaction, key, Json(plan, current.Values));
+            outcome = await AskAsync(plan, operation, binder.With(current.Values), static (handler, operation, ct) => handler.DeleteAsync(operation, ct), ct);
+            if (outcome.Kind == DataSourceOutcomeKind.Refused) return outcome.Result();
+        }
         if (!await AllowedAsync(DataSourceAction.Delete, user, context, key, Json(plan, current.Values), null, connection, transaction, ct)) return FormResult.Denied();
+        if (outcome.Kind == DataSourceOutcomeKind.Handled) return new FormResult(204);
         var parameters = new SqlParameters(plan.Dialect);
         if (plan.DeleteStatement is { } statement)
         {
@@ -285,6 +366,81 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         foreach (var policy in policies)
             if (!await policy.IsAllowedAsync(request, ct)) return false;
         return true;
+    }
+
+    private DataSourceOperation Operation(DataSourcePlan plan, DataSourceAction action, DataSourceUser user, FormExecutionContext context,
+        DbConnection? connection, DbTransaction? transaction, string? key = null, IReadOnlyDictionary<string, object?>? current = null,
+        IDictionary<string, object?>? values = null, IReadOnlyList<DataSourceDetail>? details = null, IReadOnlyList<IDictionary<string, object?>>? rows = null)
+        => new(definition.Alias, action, user, context, plan.Dialect.Kind) {
+            Connection = connection, Transaction = transaction, Key = key, Current = current, Values = values, Details = details ?? [], Rows = rows,
+        };
+
+    /// <summary>Asks the backing class one hook, with the SQL helper bound to the operation; a connection the helper opened closes when it answers.</summary>
+    private async Task<DataSourceOutcome> AskAsync(DataSourcePlan plan, DataSourceOperation operation, Binder binder,
+        Func<IDataSourceHandler, DataSourceOperation, CancellationToken, ValueTask<DataSourceOutcome>> hook, CancellationToken ct)
+    {
+        if (Handler is not { } handler) return DataSourceOutcome.Continue;
+        await using var sql = new DataSourceSql(plan, operation, binder.Value, token => runtime.OpenAsync(definition.Connection, token));
+        operation.Sql = sql;
+        return await hook(handler, operation, ct) ?? DataSourceOutcome.Continue;
+    }
+
+    /// <summary>What a form shows of the values a class left: each in its field's JSON shape. A name that is not a field is an error.</summary>
+    private static Dictionary<string, object?> Shown(DataSourcePlan plan, IDictionary<string, object?> values)
+    {
+        var shown = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var (alias, value) in values)
+        {
+            var column = plan.Field(alias) ?? throw new DataSourceException($"The backing class set {alias}, which is not a field of the data source.");
+            shown[column.Field] = FieldValues.ToJson(Canonical(column, value));
+        }
+        return shown;
+    }
+
+    /// <summary>
+    /// The row a write hook left. A value the class did not change keeps the engine's own; one it changed or added is converted and
+    /// checked by its field's rules, as a submitted value is; a field it removed is left out. A class may write a read-only field of
+    /// the written table, never the version, an audit column, or a column the table does not let anyone write.
+    /// </summary>
+    private static Dictionary<PlanColumn, object?> Written(DataSourcePlan plan, IReadOnlyDictionary<PlanColumn, object?> before,
+        IReadOnlyDictionary<string, object?> shown, IDictionary<string, object?> after)
+    {
+        var row = new Dictionary<PlanColumn, object?>();
+        foreach (var (alias, value) in after)
+        {
+            var column = plan.Field(alias) ?? throw new DataSourceException($"The backing class set {alias}, which is not a field of the data source.");
+            if (before.TryGetValue(column, out var kept) && shown.TryGetValue(alias, out var original) && Equals(original, value)) { row[column] = kept; continue; }
+            if (column.Target is not { Computed: false, RowVersion: false } || column == plan.Version || plan.IsAudit(column))
+                throw new DataSourceFieldException(column.Field, "The backing class cannot set this field: the database or the engine fills it.");
+            var canonical = Canonical(column, value);
+            if (canonical is not null && !FieldValues.Check(canonical, column, out var error)) throw new DataSourceFieldException(column.Field, error!);
+            row[column] = canonical;
+        }
+        return row;
+    }
+
+    private static object? Canonical(PlanColumn column, object? value)
+    {
+        var canonical = FieldValues.FromValue(value is JsonElement json ? JsonValue(json) : value, column.Kind, out var valid);
+        if (!valid) throw new DataSourceFieldException(column.Field, "The backing class set a value this field cannot hold.");
+        return canonical;
+    }
+
+    private static object? JsonValue(JsonElement json) => json.ValueKind switch {
+        JsonValueKind.Null or JsonValueKind.Undefined => null,
+        JsonValueKind.True => true,
+        JsonValueKind.False => false,
+        JsonValueKind.String => json.GetString(),
+        _ => json.GetRawText(),
+    };
+
+    /// <summary>The key of a row the class wrote itself: the key it returned, or the key fields of the row when it returned none.</summary>
+    private static object?[] HandledKey(DataSourcePlan plan, DataSourceOutcome outcome, IReadOnlyDictionary<PlanColumn, object?> row)
+    {
+        if (outcome.Key is { } key)
+            return TryParseKey(plan, key, out var keys) ? keys : throw new DataSourceException($"The backing class returned '{key}', which is not a key of the data source.");
+        if (plan.Keys.All(k => row.GetValueOrDefault(k) is not null)) return plan.Keys.Select(k => row[k]).ToArray();
+        throw new DataSourceException("The backing class wrote the row without returning its key.");
     }
 
     /// <summary>A definition whose schema cannot be read right now; the plan is retried after a few seconds.</summary>
@@ -517,6 +673,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
             BindVariableKind.Now => plan.Dialect.Now(now),
             BindVariableKind.Param => Parameter(variable.Name!),
             BindVariableKind.App => app?.GetValueOrDefault(variable.Name!),
+            BindVariableKind.Arg => null,
             _ => Field(variable.Name!) is { } column && fields?.TryGetValue(column, out var value) == true ? ToDatabase(plan, column, value) : null,
         };
 

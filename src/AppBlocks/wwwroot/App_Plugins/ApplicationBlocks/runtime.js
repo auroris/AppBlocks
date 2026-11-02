@@ -217,6 +217,9 @@ function mountColor(root) {
     return { display };
 }
 
+// The tabular blocks of each form whose rows go with its save, as each registered itself: see mountTabular.
+const formDetails = new WeakMap();
+
 function mountForm(form) {
     const fields = [...form.querySelectorAll("[data-field]")];
     const shuttles = new Map([...form.querySelectorAll("[data-app-shuttle]")].map(root => [root.querySelector("[data-field]"), mountShuttle(root)]));
@@ -324,6 +327,14 @@ function mountForm(form) {
             else if (value === "" && field.dataset.kind !== "shuttle") value = null;
             values[field.dataset.field] = value;
         }
+        // The pending rows of the form's tabular blocks go with the record, so the server saves them together.
+        const details = [];
+        if (!remove) for (const detail of formDetails.get(form) ?? []) {
+            const pending = detail.pending();
+            // A row's own check failed, and the browser has shown which.
+            if (pending === false) return;
+            if (pending) details.push(pending);
+        }
         busy = true;
         // Deleting needs no check. A service that shows no widget hands over its token only now.
         if (!remove) for (const widget of antiSpam) {
@@ -337,24 +348,43 @@ function mountForm(form) {
             const response = await fetch(requestUrl(state.record.key), {
                 method: remove ? "DELETE" : state.record.key ? "PUT" : "POST", credentials: "same-origin",
                 headers: { "Content-Type": "application/json", RequestVerificationToken: state.antiforgeryToken },
-                body: JSON.stringify({ values, definitionVersion: state.definitionVersion, version: state.record.version, submissionKey, formData }),
+                body: JSON.stringify({ values, definitionVersion: state.definitionVersion, version: state.record.version, submissionKey, formData, ...(details.length ? { details } : {}) }),
             });
             if (response.status === 204) { location.assign(form.dataset.return); return; }
             // A class refusing someone anonymous means they need to sign in; what they entered stays in the form.
             if (response.status === 403 && anonymous) { message.replaceChildren(signInNotice("Sign in to use this form.")); return; }
             // Some refusals have no body, such as an expired antiforgery token.
             const result = await response.json().catch(() => ({}));
+            // A block's rows were refused: the block marks the row, and every value stays. When the record could not share their
+            // transaction it was saved before them, so the form now shows it and its next save is an update.
+            if (!response.ok && result.block) {
+                if (result.record) keep(result.record);
+                for (const detail of formDetails.get(form) ?? []) {
+                    if (result.record?.key) detail.keyed(result.record);
+                    // A block saved before the one that failed shows its rows as saved, so they are not sent again.
+                    const list = result.details?.find(saved => saved.block === detail.block)?.list;
+                    if (list) detail.saved(list);
+                    if (detail.block === result.block) detail.refused(result);
+                }
+                showErrors({ "": [result.record ? "The record was saved, but its rows were not. Correct the rows marked below and save again." : "Nothing was saved. Correct the rows marked below and save again."] });
+                message.textContent = ""; return;
+            }
             if (!response.ok) { showErrors(result.errors ?? { "": [response.status === 403 ? "This operation is not permitted." : response.status === 413 ? "This is too much to send at once. Shorten what you entered and try again." : response.status === 429 ? "That was too many tries. Wait a minute and try again." : "The operation failed. Reload the page if the record has changed."] }); message.textContent = ""; return; }
-            display(result.record); submissionKey = newSubmissionKey(); message.textContent = "Saved.";
-            // A public form may keep nothing to come back to, so a record with no key leaves the address alone.
-            if (result.record.key) { const url = new URL(location.href); url.searchParams.set(form.dataset.keyParameter, result.record.key); history.replaceState(null, "", url); }
-            form.dispatchEvent(new CustomEvent("app-form:saved", { bubbles: true, detail: { record: result.record, definitionVersion: state.definitionVersion } }));
+            keep(result.record); message.textContent = "Saved.";
+            // Blocks that saved with the record take their rows from the answer; the others reload.
+            form.dispatchEvent(new CustomEvent("app-form:saved", { bubbles: true, detail: { record: result.record, definitionVersion: state.definitionVersion, details: result.details ?? [] } }));
         } catch { showErrors({ "": ["The request could not be completed. Your entered values have been retained."] }); message.textContent = ""; }
         finally {
             busy = false; body.disabled = false;
             // Whatever the answer was, the server has seen this token and it will not work again.
             if (!remove) for (const widget of antiSpam) widget.reset();
         }
+    }
+    // A saved record: shown, a new key for the next submission, and its key on the address.
+    function keep(record) {
+        display(record); submissionKey = newSubmissionKey();
+        // A public form may keep nothing to come back to, so a record with no key leaves the address alone.
+        if (record.key) { const url = new URL(location.href); url.searchParams.set(form.dataset.keyParameter, record.key); history.replaceState(null, "", url); }
     }
     form.addEventListener("submit", event => { event.preventDefault(); submit(); });
     form.querySelectorAll("[data-delete]").forEach(button => button.addEventListener("click", () => submit(true)));
@@ -508,7 +538,9 @@ function mountAttachments(root) {
 // The rows of a record, served by /api/tabular: one table row per row, one input per cell, saved as one batch that
 // the server applies whole or not at all. Inside a form the block follows the form's record as Attachments do. Every
 // control carries form="" and its inputs data-column, never data-field, so the enclosing form neither collects,
-// validates nor submits them.
+// validates nor submits them. Inside a form whose record the caller can save, the rows go with the form's own save
+// instead, as the form's pending details, and the block shows no save control: a new record can take rows too, which
+// the server links to it once it has a key. On its own, or when the form cannot be saved, the block saves itself.
 const tabularInputTypes = { number: "number", date: "date", time: "time", datetime: "datetime-local", checkbox: "checkbox" };
 function mountTabular(root) {
     const form = root.dataset.owner === "form" ? root.closest("[data-app-form]") : null;
@@ -522,6 +554,11 @@ function mountTabular(root) {
     const toolbar = root.querySelector(".app-tabular-toolbar");
     const addButton = toolbar?.querySelector("[data-tabular-add]");
     const saveButton = toolbar?.querySelector("[data-tabular-save]");
+    const block = root.dataset.block;
+    // Whether the rows go with the form's save.
+    let withForm = false;
+    // The changes the form last sent, so a refusal can name their rows.
+    let lastSent = null;
     let recordKey = null;
     let state = null;
     let busy = false;
@@ -529,8 +566,10 @@ function mountTabular(root) {
     let submissionKey = newSubmissionKey();
     // What the table shows: each row's record, its cells' inputs and what they held when drawn.
     let rows = [];
-    const requestUrl = () => {
+    // A form's record not saved yet lists from /new: no rows, and what a new row starts from.
+    const requestUrl = (fresh = false) => {
         const url = new URL(root.dataset.api, location.origin);
+        if (fresh) url.pathname += "/new";
         const internalQuery = new URLSearchParams(url.search);
         url.search = location.search;
         for (const [name, value] of internalQuery) url.searchParams.set(name, value);
@@ -652,7 +691,7 @@ function mountTabular(root) {
     function render() {
         tbody.replaceChildren(); tbody.setAttribute("aria-busy", "false"); rows = [];
         if (toolbar) toolbar.hidden = true;
-        if (form && !recordKey) { state = null; message.textContent = "Save the record before adding rows."; return; }
+        if (form && !recordKey && !withForm) { state = null; message.textContent = "Save the record before adding rows."; return; }
         if (!state) return;
         message.textContent = "";
         head();
@@ -660,6 +699,7 @@ function mountTabular(root) {
         empty();
         if (toolbar) toolbar.hidden = readOnly || !(state.canAdd || state.canUpdate || state.canDelete);
         if (addButton) addButton.hidden = !state.canAdd;
+        if (saveButton) saveButton.hidden = withForm;
         limit();
     }
     function clear() {
@@ -693,10 +733,10 @@ function mountTabular(root) {
     }
     async function load() {
         clear();
-        if (form && !recordKey) { render(); return; }
+        if (form && !recordKey && !withForm) { render(); return; }
         tbody.setAttribute("aria-busy", "true");
         try {
-            const response = await fetch(requestUrl(), { credentials: "same-origin", cache: "no-store" });
+            const response = await fetch(requestUrl(form && !recordKey), { credentials: "same-origin", cache: "no-store" });
             if (!response.ok) { state = null; render(); fail([await problem(response, "The rows could not be loaded.")]); return; }
             state = await response.json(); submissionKey = newSubmissionKey(); render();
         } catch { state = null; render(); fail(["The rows could not be loaded."]); }
@@ -767,9 +807,42 @@ function mountTabular(root) {
     });
     saveButton?.addEventListener("click", save);
     if (form) {
-        const follow = event => { recordKey = event.detail?.record?.key ?? null; load(); };
+        const follow = event => {
+            const record = event.detail?.record;
+            recordKey = record?.key ?? null;
+            withForm = !readOnly && !!(record?.key ? record.capabilities?.update : record?.capabilities?.create);
+            // Rows saved with the record come back with it, so they are shown as saved rather than read again.
+            const list = event.detail?.details?.find(detail => detail.block === block)?.list;
+            if (list) saved(list);
+            else load();
+        };
+        const saved = list => { clear(); state = list; submissionKey = newSubmissionKey(); lastSent = null; render(); };
         form.addEventListener("app-form:loaded", follow);
         form.addEventListener("app-form:saved", follow);
+        if (!formDetails.has(form)) formDetails.set(form, []);
+        formDetails.get(form).push({
+            block,
+            // The batch to send with the form's save: null for none, false when a row's own check failed.
+            pending() {
+                if (!withForm || !state || busy) return null;
+                clear();
+                const sent = changes();
+                if (!sent.length) return null;
+                for (const [row] of sent) if (!row.deleted) for (const control of row.inputs.values()) if (!control.reportValidity()) return false;
+                lastSent = sent;
+                return { block, revision: state.revision, submissionKey, changes: sent.map(([, change]) => change) };
+            },
+            refused(result) {
+                if (lastSent && typeof result.index === "number") refused(result, lastSent);
+                else {
+                    const lines = Object.values(result.errors ?? {}).flat();
+                    fail(lines.length ? lines : ["The rows could not be saved."], result.status === 409);
+                }
+            },
+            saved,
+            // The record was saved without these rows: they stay as entered, and the next save links them to it.
+            keyed(record) { recordKey = record.key; withForm = !readOnly && !!record.capabilities?.update; if (saveButton) saveButton.hidden = withForm; },
+        });
         render();
     } else load();
 }

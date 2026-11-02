@@ -127,28 +127,17 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
         {
             ct.ThrowIfCancellationRequested();
             var key = Key(definition);
-            var info = definition.Element("Info")!;
             var existing = await dataTypes.GetAsync(key);
             if (existing is not null && !force) continue;
-            var editorAlias = Value(info, "EditorAlias");
-            var editor = editors.FirstOrDefault(e => e.Alias == editorAlias)
-                ?? throw new InvalidOperationException($"AppBlocks data type '{Value(info, "Name")}' requires missing editor '{editorAlias}'.");
-            var folder = await FolderAsync(dataFolders, Value(info, "Folder"));
-            // Stored as the editor stores it, as a site's own data types are; the type's default is long text whatever the editor.
-            var storage = ValueTypes.ToStorageType(editor.GetValueEditor().ValueType);
-            var configuration = editor.GetConfigurationEditor().FromDatabase(Value(definition, "Config"), serializer);
             if (existing is null)
             {
-                var type = new DataType(editor, serializer, folder)
-                {
-                    Key = key, Name = Value(info, "Name"), EditorUiAlias = Value(info, "EditorUIAlias"), DatabaseType = storage, ConfigurationData = configuration,
-                };
-                var result = await dataTypes.CreateAsync(type, Constants.Security.SuperUserKey);
-                if (!result.Success) throw new InvalidOperationException($"AppBlocks could not install data type '{type.Name}' ({key}): {result.Status}.");
+                await CreateDataTypeAsync(definition, dataTypes, dataFolders, editors, serializer);
                 change.Created++;
             }
             else
             {
+                var (info, editor, storage, configuration) = Editor(definition, editors, serializer);
+                var folder = await FolderAsync(dataFolders, Value(info, "Folder"));
                 existing.Name = Value(info, "Name");
                 existing.Editor = editor;
                 existing.EditorUiAlias = Value(info, "EditorUIAlias");
@@ -345,6 +334,31 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
     }
 
     private IEnumerable<XElement> Definitions(string kind) => schemas.DistinctBy(s => s.Assembly).SelectMany(schema => schema.Definitions(kind));
+
+    /// <summary>Creates the data type a schema definition declares, in its folder, inside the caller's scope; a migration step that adds one uses it too.</summary>
+    internal static async Task CreateDataTypeAsync(XElement definition, IDataTypeService dataTypes, IDataTypeContainerService folders,
+        PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer)
+    {
+        var (info, editor, storage, configuration) = Editor(definition, editors, serializer);
+        var type = new DataType(editor, serializer, await FolderAsync(folders, Value(info, "Folder")))
+        {
+            Key = Key(definition), Name = Value(info, "Name"), EditorUiAlias = Value(info, "EditorUIAlias"), DatabaseType = storage, ConfigurationData = configuration,
+        };
+        var result = await dataTypes.CreateAsync(type, Constants.Security.SuperUserKey);
+        if (!result.Success) throw new InvalidOperationException($"AppBlocks could not install data type '{type.Name}' ({type.Key}): {result.Status}.");
+    }
+
+    /// <summary>A data type definition's editor, and its storage and settings as that editor keeps them.</summary>
+    private static (XElement Info, IDataEditor Editor, ValueStorageType Storage, IDictionary<string, object> Configuration) Editor(XElement definition,
+        PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer)
+    {
+        var info = definition.Element("Info")!;
+        var editorAlias = Value(info, "EditorAlias");
+        var editor = editors.FirstOrDefault(e => e.Alias == editorAlias)
+            ?? throw new InvalidOperationException($"AppBlocks data type '{Value(info, "Name")}' requires missing editor '{editorAlias}'.");
+        // Stored as the editor stores it, as a site's own data types are; the type's default is long text whatever the editor.
+        return (info, editor, ValueTypes.ToStorageType(editor.GetValueEditor().ValueType), editor.GetConfigurationEditor().FromDatabase(Value(definition, "Config"), serializer));
+    }
 
     private async Task<IContentType> ContentTypeAsync(XElement definition)
     {

@@ -1,6 +1,5 @@
 using System.Security.Claims;
 using InteractiveReport.AspNetCore;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core.Services;
 using AppBlocks.Authentication;
@@ -47,7 +46,7 @@ public sealed class DefaultReportAccessPolicy(IUserService users, IOptions<AppBl
             && request.Action == InteractiveReportAction.SelectDefaultReport) return false;
         var admin = await IsAdministratorAsync(request.User);
         var saved = request.Resource.SavedReport;
-        var owner = saved is not null && OwnerKeys(request.User).Contains(saved.Owner, StringComparer.Ordinal);
+        var owner = saved is not null && OwnerKey(request.User) is { } id && saved.Owner == id;
         var name = request.Resource.SourceReportName ?? request.Resource.ReportName;
         var restricted = name.StartsWith("__", StringComparison.Ordinal)
             || definitions.Reports.TryGetValue(name, out var report) && report.Authorization?.Policy == ReportAdministratorRequirement.Policy;
@@ -62,14 +61,10 @@ public sealed class DefaultReportAccessPolicy(IUserService users, IOptions<AppBl
     }
 
     /// <summary>
-    /// The keys a saved view may be owned under: every signed-in Member identity, then every signed-in backoffice User identity,
-    /// then any other signed-in identity a host adds. A view belongs to the Member when one is signed in, so someone signed in
-    /// to both owns views saved under either key.
+    /// The one identity a saved view belongs to, the same the engine resolves: the Member when a Member is signed in, otherwise
+    /// the backoffice User, whichever order the principal lists them in; another signed-in identity a host adds counts last.
     /// </summary>
-    private static IEnumerable<string> OwnerKeys(ClaimsPrincipal principal)
-        => principal.Identities.Where(identity => identity.IsAuthenticated)
-            .OrderBy(identity => identity.AuthenticationType == IdentityConstants.ApplicationScheme ? 0
-                : identity.AuthenticationType is Constants.Security.BackOfficeAuthenticationType or Constants.Security.BackOfficeExposedAuthenticationType ? 1 : 2)
-            .Select(identity => identity.FindFirst(ClaimTypes.NameIdentifier)?.Value)
-            .OfType<string>();
+    public static string? OwnerKey(ClaimsPrincipal principal)
+        => (ApplicationAccessPolicy.MemberIdentity(principal) ?? ApplicationAccessPolicy.BackOfficeIdentity(principal)
+            ?? principal.Identities.FirstOrDefault(identity => identity.IsAuthenticated))?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 }

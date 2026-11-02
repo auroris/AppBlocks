@@ -45,8 +45,12 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
     /// Whether an anonymous visitor to an open page reaches the owner's resource, which then decides as it does for anyone.
     /// When false, visitors without an account are refused here.
     /// </param>
+    /// <param name="newRecord">
+    /// The enclosing form's record is one not saved yet: nothing is loaded, and the scope has no record and no key. The caller decides
+    /// what that allows. A block that names an owner of its own is refused.
+    /// </param>
     public async Task<BlockOwnerScope> ResolveAsync(Guid pageKey, Guid blockKey, string blockAlias, BlockOwnerWords words,
-        Func<IPublishedElement, (string? Resource, string? Key)> owner, string definition, CancellationToken ct, bool allowAnonymous = false)
+        Func<IPublishedElement, (string? Resource, string? Key)> owner, string definition, CancellationToken ct, bool allowAnonymous = false, bool newRecord = false)
     {
         if (http.HttpContext is not { } request) return BlockOwnerScope.Refused(403, "This request has no context.");
         if (content.Page(pageKey) is not { } page) return BlockOwnerScope.Refused(403, $"You do not have access to {words.These}.");
@@ -70,11 +74,13 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
         {
             if (form is null) return BlockOwnerScope.Refused(422, $"This {words.BlockName} block is not inside a form and names no owner.");
             resource = form.Resource;
+            if (newRecord) return new(200, null, user, item, form, resource, null, null, parameters);
             key = Single(request.Request.Query[form.KeyParameter]);
             if (key is null) return BlockOwnerScope.Refused(404, $"Save the record before adding {words.Things}.");
         }
         else
         {
+            if (newRecord) return BlockOwnerScope.Refused(422, $"This {words.BlockName} block names its own owner, so it has no {words.Things} before that record exists.");
             if (resources.Find(ownerResource.Trim()) is not { } named) return BlockOwnerScope.Refused(422, $"The owner resource {ownerResource} is not registered.");
             resource = named;
             key = await OwnerKeyAsync(ownerKey, form, parameters, user, pageKey, request, ct);

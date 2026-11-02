@@ -15,6 +15,18 @@
     },
     {
       "type": "propertyEditorUi",
+      "alias": "AppBlocks.BackingClassPicker",
+      "name": "Application data source backing class",
+      "element": "/App_Plugins/ApplicationBlocks/backing-class-picker.js",
+      "meta": {
+        "label": "Backing class",
+        "icon": "icon-code",
+        "group": "Application",
+        "propertyEditorSchemaAlias": "Umbraco.TextBox"
+      }
+    },
+    {
+      "type": "propertyEditorUi",
       "alias": "AppBlocks.AntiSpamServicePicker",
       "name": "Application anti-spam service",
       "element": "/App_Plugins/ApplicationBlocks/anti-spam-picker.js",

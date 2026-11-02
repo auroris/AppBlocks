@@ -13,7 +13,7 @@ namespace AppBlocks.Publishing;
 /// </summary>
 public sealed class ProtectedPageAdmissionRequestHandler(IPublicAccessRequestHandler inner, IPublicAccessService publicAccess) : IPublicAccessRequestHandler
 {
-    public async Task<UmbracoRouteValues> RewriteForPublishedContentAccessAsync(HttpContext httpContext, UmbracoRouteValues routeValues)
+    public async Task<UmbracoRouteValues?> RewriteForPublishedContentAccessAsync(HttpContext httpContext, UmbracoRouteValues routeValues)
     {
         if (routeValues.PublishedRequest.PublishedContent is { } page && publicAccess.IsProtected(page.Path).Success
             && await httpContext.RequestServices.GetRequiredService<AppPageAccess>().AdmittedAsync(httpContext, page) is not null)

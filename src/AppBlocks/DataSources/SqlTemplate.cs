@@ -24,6 +24,8 @@ public enum BindVariableKind
     Field,
     /// <summary>A value the application's registered <see cref="IBindVariableProvider"/> computes for the operation, written <c>:APP.name</c>.</summary>
     App,
+    /// <summary>A value a backing class passes with its own statement, written <c>:ARG.name</c>; editor SQL has none.</summary>
+    Arg,
 }
 
 /// <summary>One bind variable as written, such as <c>:USER_SID</c> or <c>:FIELD.customer</c>.</summary>
@@ -38,6 +40,7 @@ public sealed record BindVariable(BindVariableKind Kind, string? Name = null)
         BindVariableKind.Param => ":PARAM." + Name,
         BindVariableKind.Field => ":FIELD." + Name,
         BindVariableKind.App => ":APP." + Name,
+        BindVariableKind.Arg => ":ARG." + Name,
         _ => ":" + Fixed.First(pair => pair.Value == Kind).Key,
     };
 
@@ -52,6 +55,7 @@ public sealed record BindVariable(BindVariableKind Kind, string? Name = null)
             "PARAM" => new(BindVariableKind.Param, name),
             "FIELD" => new(BindVariableKind.Field, name),
             "APP" => new(BindVariableKind.App, name),
+            "ARG" => new(BindVariableKind.Arg, name),
             _ => null,
         };
     }
@@ -66,6 +70,8 @@ internal enum SqlUse
     RowRestriction,
     /// <summary>A custom insert, update or delete, run whole.</summary>
     Statement,
+    /// <summary>A backing class's own statement or block, run whole, the only SQL that takes :ARG values.</summary>
+    Handler,
 }
 
 /// <summary>
@@ -161,7 +167,9 @@ internal sealed class SqlTemplate
                 }
                 var written = sql[i..end];
                 var variable = BindVariable.Parse(written[1..]);
-                if (variable is null) errors.Add($"{label} uses {written}, which is not a bind variable (use :USER_SID, :USER_NAME, :USER_KEY, :USER_EMAIL, :USER_GROUPS, :NOW, :PARAM.name, :FIELD.alias or :APP.name).");
+                if (variable is null) errors.Add($"{label} uses {written}, which is not a bind variable (use :USER_SID, :USER_NAME, :USER_KEY, :USER_EMAIL, :USER_GROUPS, :NOW, :PARAM.name, :FIELD.alias or :APP.name{(use == SqlUse.Handler ? ", or :ARG.name" : "")}).");
+                else if (variable.Kind == BindVariableKind.Arg && use != SqlUse.Handler)
+                    errors.Add($"{label} cannot use {written}: :ARG. values are what a backing class passes with its own statements.");
                 else if (use == SqlUse.RowRestriction && variable.Kind is BindVariableKind.Param or BindVariableKind.Field)
                     errors.Add($"{label} cannot use {written}: the caller controls request parameters and field values, so a restriction built on them restricts nothing.");
                 else if (use == SqlUse.RowSource && variable.Kind == BindVariableKind.Field)
@@ -189,7 +197,7 @@ internal sealed class SqlTemplate
             else if (c == ')' && --depth < 0) { errors.Add($"{label} closes a parenthesis it never opened."); return null; }
             else if (c == ';')
             {
-                if (use != SqlUse.Statement) { errors.Add($"{label} must be one statement without semicolons."); return null; }
+                if (use is not (SqlUse.Statement or SqlUse.Handler)) { errors.Add($"{label} must be one statement without semicolons."); return null; }
                 statements.Add(sql[statementStart..i]);
                 statementStart = i + 1;
             }

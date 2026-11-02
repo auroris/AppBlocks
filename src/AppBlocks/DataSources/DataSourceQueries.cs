@@ -8,7 +8,8 @@ public sealed record DataSourceQueryColumn(string Name, string Field, string Kin
 public sealed record DataSourceQueryResult(IReadOnlyList<DataSourceQueryColumn> Columns, IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows);
 
 /// <summary>The shared read path for lists and paper reports. All callers keep the source's own access rules.</summary>
-public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUserResolver users, IEnumerable<IDataSourcePolicy> policies, BindVariableProviders? providers = null)
+public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUserResolver users, IEnumerable<IDataSourcePolicy> policies, BindVariableProviders? providers = null,
+    DataSourceHandlers? handlers = null)
 {
     /// <summary>Whether this definition supports anonymous reads, before page access and custom policies are checked.</summary>
     public bool AllowsAnonymousRead(DataSourceDefinition definition) => CanRead(definition, DataSourceUser.Anonymous)
@@ -19,6 +20,7 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
     {
         if (maximumRows < 1) throw new ArgumentOutOfRangeException(nameof(maximumRows));
         var plan = runtime.Plan(definition).Plan ?? throw new DataSourceException("The data source is not available.");
+        if (definition.Handler is { } alias && handlers?.Find(alias) is null) throw new DataSourceException("The data source is not available: its backing class is not registered.");
         // Opened before the policies are asked, so they can read other rows through the connection the query uses.
         await using var connection = await runtime.OpenAsync(definition.Connection, ct);
         var user = await AuthorizeAsync(definition, context, connection, ct);
@@ -51,6 +53,22 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
         var user = await ResolveReaderAsync(users, context, ct);
         if (user is null || !CanRead(definition, user)
             || user.IsAnonymous && !AllowsAnonymousRead(definition)) throw new UnauthorizedAccessException();
+        if (definition.Handler is { } alias)
+        {
+            // A backing class that is not there leaves the data source refused, never unguarded.
+            if (handlers?.Find(alias) is not { } handler || runtime.Plan(definition).Plan is not { } plan)
+            {
+                runtime.Logger.LogWarning("Data source {Alias} refused a query: its backing class {Handler} is not registered or its plan is not available.", definition.Alias, alias);
+                throw new UnauthorizedAccessException();
+            }
+            var operation = new DataSourceOperation(definition.Alias, DataSourceAction.Query, user, context, plan.Dialect.Kind) { Connection = connection };
+            var now = runtime.Now();
+            var app = providers is null ? null : await providers.ResolveAsync(context, ct);
+            await using var sql = new DataSourceSql(plan, operation, variable => Bind(variable, user, context.Parameters, now, plan.Dialect, app),
+                token => runtime.OpenAsync(definition.Connection, token));
+            operation.Sql = sql;
+            if ((await handler.QueryAsync(operation, ct)).Kind == DataSourceOutcomeKind.Refused) throw new UnauthorizedAccessException();
+        }
         foreach (var policy in policies)
             if (!await policy.IsAllowedAsync(new DataSourceRequest(definition.Alias, DataSourceAction.Query, user, context, null, null, null, connection), ct))
                 throw new UnauthorizedAccessException();

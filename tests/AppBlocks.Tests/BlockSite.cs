@@ -302,7 +302,10 @@ internal sealed class BlockSite : IAsyncDisposable
     }
 }
 
-/// <summary>The orders, readable by a signed-in Member: what a site's own class would be, with only what these tests look at.</summary>
+/// <summary>
+/// The orders, readable and writable by a signed-in Member: what a site's own class would be, with only what these tests look at. It
+/// keeps the customer, and a customer of "Refused" is refused, as a class's own rule would.
+/// </summary>
 internal sealed class OrdersResource(ConnectionCatalog connections) : IFormResource
 {
     private static FormChoice[] Choices(params string[] values) => values.Select(v => new FormChoice(v, v)).ToArray();
@@ -332,8 +335,34 @@ internal sealed class OrdersResource(ConnectionCatalog connections) : IFormResou
 
     public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => Task.FromResult(context.Member.Identity?.AuthenticationType == IdentityConstants.ApplicationScheme
         ? FormResult.Ok(new(null, null, new Dictionary<string, object?> { ["customer"] = "" }, new(Create: true))) : FormResult.Denied());
-    public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
-    public Task<FormResult> UpdateAsync(string key, JsonElement input, string version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+    public async Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct)
+    {
+        if (context.Member.Identity?.AuthenticationType != IdentityConstants.ApplicationScheme) return FormResult.Denied();
+        if (Customer(input) is not { } customer) return FormResult.Invalid("customer", "Enter a customer.");
+        await using var connection = connections.Openable(ConnectionCatalog.ApplicationConnection);
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "INSERT INTO ORDERS (CUSTOMER) VALUES ($customer) RETURNING ORDER_ID";
+        var parameter = command.CreateParameter(); parameter.ParameterName = "$customer"; parameter.Value = customer; command.Parameters.Add(parameter);
+        var id = Convert.ToString(await command.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture)!;
+        return await LoadAsync(id, context, ct);
+    }
+
+    public async Task<FormResult> UpdateAsync(string key, JsonElement input, string version, FormExecutionContext context, CancellationToken ct)
+    {
+        if (context.Member.Identity?.AuthenticationType != IdentityConstants.ApplicationScheme) return FormResult.Denied();
+        if (!long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var id)) return FormResult.Missing();
+        if (Customer(input) is not { } customer) return FormResult.Invalid("customer", "Enter a customer.");
+        await using var connection = connections.Openable(ConnectionCatalog.ApplicationConnection);
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"UPDATE ORDERS SET CUSTOMER = $customer WHERE ORDER_ID = {id}";
+        var parameter = command.CreateParameter(); parameter.ParameterName = "$customer"; parameter.Value = customer; command.Parameters.Add(parameter);
+        return await command.ExecuteNonQueryAsync(ct) == 1 ? await LoadAsync(key, context, ct) : FormResult.Missing();
+    }
+
+    private static string? Customer(JsonElement input)
+        => input.TryGetProperty("customer", out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } customer && customer != "Refused" ? customer : null;
     public Task<FormResult> DeleteAsync(string key, string version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
 }
 

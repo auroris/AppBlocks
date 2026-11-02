@@ -135,10 +135,31 @@ internal sealed class DataSourceReceipts(TimeProvider clock)
 
     public async Task<IDisposable> EnterAsync(string submission, CancellationToken ct)
     {
-        var gate = gates[(submission.GetHashCode(StringComparison.Ordinal) & int.MaxValue) % gates.Length];
+        var gate = gates[Gate(submission)];
         await gate.WaitAsync(ct);
         return new Release(gate);
     }
+
+    /// <summary>
+    /// Enters the gates of several submissions at once, as a master/detail save does, each gate once and in one order, so two
+    /// saves that share a gate wait for each other rather than for themselves.
+    /// </summary>
+    public async Task<IDisposable> EnterAsync(IEnumerable<string> submissions, CancellationToken ct)
+    {
+        var entered = new List<IDisposable>();
+        try
+        {
+            foreach (var index in submissions.Select(Gate).Distinct().Order())
+            {
+                await gates[index].WaitAsync(ct);
+                entered.Add(new Release(gates[index]));
+            }
+            return new Releases(entered);
+        }
+        catch { new Releases(entered).Dispose(); throw; }
+    }
+
+    private int Gate(string submission) => (submission.GetHashCode(StringComparison.Ordinal) & int.MaxValue) % gates.Length;
 
     public (string Key, string Hash)? Find(string submission)
         => receipts.TryGetValue(submission, out var receipt) && receipt.Expires > clock.GetUtcNow() ? (receipt.Key, receipt.Hash) : null;
@@ -154,5 +175,10 @@ internal sealed class DataSourceReceipts(TimeProvider clock)
     {
         private int released;
         public void Dispose() { if (Interlocked.Exchange(ref released, 1) == 0) gate.Release(); }
+    }
+
+    private sealed class Releases(IReadOnlyList<IDisposable> entered) : IDisposable
+    {
+        public void Dispose() { foreach (var release in entered.Reverse()) release.Dispose(); }
     }
 }

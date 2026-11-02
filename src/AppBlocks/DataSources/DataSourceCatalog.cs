@@ -17,7 +17,7 @@ namespace AppBlocks.DataSources;
 /// </summary>
 public sealed class DataSourceCatalog(IUmbracoContextFactory contexts, IDocumentNavigationQueryService navigation, IMemberGroupService groups,
     DataSourceRuntime runtime, IDataSourceUserResolver users, IEnumerable<IDataSourcePolicy> policies, ILogger<DataSourceCatalog> logger,
-    BindVariableProviders? providers = null) : IFormResourceProvider
+    BindVariableProviders? providers = null, DataSourceHandlers? handlers = null) : IFormResourceProvider
 {
     private IReadOnlyList<SqlDataSource>? sources;
 
@@ -47,7 +47,7 @@ public sealed class DataSourceCatalog(IUmbracoContextFactory contexts, IDocument
                     logger.LogWarning("Data source {Name} ({Key}) is left out: an earlier data source has the alias {Alias}.", node.Name, node.Key, definition.Alias);
                     continue;
                 }
-                found.Add(new SqlDataSource(definition, runtime, users, policies, providers));
+                found.Add(new SqlDataSource(definition, runtime, users, policies, providers, handlers));
             }
         }
         return found;
@@ -77,10 +77,10 @@ internal sealed class MemberGroupNames(IMemberGroupService groups)
 /// Publishing a data source checks it against its database: a definition that would fail at run time, such as an
 /// unregistered connection, a column that is not there, a key that does not identify one row or an unknown bind
 /// variable, is refused with every reason at once. Its alias must also be free among the C# resources and the
-/// other published data sources.
+/// other published data sources, and the backing class it names must be registered.
 /// </summary>
 public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMemberGroupService groups, DataSourceCatalog catalog,
-    IEnumerable<IFormResource> code) : INotificationHandler<ContentPublishingNotification>
+    IEnumerable<IFormResource> code, DataSourceHandlers? handlers = null) : INotificationHandler<ContentPublishingNotification>
 {
     public void Handle(ContentPublishingNotification notification)
     {
@@ -102,6 +102,8 @@ public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMembe
             errors.Add($"The alias {definition.Alias} belongs to a form resource registered in code; choose another.");
         if (catalog.DataSources.FirstOrDefault(source => source.Alias == definition.Alias && source.Definition.Key != key) is { } other)
             errors.Add($"The alias {definition.Alias} is already used by the data source {other.Definition.Name}.");
+        if (definition.Handler is { } handler && handlers?.Find(handler) is null)
+            errors.Add($"The backing class {handler} is not registered in code; choose a registered one or clear it.");
         errors.AddRange(runtime.Validate(definition));
         return errors;
     }
@@ -123,13 +125,14 @@ public static class DataSourceExtensions
     /// Registers the data source engine: published <c>sqlDataSource</c> nodes become form resources by alias,
     /// publishing validates them against their database, and their URLs stay out of the way of pages. Connections
     /// are the ones registered with AppBlocks. Add <see cref="IDataSourcePolicy"/> implementations for
-    /// rules a row restriction cannot express.
+    /// rules a row restriction cannot express, and <see cref="IDataSourceHandler"/> backing classes for data sources to pick.
     /// </summary>
     public static IUmbracoBuilder AddDataSources(this IUmbracoBuilder builder)
     {
         builder.Services.AddSingleton<DataSourceRuntime>();
         builder.Services.TryAddScoped<IDataSourceUserResolver, UmbracoDataSourceUsers>();
         builder.Services.TryAddScoped<BindVariableProviders>();
+        builder.Services.TryAddScoped<DataSourceHandlers>();
         builder.Services.AddScoped<DataSourceCatalog>();
         builder.Services.AddScoped<IFormResourceProvider>(services => services.GetRequiredService<DataSourceCatalog>());
         builder.AddNotificationHandler<ContentPublishingNotification, DataSourcePublishValidator>();

@@ -94,9 +94,11 @@ public sealed class ReportAccessPolicyTests
     private static readonly string BackOfficeKey = Guid.NewGuid().ToString();
 
     [Theory]
-    // Signed in to both, Member first as the website builds it: a private view saved under either identity is theirs.
+    // Signed in to both: the view belongs to the Member, whichever order the principal lists the identities in.
     [InlineData("both", "member", true)]
-    [InlineData("both", "backoffice", true)]
+    [InlineData("both", "backoffice", false)]
+    [InlineData("both, backoffice first", "member", true)]
+    [InlineData("both, backoffice first", "backoffice", false)]
     [InlineData("both", "other member", false)]
     [InlineData("both", "other backoffice", false)]
     // One session only owns what was saved under that identity.
@@ -104,7 +106,7 @@ public sealed class ReportAccessPolicyTests
     [InlineData("backoffice", "member", false)]
     [InlineData("member", "member", true)]
     [InlineData("member", "backoffice", false)]
-    public async Task Someone_signed_in_to_both_owns_private_views_saved_under_either_identity(string signedIn, string savedBy, bool owner)
+    public async Task A_saved_view_belongs_to_the_Member_when_one_is_signed_in_and_otherwise_to_the_backoffice_User(string signedIn, string savedBy, bool owner)
     {
         var user = Stub<IUser>((method, _) => method.Name switch {
             "get_IsApproved" => true, "get_IsLockedOut" => false, "get_Groups" => Array.Empty<IReadOnlyUserGroup>(),
@@ -116,7 +118,7 @@ public sealed class ReportAccessPolicyTests
         var member = new ClaimsIdentity([new(ClaimTypes.NameIdentifier, MemberId)], IdentityConstants.ApplicationScheme);
         var backOffice = new ClaimsIdentity([new(ClaimTypes.NameIdentifier, BackOfficeKey)], Constants.Security.BackOfficeAuthenticationType);
         var principal = new ClaimsPrincipal(signedIn switch {
-            "both" => new[] { member, backOffice }, "member" => new[] { member }, _ => new[] { backOffice },
+            "both" => new[] { member, backOffice }, "both, backoffice first" => new[] { backOffice, member }, "member" => new[] { member }, _ => new[] { backOffice },
         });
         var saved = new InteractiveReport.Core.SavedReports.SavedReportMetadata(7, "__views", null, "Mine", savedBy switch {
             "member" => MemberId, "backoffice" => BackOfficeKey, "other member" => "43", _ => Guid.NewGuid().ToString(),

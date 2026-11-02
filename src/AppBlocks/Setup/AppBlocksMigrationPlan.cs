@@ -12,5 +12,7 @@ public sealed class AppBlocksMigrationPlan() : AppBlocksPackagePlan("AppBlocks",
     {
         // The first state: definitions were tracked from here, with nothing to change yet.
         To("2026-11-02-tracked");
+        // The SQL data source's optional backing class.
+        To<AddDataSourceBackingClass>("2026-11-02-data-source-backing-class");
     }
 }
