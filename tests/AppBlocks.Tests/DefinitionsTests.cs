@@ -115,7 +115,7 @@ public sealed class DefinitionsTests
         grid.ConfigurationData = new Dictionary<string, object> { ["gridColumns"] = 6, ["blocks"] = Array.Empty<object>() };
         Assert.True((await dataTypes.UpdateAsync(grid, Constants.Security.SuperUserKey)).Success);
         var contents = services.GetRequiredService<IContentService>();
-        var source = Assert.Single(contents.GetPagedOfType(types.Get(DataSourceSchema.SqlAlias)!.Id, 0, 10, out _, null));
+        var source = Assert.Single(contents.GetPagedOfTypes([types.Get(DataSourceSchema.SqlAlias)!.Id], 0, 10, out _, null));
         Assert.Equal("orders.lines", source.GetValue<string>("alias"));
 
         using var response = await admin.PostAsJsonAsync(Api + "/reinstall", new { });
@@ -243,7 +243,7 @@ public sealed class DefinitionsTests
 
             // The site as it was before the step: no property, no picker data type, and the plan at its first state.
             await BeforeTheStepAsync(services);
-            var source = Assert.Single(services.GetRequiredService<IContentService>().GetPagedOfType(types.Get(DataSourceSchema.SqlAlias)!.Id, 0, 10, out _, null!));
+            var source = Assert.Single(services.GetRequiredService<IContentService>().GetPagedOfTypes([types.Get(DataSourceSchema.SqlAlias)!.Id], 0, 10, out _, null));
             await RunPlanAsync(services);
 
             var type = types.Get(DataSourceSchema.SqlAlias)!;

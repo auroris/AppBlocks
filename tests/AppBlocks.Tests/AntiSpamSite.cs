@@ -321,9 +321,19 @@ internal sealed class AntiSpamSite : IAsyncDisposable
     {
         using var scope = app.Services.CreateScope();
         var administrator = scope.ServiceProvider.GetRequiredService<IUserService>().GetByEmail(AdminEmail)!;
-        var token = await scope.ServiceProvider.GetRequiredService<Umbraco.Cms.Core.Preview.IPreviewTokenGenerator>().GenerateTokenAsync(administrator.Key);
-        Assert.True(token.Success);
-        return token.Result!;
+        var accessor = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Http.IHttpContextAccessor>();
+        var previous = accessor.HttpContext;
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext { RequestServices = scope.ServiceProvider };
+        context.Request.Scheme = Address.Scheme;
+        context.Request.Host = new Microsoft.AspNetCore.Http.HostString(Address.Authority);
+        try
+        {
+            accessor.HttpContext = context;
+            Assert.True(await scope.ServiceProvider.GetRequiredService<IPreviewService>().TryEnterPreviewAsync(administrator));
+            var cookies = context.Response.Headers.SetCookie.Select(value => Microsoft.Net.Http.Headers.SetCookieHeaderValue.Parse(value!));
+            return Assert.Single(cookies, cookie => cookie.Name == Constants.Web.PreviewCookieName).Value.ToString();
+        }
+        finally { accessor.HttpContext = previous; }
     }
 
     private sealed class RecordingAnswers(HttpMessageHandler inner, ConcurrentQueue<string> answers) : DelegatingHandler(inner)
