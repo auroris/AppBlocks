@@ -8,7 +8,6 @@ using AppBlocks.Databases;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
-using Npgsql;
 
 namespace AppBlocks.Connections;
 
@@ -209,8 +208,8 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     internal static DbConnection Create(string provider, string value) => provider switch
     {
         "sqlite" => new SqliteConnection(value), "sqlServer" => new SqlConnection(value),
-        "postgres" => new NpgsqlConnection(value),
-        "oracle" or "oracle11g" => OracleDriver.Create(value),
+        "postgres" => DatabaseDrivers.PostgreSql.Create(value),
+        "oracle" or "oracle11g" => DatabaseDrivers.Oracle.Create(value),
         _ => throw new ArgumentException("Unsupported database type."),
     };
 }

@@ -39,7 +39,7 @@ Browser tests use the sibling Interactive-Reports checkout's Playwright dependen
 
 The companion uses the same business connections as AppBlocks.
 
-**Oracle 11.2** and **Oracle 12+** select Interactive Reports' Oracle SQL compatibility modes. AppBlocks shares this selection across forms and report blocks: Oracle 11.2 mode maps to the `Oracle11g` dialect (including legacy paging), and Oracle 12+ mode maps to the `Oracle` dialect with automatic detection of pre-12 servers. Both modes use the Oracle driver bundled by AppBlocks; see the [base guide](../../docs/connections.md) for configuration and driver compatibility.
+**Oracle 11.2** and **Oracle 12+** select Interactive Reports' Oracle SQL compatibility modes. AppBlocks shares this selection across forms and report blocks: Oracle 11.2 mode maps to the `Oracle11g` dialect (including legacy paging), and Oracle 12+ mode maps to the `Oracle` dialect with automatic detection of pre-12 servers. Both modes use the site's `Oracle.ManagedDataAccess.Core` package, which AppBlocks does not ship; see the [base guide](../../docs/connections.md#database-drivers) for the driver each database needs and for configuration.
 
 The built-in `AppBlocksDb` connection is the default for application data and saved report views. It opens `AppBlocks.sqlite.db` beside Umbraco's SQLite database and also stores uploads by default. Prefer it for application forms and reports, so their writes do not compete with CMS saves in Umbraco's SQLite file. Business tables are supplied by the site; the report store creates its own tables on first use. `UmbracoDb` remains available for reports that specifically need CMS data.
 

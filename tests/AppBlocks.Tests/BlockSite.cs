@@ -107,6 +107,8 @@ internal sealed class BlockSite : IAsyncDisposable
             // As a site whose accounts have usernames of their own.
             ["Umbraco:CMS:Security:UsernameIsEmail"] = "false",
             ["Umbraco:CMS:TypeFinder:AdditionalAssemblyExclusionEntries:0"] = "xunit.",
+            // As a site with the Oracle driver installed sets it, so that Umbraco's startup scan does not load the driver's optional cloud assemblies; see docs/connections.md.
+            ["Umbraco:CMS:TypeFinder:AdditionalAssemblyExclusionEntries:1"] = "Oracle.ManagedDataAccess",
             ["Umbraco:CMS:Unattended:InstallUnattended"] = "true", ["Umbraco:CMS:Unattended:UpgradeUnattended"] = "true",
             ["Umbraco:CMS:Unattended:UnattendedUserName"] = "Block admin",
             ["Umbraco:CMS:Unattended:UnattendedUserEmail"] = AdminEmail,

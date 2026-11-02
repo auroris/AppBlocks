@@ -47,7 +47,7 @@ public sealed class AppBlocksViewComponent(AppPageAccess access, AppBindVariable
         antiforgery.GetAndStoreTokens(HttpContext);
         // Field defaults are resolved here, once, from the person page access admitted, so every block sees the same values.
         return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, AppBlockVisitor.Key(visitor),
-            await variables.ResolveAsync(visitor, HttpContext.Request.Query)));
+            await variables.ResolveAsync(visitor, HttpContext.Request.Query, page.Key)));
     }
 }
 
@@ -75,6 +75,6 @@ public sealed class WebsiteBlocksViewComponent(AppPageAccess access, AppBindVari
         HttpContext.User = visitor;
         antiforgery.GetAndStoreTokens(HttpContext);
         return View("~/Views/Shared/Components/AppBlocks/Default.cshtml", new AppBlocksPage(page, AppBlockVisitor.Key(visitor),
-            await variables.ResolveAsync(visitor, HttpContext.Request.Query)));
+            await variables.ResolveAsync(visitor, HttpContext.Request.Query, page.Key)));
     }
 }

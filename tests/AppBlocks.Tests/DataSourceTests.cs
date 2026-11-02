@@ -161,6 +161,35 @@ public sealed class DataSourceTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task Application_values_are_resolved_once_per_operation_and_once_per_batch_of_rows()
+    {
+        var provider = new CountingProvider("editor");
+        var source = new SqlDataSource(Definition(Tasks(("insertDefaults", "OWNER_SID = :APP.owner"))), runtime, new TestUsers(), [], new BindVariableProviders([provider]));
+        var context = Context(Editor) with { SubmissionKey = Guid.NewGuid().ToString() };
+        var created = await source.CreateAsync(Json(new { title = "From a provider", projectId = "1" }), context, default);
+        Assert.Equal(200, created.Status);
+        Assert.Equal(1, provider.Calls);
+        Assert.Equal("editor", Scalar($"SELECT OWNER_SID FROM TASKS WHERE TASK_ID = {created.Record!.Key}"));
+        // Three rows in one save ask once, so a time- or database-dependent answer cannot differ between the rows.
+        var batch = await source.SaveRowsAsync(new DataSourceScope("projectId", "1"), [
+            new("create", null, null, Json(new { title = "First of three" })), new("create", null, null, Json(new { title = "Second" })),
+            new("update", created.Record.Key, created.Record.Version, Json(new { title = "Third, changed" }))],
+            context with { SubmissionKey = Guid.NewGuid().ToString() }, 100, default);
+        Assert.Equal(200, batch.Status);
+        Assert.Equal(2, provider.Calls);
+    }
+
+    private sealed class CountingProvider(string owner) : IBindVariableProvider
+    {
+        public int Calls { get; private set; }
+        public ValueTask<IReadOnlyDictionary<string, object?>?> ResolveAsync(FormExecutionContext context, CancellationToken ct)
+        {
+            Calls++;
+            return ValueTask.FromResult<IReadOnlyDictionary<string, object?>?>(new Dictionary<string, object?> { ["owner"] = owner });
+        }
+    }
+
     private sealed class Policy(Func<DataSourceRequest, bool> allow) : IDataSourcePolicy
     {
         public List<DataSourceRequest> Requests { get; } = [];
@@ -741,6 +770,8 @@ public sealed class DataSourceTests : IDisposable
         Refused("not a bind variable", ("rowRestriction", "OWNER_SID = :USER"));
         Refused("restricts nothing", ("rowRestriction", "OWNER_SID = :PARAM.owner"));
         Refused("restricts nothing", ("rowRestriction", "OWNER_SID = :FIELD.ownerSid"));
+        Refused("not a bind variable", ("rowRestriction", "OWNER_SID = :APP"));
+        Assert.Empty(Validate(("rowRestriction", "OWNER_SID = :APP.tenant")));
         Refused("outside IN", ("rowRestriction", "TAG = :USER_GROUPS"));
         Refused("could not be applied", ("rowRestriction", "NOPE = 1"));
         Refused("unterminated", ("rowRestriction", "TAG = 'open"));

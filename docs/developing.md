@@ -30,7 +30,7 @@ $env:APPBLOCKS_ORACLE_CONNECTION = "User Id=TEST_USER;Password=TEST_PASSWORD;Dat
 dotnet run --project tests/AppBlocks.Tests -- -noLogo -explicit only -class AppBlocks.Tests.OracleLiveTests
 ```
 
-The account needs `CREATE SESSION`, `CREATE TABLE`, `CREATE VIEW`, `CREATE SEQUENCE` and a tablespace quota. The tests create uniquely named tables, views and sequences and drop them in cleanup. They exercise the bundled driver in both `oracle11g` and automatic `oracle` modes, including metadata discovery, generated keys, form CRUD, concurrency, row restrictions, queries and custom-statement validation. Ordinary test runs do not contact Oracle.
+The account needs `CREATE SESSION`, `CREATE TABLE`, `CREATE VIEW`, `CREATE SEQUENCE` and a tablespace quota. The tests create uniquely named tables, views and sequences and drop them in cleanup. They exercise the `Oracle.ManagedDataAccess.Core` driver the test projects reference (AppBlocks itself references no driver) in both `oracle11g` and automatic `oracle` modes, including metadata discovery, generated keys, form CRUD, concurrency, row restrictions, queries and custom-statement validation. Ordinary test runs do not contact Oracle.
 
 The demo references the reports companion, which brings in AppBlocks. The optional demo seed is website code, outside the package. Enable `AppBlocksDemo:SeedContent` in the demo's ignored `appsettings.Development.local.json` on a local SQLite installation to create a sample table and an ordinary article with a Block List and a Block Grid. Its own template uses both native rendering helpers. The companion's HTTP acceptance test can verify that running demo:
 

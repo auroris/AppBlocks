@@ -346,10 +346,10 @@ public sealed class DatabaseSetupTests
     public async Task An_oracle_upload_store_gets_the_same_notice_where_its_driver_is_present()
     {
         DbConnection oracle;
-        try { oracle = OracleDriver.Create("Data Source=nowhere;User Id=someone;Password=never-shown"); }
-        catch (Exception error) when (error is TypeLoadException or FileNotFoundException or FileLoadException) { Assert.Skip("The Oracle driver is not beside this test run."); throw; }
+        try { oracle = DatabaseDrivers.Oracle.Create("Data Source=nowhere;User Id=someone;Password=never-shown"); }
+        catch (DatabaseDrivers.MissingDriverException) { Assert.Skip("The Oracle driver is not beside this test run."); throw; }
         await oracle.DisposeAsync();
-        var site = Site("Data Source=nowhere;User Id=someone;Password=never-shown", OracleDriver.Create);
+        var site = Site("Data Source=nowhere;User Id=someone;Password=never-shown", DatabaseDrivers.Oracle.Create);
         Assert.Equal(AttachmentStoreProblem.Unsupported, (await Assert.ThrowsAsync<AttachmentStoreException>(() => site.Store().ListAsync(Order, default))).Problem);
         Assert.Equal(DatabaseFeatureState.Unsupported, (await site.Setup().StatusAsync(default)).State);
     }

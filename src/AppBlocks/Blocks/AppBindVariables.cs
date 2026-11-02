@@ -4,6 +4,8 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Identity;
 using Umbraco.Cms.Core.Services;
 using AppBlocks.Authentication;
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
 
 namespace AppBlocks.Blocks;
 
@@ -18,7 +20,8 @@ namespace AppBlocks.Blocks;
 /// <param name="Email">The account's email address.</param>
 /// <param name="Now">The web server's local date and time when the page rendered.</param>
 /// <param name="Query">The page's query string, which <c>:PARAM.name</c> reads.</param>
-public sealed partial record AppBindVariables(string Key, string? Sid, string? Name, string? Email, DateTimeOffset Now, IQueryCollection Query)
+/// <param name="Application">The values the application's bind variable providers computed for the page, which <c>:APP.name</c> reads; null where none ran.</param>
+public sealed partial record AppBindVariables(string Key, string? Sid, string? Name, string? Email, DateTimeOffset Now, IQueryCollection Query, IReadOnlyDictionary<string, object?>? Application = null)
 {
     /// <summary>
     /// Resolves a default for a field of the given kind (<see cref="Forms.FormField.Kind"/>): one of the variables,
@@ -36,6 +39,7 @@ public sealed partial record AppBindVariables(string Key, string? Sid, string? N
         if (!variable.Success) return text;
         var resolved = variable.Groups["param"].Success
             ? Query[variable.Groups["param"].Value] is { Count: > 0 } values ? values[0] : null
+            : variable.Groups["app"].Success ? BindVariableProviders.Text(Application?.GetValueOrDefault(variable.Groups["app"].Value))
             : variable.Groups["name"].Value.ToUpperInvariant() switch {
                 "USER_SID" => Sid,
                 "USER_NAME" => Name,
@@ -54,7 +58,7 @@ public sealed partial record AppBindVariables(string Key, string? Sid, string? N
         return string.IsNullOrEmpty(resolved) ? null : resolved;
     }
 
-    [GeneratedRegex(@"^:(?:PARAM\.(?<param>[A-Za-z0-9_\-]+)|(?<name>[A-Za-z_]+))$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^:(?:PARAM\.(?<param>[A-Za-z0-9_\-]+)|APP\.(?<app>[A-Za-z_][A-Za-z0-9_]*)|(?<name>[A-Za-z_]+))$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex Variable();
 }
 
@@ -64,9 +68,10 @@ public sealed partial record AppBindVariables(string Key, string? Sid, string? N
 /// by its key; the SID is the provider key of the account's external login, which every sign-in provider of the
 /// platform stores.
 /// </summary>
-public sealed class AppBindVariableResolver(IUserService users, IMemberService members, IExternalLoginWithKeyService logins)
+public sealed class AppBindVariableResolver(IUserService users, IMemberService members, IExternalLoginWithKeyService logins, BindVariableProviders? providers = null)
 {
-    public async Task<AppBindVariables> ResolveAsync(ClaimsPrincipal person, IQueryCollection query)
+    /// <param name="pageKey">The page rendering, which the providers see as the context's page with no form; null leaves the application variables without values.</param>
+    public async Task<AppBindVariables> ResolveAsync(ClaimsPrincipal person, IQueryCollection query, Guid? pageKey = null)
     {
         var id = person.FindFirstValue(ClaimTypes.NameIdentifier);
         Guid? key = null; string? name = null, email = null;
@@ -86,7 +91,11 @@ public sealed class AppBindVariableResolver(IUserService users, IMemberService m
         var sid = key is { } account
             ? logins.GetExternalLogins(account).Select(login => login.ProviderKey).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
             : null;
-        return new(ApplicationAccessPolicy.UserKey(person), sid, name, NonEmpty(email), DateTimeOffset.Now, query);
+        // Field defaults are resolved once per page, before any form, so the providers see the page and an empty form key.
+        var application = pageKey is { } rendering && providers is { Any: true }
+            ? await providers.ResolveAsync(new FormExecutionContext(person, rendering, Guid.Empty, "", Parameters: query.Where(p => p.Value.Count == 1).ToDictionary(p => p.Key, p => p.Value.ToString(), StringComparer.OrdinalIgnoreCase)), default)
+            : null;
+        return new(ApplicationAccessPolicy.UserKey(person), sid, name, NonEmpty(email), DateTimeOffset.Now, query, application);
     }
 
     private static string? NonEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;

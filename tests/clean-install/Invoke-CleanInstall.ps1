@@ -21,12 +21,16 @@ function Invoke-Checked([string] $Log, [scriptblock] $Command) {
 function Verify-Site([string] $Site, [string] $Stage) {
     $project = Get-ChildItem -LiteralPath $Site -Filter '*.csproj' | Select-Object -First 1
     $executable = Join-Path $Site "bin/Debug/net10.0/$($project.BaseName).exe"
+    $probe = Join-Path $Site 'driver-probe.json'
+    if (Test-Path -LiteralPath $probe) { Remove-Item -LiteralPath $probe }
     $process = Start-Process -FilePath $executable -ArgumentList @('--urls', $address, '--environment', 'Development') -WorkingDirectory $Site -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $run "$Stage-server.log") -RedirectStandardError (Join-Path $run "$Stage-server-error.log")
     try {
         $ready = $false
         for ($attempt = 0; $attempt -lt 90; $attempt++) {
             if ($process.HasExited) { throw "Host exited; see $Stage-server-error.log" }
             try { $ready = (Invoke-WebRequest "$address/umbraco" -TimeoutSec 2).StatusCode -eq 200 } catch { }
+            # The HTTP listener can answer while the started notification is still seeding and probing drivers.
+            if ($Stage -in @('functional', 'restart')) { $ready = $ready -and (Test-Path -LiteralPath $probe) }
             if ($ready) { break }
             Start-Sleep -Seconds 1
         }
@@ -101,6 +105,13 @@ try {
         Invoke-Checked "build-$mode.log" { dotnet build "$site/CleanAppBlocks.csproj" --no-restore --nologo -v minimal }
         Verify-Site $site $mode
         if ($mode -eq 'companions') {
+            # The empty site above must work without optional drivers. Now install them as a site would.
+            $drivers = ([xml](Get-Content (Join-Path $repository 'tests/AppBlocks.Tests/AppBlocks.Tests.csproj') -Raw)).Project.ItemGroup.PackageReference |
+                Where-Object { $_.Include -in @('Npgsql', 'Oracle.ManagedDataAccess.Core') }
+            foreach ($driver in $drivers) {
+                Invoke-Checked "add-$($driver.Include).log" { dotnet add "$site/CleanAppBlocks.csproj" package $driver.Include --version $driver.Version --no-restore }
+            }
+            $settings.Umbraco.CMS.TypeFinder = @{ AdditionalAssemblyExclusionEntries = @('Oracle.ManagedDataAccess') }
             # Add ordinary website content only after automatic installation has passed on the empty site.
             Copy-Item samples/AppBlocks.Demo/DemoSeed.cs,samples/AppBlocks.Demo/DemoTasks.cs -Destination $site
             Copy-Item (Join-Path $PSScriptRoot 'SeedComposer.cs') -Destination $site
@@ -108,13 +119,19 @@ try {
             Copy-Item (Join-Path $PSScriptRoot 'Views/CleanDocument.cshtml') -Destination "$site/Views"
             $settings.AppBlocksDemo = @{ SeedContent = $true }
             $settings | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $file
+            Invoke-Checked 'restore-drivers.log' { dotnet restore "$site/CleanAppBlocks.csproj" --configfile "$run/NuGet.Config" --nologo }
             Invoke-Checked 'build-seeded.log' { dotnet build "$site/CleanAppBlocks.csproj" --no-restore --nologo -v minimal }
             Verify-Site $site 'functional'
             Verify-Site $site 'restart'
         }
         $published = Join-Path $run "publish-$mode"
         Invoke-Checked "publish-$mode.log" { dotnet publish "$site/CleanAppBlocks.csproj" --no-restore --nologo -v minimal -o $published }
-        if (!(Test-Path (Join-Path $published 'oracle/Oracle.ManagedDataAccess.dll'))) { throw "The Oracle driver is missing from the $mode site's publish output." }
+        if (Test-Path (Join-Path $published 'oracle/Oracle.ManagedDataAccess.dll')) { throw "The obsolete bundled Oracle driver reached the $mode site's publish output." }
+        foreach ($driver in @('Npgsql.dll', 'Oracle.ManagedDataAccess.dll')) {
+            if ((Test-Path (Join-Path $published $driver)) -ne ($mode -eq 'companions')) {
+                throw "The $mode site's publish output must include $driver only when the site installs it."
+            }
+        }
     }
     Write-Host "Clean installation checks passed. Results: $run/results"
 } finally {

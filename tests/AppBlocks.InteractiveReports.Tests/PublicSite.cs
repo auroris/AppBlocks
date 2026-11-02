@@ -76,6 +76,7 @@ internal sealed class PublicSite : IAsyncDisposable
     public Uri Address { get; }
     public RecordedForms Forms { get; }
     public Switches Switch => app.Services.GetRequiredService<Switches>();
+    public RecordedBindings Bindings => app.Services.GetRequiredService<RecordedBindings>();
 
     private static Guid Key(string name) => AppBlockSchema.Key("public-site:" + name);
 
@@ -98,6 +99,8 @@ internal sealed class PublicSite : IAsyncDisposable
             ["Umbraco:CMS:Global:Id"] = Guid.NewGuid().ToString(), ["Umbraco:CMS:Global:UseHttps"] = "false",
             ["Umbraco:CMS:ModelsBuilder:ModelsMode"] = "Nothing",
             ["Umbraco:CMS:TypeFinder:AdditionalAssemblyExclusionEntries:0"] = "xunit.",
+            // As a site with the Oracle driver installed sets it, so that Umbraco's startup scan does not load the driver's optional cloud assemblies; see docs/connections.md.
+            ["Umbraco:CMS:TypeFinder:AdditionalAssemblyExclusionEntries:1"] = "Oracle.ManagedDataAccess",
             ["Umbraco:CMS:Unattended:InstallUnattended"] = "true", ["Umbraco:CMS:Unattended:UpgradeUnattended"] = "true",
             ["Umbraco:CMS:Unattended:UnattendedUserName"] = "Public admin",
             ["Umbraco:CMS:Unattended:UnattendedUserEmail"] = AdminEmail,
@@ -121,6 +124,8 @@ internal sealed class PublicSite : IAsyncDisposable
             .AddApplicationPart(typeof(PublicSite).Assembly);
         var forms = new RecordedForms();
         builder.Services.AddSingleton(forms);
+        builder.Services.AddSingleton<RecordedBindings>();
+        builder.Services.AddSingleton<IBindVariableProvider>(services => services.GetRequiredService<RecordedBindings>());
         builder.Services.AddSingleton<Switches>();
         builder.Services.AddScoped<IFormResource, ContactResource>();
         builder.Services.AddScoped<IFormResource, RefusingResource>();
@@ -377,6 +382,17 @@ internal sealed class PublicSite : IAsyncDisposable
 }
 
 /// <summary>What the contact class received, so a test can see it reached the class and what with.</summary>
+/// <summary>Records every execution context the :APP. providers are asked for, so a test can see which page a block report bound.</summary>
+internal sealed class RecordedBindings : IBindVariableProvider
+{
+    public ConcurrentQueue<FormExecutionContext> Contexts { get; } = new();
+    public ValueTask<IReadOnlyDictionary<string, object?>?> ResolveAsync(FormExecutionContext context, CancellationToken ct)
+    {
+        Contexts.Enqueue(context);
+        return ValueTask.FromResult<IReadOnlyDictionary<string, object?>?>(new Dictionary<string, object?> { ["page"] = context.PageKey.ToString("N") });
+    }
+}
+
 internal sealed class RecordedForms
 {
     public sealed record Submission(ClaimsPrincipal Member, string Values, IReadOnlyDictionary<string, string> FormData, string? SubmissionKey);

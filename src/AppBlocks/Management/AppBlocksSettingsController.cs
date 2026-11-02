@@ -69,7 +69,7 @@ public sealed class AppBlocksSettingsController(ConnectionCatalog connections, C
         if (!Admin) return Forbid();
         Response.Headers.CacheControl = "no-store";
         try { await connections.SaveAsync(request, ct); return Ok(connections.List()); }
-        catch (ArgumentException error) { return Problem(error.Message, statusCode: 422); }
+        catch (Exception error) when (error is ArgumentException or DatabaseDrivers.MissingDriverException) { return Problem(error.Message, statusCode: 422); }
     }
 
     [HttpPost("connections/test")]
@@ -79,6 +79,7 @@ public sealed class AppBlocksSettingsController(ConnectionCatalog connections, C
         if (!Admin) return Forbid();
         Response.Headers.CacheControl = "no-store";
         try { await connections.TestAsync(request, ct); return Ok(new { message = "Connection successful." }); }
+        catch (DatabaseDrivers.MissingDriverException error) { return Problem(error.Message, statusCode: 422); }
         catch (Exception) when (!ct.IsCancellationRequested)
         { return Problem("Connection failed or timed out. Check the database type, connection string, network access and database permissions.", statusCode: 422); }
     }

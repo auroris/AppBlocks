@@ -45,11 +45,15 @@ public sealed partial class SqlDataSource
 
     /// <summary>The rows linked to the scope's key, at most <paramref name="maximumRows"/>, and the record a new row starts from.</summary>
     public async Task<DataSourceRowsResult> ListRowsAsync(DataSourceScope scope, FormExecutionContext context, int maximumRows, CancellationToken ct)
+        => await ListRowsAsync(scope, context, maximumRows, await AppAsync(context, ct), ct);
+
+    /// <summary>The rows with the application values already resolved, so a save answers with the same values it wrote with.</summary>
+    private async Task<DataSourceRowsResult> ListRowsAsync(DataSourceScope scope, FormExecutionContext context, int maximumRows, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
     {
         if (Entry.Plan is not { } plan) return DataSourceRowsResult.From(Unavailable());
         if (await users.ResolveAsync(context, ct) is not { } user || !CanRead(user)) return new(403);
         if (Link(plan, scope, out var link, out var value) is { } problem) return DataSourceRowsResult.From(problem);
-        var binder = new Binder(plan, user, context, runtime.Now(), null);
+        var binder = new Binder(plan, user, context, runtime.Now(), null, app);
         return await RunAsync(plan, write: false, async (connection, _) => {
             if (!await AllowedAsync(DataSourceAction.Query, user, context, null, null, null, connection, null, ct)) return new DataSourceRowsResult(403);
             var rows = await ReadScopeAsync(plan, connection, null, link, value, binder, maximumRows, ct);
@@ -90,11 +94,12 @@ public sealed partial class SqlDataSource
             return earlier.Hash == hash ? await ListRowsAsync(scope, context with { SubmissionKey = null }, maximumRows, ct)
                 : new(422, Errors: new Dictionary<string, string[]> { [""] = ["This submission was already used with different rows. Reload the page."] });
         var now = runtime.Now();
+        var app = await AppAsync(context, ct);
         var outcome = await RunAsync(plan, write: true, async (connection, transaction) => {
             for (var i = 0; i < changes.Count; i++)
             {
                 FormResult result;
-                try { result = await ApplyAsync(plan, user, context, link, value, changes[i], now, connection, transaction!, ct); }
+                try { result = await ApplyAsync(plan, user, context, link, value, changes[i], now, connection, transaction!, app, ct); }
                 catch (DataSourceFieldException error) { result = FormResult.Invalid(error.Field, error.Message); }
                 catch (DataSourceException error) { result = FormResult.Invalid("", error.Message); }
                 catch (DbException error)
@@ -110,11 +115,11 @@ public sealed partial class SqlDataSource
         }, result => DataSourceRowsResult.From(result), ct);
         if (outcome.Status != 200) return outcome;
         runtime.Receipts.Add(receipt, "rows", hash);
-        return await ListRowsAsync(scope, context with { SubmissionKey = null }, maximumRows, ct);
+        return await ListRowsAsync(scope, context with { SubmissionKey = null }, maximumRows, app, ct);
     }
 
     private async Task<FormResult> ApplyAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, PlanColumn link, object? value,
-        DataSourceChange change, DateTime now, DbConnection connection, DbTransaction transaction, CancellationToken ct)
+        DataSourceChange change, DateTime now, DbConnection connection, DbTransaction transaction, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
     {
         var scope = new ScopeMatch(link, value);
         switch (change.Operation)
@@ -123,16 +128,16 @@ public sealed partial class SqlDataSource
                 if (Parse(plan, change.Values, null, out var rejected) is not { } values) return rejected!;
                 // The new row belongs to the parent, whatever the change says.
                 values[link] = value;
-                return await InsertRecordAsync(plan, user, context, values, now, connection, transaction, ct);
+                return await InsertRecordAsync(plan, user, context, values, now, connection, transaction, app, ct);
             case "update":
                 if (change.Key is null || !TryParseKey(plan, change.Key, out var keys)) return FormResult.Missing();
                 if (string.IsNullOrWhiteSpace(change.Version)) return FormResult.Invalid("", "The row's version is required.");
                 if (change.Values.ValueKind != JsonValueKind.Object) return FormResult.Invalid("", "Row values must be an object.");
-                return await UpdateRecordAsync(plan, user, context, change.Key, keys, change.Values, change.Version, now, connection, transaction, scope, ct);
+                return await UpdateRecordAsync(plan, user, context, change.Key, keys, change.Values, change.Version, now, connection, transaction, scope, app, ct);
             default:
                 if (change.Key is null || !TryParseKey(plan, change.Key, out var deleteKeys)) return FormResult.Missing();
                 if (string.IsNullOrWhiteSpace(change.Version)) return FormResult.Invalid("", "The row's version is required.");
-                return await DeleteRecordAsync(plan, user, context, change.Key, deleteKeys, change.Version, connection, transaction, scope, ct);
+                return await DeleteRecordAsync(plan, user, context, change.Key, deleteKeys, change.Version, connection, transaction, scope, app, ct);
         }
     }
 

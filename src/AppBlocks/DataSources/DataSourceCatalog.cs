@@ -16,7 +16,8 @@ namespace AppBlocks.DataSources;
 /// definition that does not read is logged and left out, and of two nodes with one alias the first wins.
 /// </summary>
 public sealed class DataSourceCatalog(IUmbracoContextFactory contexts, IDocumentNavigationQueryService navigation, IMemberGroupService groups,
-    DataSourceRuntime runtime, IDataSourceUserResolver users, IEnumerable<IDataSourcePolicy> policies, ILogger<DataSourceCatalog> logger) : IFormResourceProvider
+    DataSourceRuntime runtime, IDataSourceUserResolver users, IEnumerable<IDataSourcePolicy> policies, ILogger<DataSourceCatalog> logger,
+    BindVariableProviders? providers = null) : IFormResourceProvider
 {
     private IReadOnlyList<SqlDataSource>? sources;
 
@@ -46,7 +47,7 @@ public sealed class DataSourceCatalog(IUmbracoContextFactory contexts, IDocument
                     logger.LogWarning("Data source {Name} ({Key}) is left out: an earlier data source has the alias {Alias}.", node.Name, node.Key, definition.Alias);
                     continue;
                 }
-                found.Add(new SqlDataSource(definition, runtime, users, policies));
+                found.Add(new SqlDataSource(definition, runtime, users, policies, providers));
             }
         }
         return found;
@@ -128,6 +129,7 @@ public static class DataSourceExtensions
     {
         builder.Services.AddSingleton<DataSourceRuntime>();
         builder.Services.TryAddScoped<IDataSourceUserResolver, UmbracoDataSourceUsers>();
+        builder.Services.TryAddScoped<BindVariableProviders>();
         builder.Services.AddScoped<DataSourceCatalog>();
         builder.Services.AddScoped<IFormResourceProvider>(services => services.GetRequiredService<DataSourceCatalog>());
         builder.AddNotificationHandler<ContentPublishingNotification, DataSourcePublishValidator>();

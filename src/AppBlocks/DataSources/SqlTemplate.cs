@@ -22,6 +22,8 @@ public enum BindVariableKind
     Param,
     /// <summary>The current value of another field of the record.</summary>
     Field,
+    /// <summary>A value the application's registered <see cref="IBindVariableProvider"/> computes for the operation, written <c>:APP.name</c>.</summary>
+    App,
 }
 
 /// <summary>One bind variable as written, such as <c>:USER_SID</c> or <c>:FIELD.customer</c>.</summary>
@@ -35,6 +37,7 @@ public sealed record BindVariable(BindVariableKind Kind, string? Name = null)
     public override string ToString() => Kind switch {
         BindVariableKind.Param => ":PARAM." + Name,
         BindVariableKind.Field => ":FIELD." + Name,
+        BindVariableKind.App => ":APP." + Name,
         _ => ":" + Fixed.First(pair => pair.Value == Kind).Key,
     };
 
@@ -48,6 +51,7 @@ public sealed record BindVariable(BindVariableKind Kind, string? Name = null)
         return text[..dot].ToUpperInvariant() switch {
             "PARAM" => new(BindVariableKind.Param, name),
             "FIELD" => new(BindVariableKind.Field, name),
+            "APP" => new(BindVariableKind.App, name),
             _ => null,
         };
     }
@@ -157,7 +161,7 @@ internal sealed class SqlTemplate
                 }
                 var written = sql[i..end];
                 var variable = BindVariable.Parse(written[1..]);
-                if (variable is null) errors.Add($"{label} uses {written}, which is not a bind variable (use :USER_SID, :USER_NAME, :USER_KEY, :USER_EMAIL, :USER_GROUPS, :NOW, :PARAM.name or :FIELD.alias).");
+                if (variable is null) errors.Add($"{label} uses {written}, which is not a bind variable (use :USER_SID, :USER_NAME, :USER_KEY, :USER_EMAIL, :USER_GROUPS, :NOW, :PARAM.name, :FIELD.alias or :APP.name).");
                 else if (use == SqlUse.RowRestriction && variable.Kind is BindVariableKind.Param or BindVariableKind.Field)
                     errors.Add($"{label} cannot use {written}: the caller controls request parameters and field values, so a restriction built on them restricts nothing.");
                 else if (use == SqlUse.RowSource && variable.Kind == BindVariableKind.Field)

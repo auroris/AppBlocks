@@ -8,7 +8,7 @@ public sealed record DataSourceQueryColumn(string Name, string Field, string Kin
 public sealed record DataSourceQueryResult(IReadOnlyList<DataSourceQueryColumn> Columns, IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows);
 
 /// <summary>The shared read path for lists and paper reports. All callers keep the source's own access rules.</summary>
-public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUserResolver users, IEnumerable<IDataSourcePolicy> policies)
+public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUserResolver users, IEnumerable<IDataSourcePolicy> policies, BindVariableProviders? providers = null)
 {
     public async Task<DataSourceQueryResult> QueryAsync(DataSourceDefinition definition, FormExecutionContext context,
         int maximumRows = 1000, CancellationToken ct = default)
@@ -18,9 +18,10 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
         // Opened before the policies are asked, so they can read other rows through the connection the query uses.
         await using var connection = await runtime.OpenAsync(definition.Connection, ct);
         var user = await AuthorizeAsync(definition, context, connection, ct);
+        var app = providers is null ? null : await providers.ResolveAsync(context, ct);
         var parameters = new SqlParameters(plan.Dialect);
         var now = runtime.Now();
-        object? Value(BindVariable variable) => Bind(variable, user, context.Parameters, now, plan.Dialect);
+        object? Value(BindVariable variable) => Bind(variable, user, context.Parameters, now, plan.Dialect, app);
         var from = plan.From(parameters, Value);
         var predicate = plan.Restriction?.Render(parameters, Value) ?? "1 = 1";
         var sql = plan.Dialect.Select(from, plan.Columns.Select(c => c.Column), [], predicate, maximumRows == int.MaxValue ? maximumRows : maximumRows + 1);
@@ -67,11 +68,12 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
     public static bool CanRead(DataSourceDefinition definition, DataSourceUser user) => definition.ReadGroups.Count == 0
         || definition.ReadGroups.Concat(definition.WriteGroups).Any(user.IsInMemberGroup);
 
-    internal static object? Bind(BindVariable variable, DataSourceUser user, IReadOnlyDictionary<string, string>? parameters, DateTime now, SqlDialect dialect)
+    internal static object? Bind(BindVariable variable, DataSourceUser user, IReadOnlyDictionary<string, string>? parameters, DateTime now, SqlDialect dialect, IReadOnlyDictionary<string, object?>? app = null)
         => variable.Kind switch {
             BindVariableKind.UserSid => user.Sid, BindVariableKind.UserName => user.Name, BindVariableKind.UserKey => user.Key,
             BindVariableKind.UserEmail => user.Email, BindVariableKind.UserGroups => user.Groups, BindVariableKind.Now => dialect.Now(now),
             BindVariableKind.Param => parameters?.FirstOrDefault(pair => pair.Key.Equals(variable.Name, StringComparison.OrdinalIgnoreCase)).Value,
+            BindVariableKind.App => app?.GetValueOrDefault(variable.Name!),
             _ => null,
         };
 

@@ -26,7 +26,7 @@ public sealed class NativeAppBlockViewComponent(AppPageAccess access, AppBindVar
             antiforgery.GetAndStoreTokens(HttpContext);
         }
         var model = new AppBlocksPage(page, visitor is null ? null : AppBlockVisitor.Key(visitor),
-            visitor is null ? null : await variables.ResolveAsync(visitor, HttpContext.Request.Query), new BlockGridModel([block], 12));
+            visitor is null ? null : await variables.ResolveAsync(visitor, HttpContext.Request.Query, page.Key), new BlockGridModel([block], 12));
         return View("~/Views/Shared/Components/AppBlocks/Native.cshtml", model);
     }
 }

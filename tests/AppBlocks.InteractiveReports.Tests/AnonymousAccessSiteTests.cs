@@ -228,6 +228,8 @@ public sealed class AnonymousAccessSiteTests
         var report = "/api/reports/" + name;
         using var admin = await site.Administrator();
         var schemaForAdmin = await admin.GetFromJsonAsync<JsonElement>(report + "/schema");
+        // Binding the block's report told the :APP. providers which page and block it is, not the definition's own alias.
+        Assert.Contains(site.Bindings.Contexts, context => context.PageKey == PublicSite.ReportPage && context.FormKey == PublicSite.PublicReport);
         Assert.Contains("savedReports", schemaForAdmin.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
         using var saved = await admin.PostAsJsonAsync(report + "/saved", new { title = "Shared by an administrator", state = new { page = new { index = 1, size = 1 } }, isGlobal = true });
         Assert.True(saved.IsSuccessStatusCode, await saved.Content.ReadAsStringAsync());

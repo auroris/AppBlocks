@@ -106,18 +106,47 @@ for (const name of packages) {
 }
 passed('Every packaged JavaScript, CSS and extension manifest is served and matches source');
 
-const contentFiles = Object.entries(Object.values(assets.targets)[0])
-  .filter(([name]) => name.startsWith('AppBlocks')).flatMap(([, library]) => Object.keys(library.contentFiles ?? {}));
-assert.deepEqual(contentFiles, ['contentFiles/any/net10.0/oracle/Oracle.ManagedDataAccess.dll'], 'The only file the packages add to a site project');
-assert.ok(existsSync(resolve(site, 'bin/Debug/net10.0/oracle/Oracle.ManagedDataAccess.dll')), 'The bundled Oracle driver reaches the site');
-assert.ok(!existsSync(resolve(site, 'bin/Debug/net10.0/Oracle.ManagedDataAccess.dll')), 'The Oracle driver stays out of the folder Umbraco scans');
-passed('The packages add only the Oracle driver to a site, in its own folder');
-if (settings.AppBlocksDemo?.SeedContent) {
+const appBlocksLibraries = Object.entries(Object.values(assets.targets)[0]).filter(([name]) => name.startsWith('AppBlocks'));
+assert.deepEqual(appBlocksLibraries.flatMap(([, library]) => Object.keys(library.contentFiles ?? {})), [], 'The packages add no content files to a site project');
+const installedDrivers = !!settings.AppBlocksDemo?.SeedContent;
+const drivers = [
+  { provider: 'postgres', package: 'Npgsql', assembly: 'Npgsql.dll', connectionString: 'Host=127.0.0.1;Port=1;Database=probe;Username=probe;Password=driver-probe-secret;Timeout=1' },
+  { provider: 'oracle', package: 'Oracle.ManagedDataAccess.Core', assembly: 'Oracle.ManagedDataAccess.dll', connectionString: 'Data Source=127.0.0.1:1/probe;User Id=probe;Password=driver-probe-secret;Connection Timeout=1' },
+  { provider: 'oracle11g', package: 'Oracle.ManagedDataAccess.Core', assembly: 'Oracle.ManagedDataAccess.dll', connectionString: 'Data Source=127.0.0.1:1/probe;User Id=probe;Password=driver-probe-secret;Connection Timeout=1' },
+];
+assert.ok(!existsSync(resolve(site, 'bin/Debug/net10.0/oracle/Oracle.ManagedDataAccess.dll')), 'No obsolete bundled Oracle driver');
+for (const driver of drivers) {
+  assert.ok(appBlocksLibraries.every(([, library]) => !Object.hasOwn(library.dependencies ?? {}, driver.package)), `AppBlocks packages do not depend on ${driver.package}`);
+  assert.equal(libraries.some(name => name.startsWith(driver.package + '/')), installedDrivers, `${driver.package} is present only after the site installs it`);
+  assert.equal(existsSync(resolve(site, 'bin/Debug/net10.0', driver.assembly)), installedDrivers, `${driver.assembly} reaches the output only after the site installs it`);
+  if (!installedDrivers) {
+    for (const action of ['', '/test']) {
+      const response = await admin.post('/umbraco/management/api/v1/appblocks/connections' + action, {
+        data: { name: 'missing-' + driver.provider, provider: driver.provider, connectionString: driver.connectionString },
+      });
+      assert.equal(response.status(), 422, `Missing ${driver.package} returns a validation error when ${action ? 'testing' : 'saving'}`);
+      const problem = await response.json();
+      assert.ok(problem.detail.includes(`Add the ${driver.package} package`), problem.detail);
+      assert.ok(!JSON.stringify(problem).includes('driver-probe-secret'), 'Driver errors do not expose credentials');
+    }
+  }
+}
+passed('AppBlocks packages leave PostgreSQL and Oracle drivers to the site');
+if (!installedDrivers) {
+  const saved = await admin.get('/umbraco/management/api/v1/appblocks/connections');
+  assert.ok(saved.ok(), await saved.text());
+  assert.ok(!(await saved.json()).some(connection => connection.name.startsWith('missing-')), 'Failed driver validation saves no connections');
+  passed('Saving and testing without optional drivers names the required package');
+} else {
+  assert.ok(settings.Umbraco.CMS.TypeFinder.AdditionalAssemblyExclusionEntries.includes('Oracle.ManagedDataAccess'), 'The site excludes Oracle from the Umbraco assembly scan');
   // The probe runs from the started notification, which can finish after the site first answers.
-  for (let attempt = 0; attempt < 30 && !existsSync(resolve(site, 'oracle-probe.txt')); attempt++) await new Promise(done => setTimeout(done, 1000));
-  const probe = await readFile(resolve(site, 'oracle-probe.txt'), 'utf8');
-  assert.match(probe, /^Oracle\.ManagedDataAccess\.Client\.OracleException/, 'The driver loads and reports the closed port: ' + probe);
-  passed('The packaged Oracle driver loads and attempts a connection');
+  for (let attempt = 0; attempt < 30 && !existsSync(resolve(site, 'driver-probe.json')); attempt++) await new Promise(done => setTimeout(done, 1000));
+  const probe = JSON.parse(await readFile(resolve(site, 'driver-probe.json'), 'utf8'));
+  assert.match(probe.postgres, /^Npgsql\.NpgsqlException:/, 'PostgreSQL loads and reports the closed port: ' + probe.postgres);
+  for (const provider of ['oracle', 'oracle11g']) {
+    assert.match(probe[provider], /^Oracle\.ManagedDataAccess\.Client\.OracleException:/, `${provider} loads and reports the closed port: ` + probe[provider]);
+  }
+  passed('Site-installed PostgreSQL and Oracle drivers load and attempt connections');
 }
 
 if (settings.AppBlocksDemo?.SeedContent) {

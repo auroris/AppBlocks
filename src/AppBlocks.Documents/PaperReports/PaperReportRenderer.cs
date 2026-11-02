@@ -27,7 +27,7 @@ public sealed class PaperReportRenderer(DataSourceCatalog sources, DataSourceQue
             ?? throw new DataSourceException("The paper report's data source is not published.");
         var execution = new FormExecutionContext(http.User, page.Key, page.Key, page.UpdateDate.Ticks.ToString(CultureInfo.InvariantCulture));
         var person = await users.ResolveAsync(execution, ct) ?? throw new UnauthorizedAccessException();
-        var values = await variables.ResolveAsync(http.User, PaperReportDefinition.Query(http.Request.Query));
+        var values = await variables.ResolveAsync(http.User, PaperReportDefinition.Query(http.Request.Query), page.Key);
         var parameters = definition.BindParameters(values);
         var culture = definition.ResolveCulture(values);
         var data = await queries.QueryAsync(source.Definition, execution with { Parameters = parameters }, definition.MaximumRows, ct);

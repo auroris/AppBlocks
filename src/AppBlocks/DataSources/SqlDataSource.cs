@@ -16,12 +16,14 @@ namespace AppBlocks.DataSources;
 /// whatever the displayed capabilities said; every value is a bound parameter.
 /// </summary>
 public sealed partial class SqlDataSource(DataSourceDefinition definition, DataSourceRuntime runtime, IDataSourceUserResolver users,
-    IEnumerable<IDataSourcePolicy> policies) : IFormResource, Attachments.IAttachmentOwner
+    IEnumerable<IDataSourcePolicy> policies, BindVariableProviders? providers = null) : IFormResource, Attachments.IAttachmentOwner
 {
     private DataSourceRuntime.PlanEntry? entry;
     private DataSourceRuntime.PlanEntry Entry => entry ??= runtime.Plan(definition);
 
     public DataSourceDefinition Definition => definition;
+    /// <summary>What :APP. binds, asked once per operation and once per batch of rows, so every row of a save sees the same answer; nothing without a provider, as in a test.</summary>
+    private async Task<IReadOnlyDictionary<string, object?>?> AppAsync(FormExecutionContext context, CancellationToken ct) => providers is null ? null : await providers.ResolveAsync(context, ct);
     public string Alias => definition.Alias;
     public string ContractVersion => Entry.Plan?.ContractVersion ?? "unavailable";
     public IReadOnlyList<FormField> Fields => Entry.Plan?.Fields ?? [];
@@ -41,7 +43,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     {
         if (Entry.Plan is not { } plan) return Unavailable();
         if (await users.ResolveAsync(context, ct) is not { } user || !CanRead(user)) return FormResult.Denied();
-        var binder = new Binder(plan, user, context, runtime.Now(), null);
+        var binder = new Binder(plan, user, context, runtime.Now(), null, await AppAsync(context, ct));
         var values = plan.Columns.ToDictionary(c => c.Field, c => (object?)null, StringComparer.Ordinal);
         foreach (var value in plan.Defaults) values[value.Column.Field] = FieldValues.ToJson(binder.Default(value, out _));
         if (!await AllowedAsync(DataSourceAction.Initialize, user, context, null, null, values, null, null, ct)) return FormResult.Denied();
@@ -53,7 +55,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         if (Entry.Plan is not { } plan) return Unavailable();
         if (await users.ResolveAsync(context, ct) is not { } user || !CanRead(user)) return FormResult.Denied();
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
-        var binder = new Binder(plan, user, context, runtime.Now(), null);
+        var binder = new Binder(plan, user, context, runtime.Now(), null, await AppAsync(context, ct));
         return await RunAsync(plan, write: false, async (connection, _) => {
             if (await ReadAsync(plan, connection, null, keys, binder, ct) is not { } row) return FormResult.Missing();
             if (!await AllowedAsync(DataSourceAction.Load, user, context, key, Json(plan, row.Values), null, connection, null, ct)) return FormResult.Denied();
@@ -75,8 +77,9 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
             return earlier.Hash == hash ? await LoadAsync(earlier.Key, context with { SubmissionKey = null }, ct)
                 : FormResult.Invalid("", "This submission was already used with different values. Reload the form.");
 
+        var app = await AppAsync(context, ct);
         var result = await RunAsync(plan, write: true, async (connection, transaction) => {
-            var created = await InsertRecordAsync(plan, user, context, values, now, connection, transaction!, ct);
+            var created = await InsertRecordAsync(plan, user, context, values, now, connection, transaction!, app, ct);
             if (created.Status == 200) await transaction!.CommitAsync(ct);
             return created;
         }, ct);
@@ -90,9 +93,9 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     /// The caller commits on 200; any other result means nothing should be.
     /// </summary>
     private async Task<FormResult> InsertRecordAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context,
-        Dictionary<PlanColumn, object?> values, DateTime now, DbConnection connection, DbTransaction transaction, CancellationToken ct)
+        Dictionary<PlanColumn, object?> values, DateTime now, DbConnection connection, DbTransaction transaction, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
     {
-        var binder = new Binder(plan, user, context, now, values);
+        var binder = new Binder(plan, user, context, now, values, app);
         var row = new Dictionary<PlanColumn, object?>(values);
         foreach (var value in plan.Defaults.Where(d => !values.ContainsKey(d.Column)))
         {
@@ -128,8 +131,9 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
         if (input.ValueKind != JsonValueKind.Object) return FormResult.Invalid("", "Form values must be an object.");
         var now = runtime.Now();
+        var app = await AppAsync(context, ct);
         return await RunAsync(plan, write: true, async (connection, transaction) => {
-            var updated = await UpdateRecordAsync(plan, user, context, key, keys, input, version, now, connection, transaction!, null, ct);
+            var updated = await UpdateRecordAsync(plan, user, context, key, keys, input, version, now, connection, transaction!, null, app, ct);
             if (updated.Status == 200) await transaction!.CommitAsync(ct);
             return updated;
         }, ct);
@@ -141,9 +145,9 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     /// through the restriction. A row outside <paramref name="scope"/> is not found. The caller commits on 200.
     /// </summary>
     private async Task<FormResult> UpdateRecordAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, string key, object?[] keys,
-        JsonElement input, string version, DateTime now, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, CancellationToken ct)
+        JsonElement input, string version, DateTime now, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
     {
-        var binder = new Binder(plan, user, context, now, null);
+        var binder = new Binder(plan, user, context, now, null, app);
         await LockAsync(plan, connection, transaction, keys, ct);
         if (await ReadAsync(plan, connection, transaction, keys, binder, ct) is not { } current || !InScope(current, scope)) return FormResult.Missing();
         if (Token(plan, current) != version) return FormResult.Conflict();
@@ -177,8 +181,9 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         if (Entry.Plan is not { } plan) return Unavailable();
         if (await users.ResolveAsync(context, ct) is not { } user || !definition.AllowDelete || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
+        var app = await AppAsync(context, ct);
         return await RunAsync(plan, write: true, async (connection, transaction) => {
-            var deleted = await DeleteRecordAsync(plan, user, context, key, keys, version, connection, transaction!, null, ct);
+            var deleted = await DeleteRecordAsync(plan, user, context, key, keys, version, connection, transaction!, null, app, ct);
             if (deleted.Status == 204) await transaction!.CommitAsync(ct);
             return deleted;
         }, ct);
@@ -189,9 +194,9 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     /// outside <paramref name="scope"/> is not found. The caller commits on 204.
     /// </summary>
     private async Task<FormResult> DeleteRecordAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, string key, object?[] keys,
-        string version, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, CancellationToken ct)
+        string version, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
     {
-        var binder = new Binder(plan, user, context, runtime.Now(), null);
+        var binder = new Binder(plan, user, context, runtime.Now(), null, app);
         await LockAsync(plan, connection, transaction, keys, ct);
         if (await ReadAsync(plan, connection, transaction, keys, binder, ct) is not { } current || !InScope(current, scope)) return FormResult.Missing();
         if (Token(plan, current) != version) return FormResult.Conflict();
@@ -497,9 +502,9 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     }
 
     /// <summary>The values of the bind variables for one operation: the caller's facts, the request's parameters, the clock and the record's fields.</summary>
-    private sealed class Binder(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, DateTime now, IReadOnlyDictionary<PlanColumn, object?>? fields)
+    private sealed class Binder(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, DateTime now, IReadOnlyDictionary<PlanColumn, object?>? fields, IReadOnlyDictionary<string, object?>? app)
     {
-        public Binder With(IReadOnlyDictionary<PlanColumn, object?> values) => new(plan, user, context, now, values);
+        public Binder With(IReadOnlyDictionary<PlanColumn, object?> values) => new(plan, user, context, now, values, app);
 
         public object? Value(BindVariable variable) => variable.Kind switch {
             BindVariableKind.UserSid => user.Sid,
@@ -509,6 +514,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
             BindVariableKind.UserGroups => user.Groups,
             BindVariableKind.Now => plan.Dialect.Now(now),
             BindVariableKind.Param => Parameter(variable.Name!),
+            BindVariableKind.App => app?.GetValueOrDefault(variable.Name!),
             _ => Field(variable.Name!) is { } column && fields?.TryGetValue(column, out var value) == true ? ToDatabase(plan, column, value) : null,
         };
 
@@ -520,6 +526,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
             var raw = variable.Kind switch {
                 BindVariableKind.Now => now,
                 BindVariableKind.Param => Parameter(variable.Name!),
+                BindVariableKind.App => app?.GetValueOrDefault(variable.Name!),
                 BindVariableKind.Field => Field(variable.Name!) is { } column && fields?.TryGetValue(column, out var current) == true ? FieldValues.ToJson(current) : null,
                 BindVariableKind.UserSid => user.Sid,
                 BindVariableKind.UserName => user.Name,

@@ -28,7 +28,7 @@ public sealed class ConnectionRuntimeTests
     [InlineData("oracle", "oracle", DatabaseDialect.Oracle)]
     [InlineData("Oracle.ManagedDataAccess.Client", "oracle", DatabaseDialect.Oracle)]
     [InlineData("Oracle.ManagedDataAccess.Core", "oracle", DatabaseDialect.Oracle)]
-    public void Configured_Oracle_connections_load_the_bundled_driver_and_keep_the_selected_dialect(
+    public void Configured_Oracle_connections_load_the_installed_driver_and_keep_the_selected_dialect(
         string provider, string canonical, DatabaseDialect dialect)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {

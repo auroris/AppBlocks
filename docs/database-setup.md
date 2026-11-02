@@ -9,6 +9,8 @@ Forms and reports read the site's own tables and need nothing created. Two featu
 
 Everything else keeps working in that state, and no visitor sees an error. An administrator who is signed in to the backoffice also gets a link to the setup screen. The reason is logged once as a warning, with what to do, rather than on every request.
 
+Either feature needs the database's driver before any of this applies: SQLite and SQL Server drivers come with Umbraco, while PostgreSQL needs the `Npgsql` package and Oracle the `Oracle.ManagedDataAccess.Core` package installed in the site, as [Connections](connections.md#database-drivers) describes.
+
 There are two ways to set a feature up, and either takes effect on the next request, with no restart:
 
 1. **Grant the permission**, so AppBlocks creates the tables itself. The screen prints the statements with the account's name in them.

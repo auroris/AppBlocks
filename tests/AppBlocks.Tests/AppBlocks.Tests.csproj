@@ -7,6 +7,9 @@
     <PackageReference Include="xunit.v3" Version="4.0.2" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
     <ProjectReference Include="../../src/AppBlocks/AppBlocks.csproj" />
+    <!-- The drivers AppBlocks leaves to a site. SQLite and SQL Server come through Umbraco.Cms. -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.26.300" />
     <Using Include="Xunit" />
     <!-- The Web SDK adds it for the Razor pages this project does not have, and its ConnectionInfo hides AppBlocks'. -->
     <Using Remove="Microsoft.AspNetCore.Http" />

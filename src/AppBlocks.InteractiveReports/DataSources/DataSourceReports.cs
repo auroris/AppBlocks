@@ -26,13 +26,14 @@ internal static class DataSourceReportParameters
 }
 
 /// <summary>Request-owned values: report SQL carries parameters, never interpolated user or URL data.</summary>
-public sealed class DataSourceReportBindings(DataSourceRuntime runtime, IDataSourceUserResolver users, IHttpContextAccessor http)
+public sealed class DataSourceReportBindings(DataSourceRuntime runtime, IDataSourceUserResolver users, IHttpContextAccessor http, BindVariableProviders? providers = null)
 {
     internal const string Prefix = "apphost:data-source:";
     private readonly Dictionary<string, object?> values = new(StringComparer.Ordinal);
     internal object? Get(string token) => values.GetValueOrDefault(token);
 
-    public async Task<ReportDefinition> BindAsync(ReportDefinition report, DataSourceDefinition source, CancellationToken ct)
+    /// <param name="page">The page a block report renders on, and <paramref name="block"/> its block, for the providers of <c>:APP.</c> values; a configured or previewed report has neither, and its providers see empty keys.</param>
+    public async Task<ReportDefinition> BindAsync(ReportDefinition report, DataSourceDefinition source, CancellationToken ct, Guid page = default, Guid block = default)
     {
         var plan = runtime.Plan(source).Plan ?? throw new DataSourceException("The report's data source is not available.");
         var principal = http.HttpContext?.User ?? new ClaimsPrincipal();
@@ -40,7 +41,8 @@ public sealed class DataSourceReportBindings(DataSourceRuntime runtime, IDataSou
         var query = DataSourceReportParameters.From(http.HttpContext);
         var parameters = new SqlParameters(plan.Dialect);
         var now = runtime.Now();
-        object? Value(BindVariable variable) => DataSourceQueries.Bind(variable, user, query, now, plan.Dialect);
+        var app = providers is null ? null : await providers.ResolveAsync(new FormExecutionContext(principal, page, block, source.ComputeFingerprint(), Parameters: query), ct);
+        object? Value(BindVariable variable) => DataSourceQueries.Bind(variable, user, query, now, plan.Dialect, app);
         var from = plan.From(parameters, Value);
         var predicate = "{{RowRestriction}}" + (plan.Restriction is null ? "" : " AND (" + plan.Restriction.Render(parameters, Value) + ")");
         report.Sql = plan.Dialect.Select(from, plan.Columns.Select(c => c.Column), [], predicate);

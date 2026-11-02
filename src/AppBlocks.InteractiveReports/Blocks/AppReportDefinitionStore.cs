@@ -80,7 +80,7 @@ public sealed class AppReportDefinitionStore(
             definition.Authorization = new ReportAuthorization { Policy = ReportAdministratorRequirement.Policy };
             return compiler.CompileManaged(name, definition, managed);
         }
-        if (!AppBlockContent.ParseReportName(name, out _, out _))
+        if (!AppBlockContent.ParseReportName(name, out var pageKey, out var blockKey))
         {
             if (catalog.IsUnavailableReport(name)) return null;
             if (!catalog.ReportNodes.TryGetValue(name, out var node)) return await configured.Value.Find(name, ct);
@@ -93,7 +93,7 @@ public sealed class AppReportDefinitionStore(
         var authored = ReadBlock(block.Key, property => block.GetProperty(property)?.GetValue(instance.Culture));
         if (authored?.DataSource is null) return null;
         var result = Copy(authored.Definition);
-        await bindings.BindAsync(result, authored.DataSource, ct);
+        await bindings.BindAsync(result, authored.DataSource, ct, pageKey, blockKey);
         result.SourceName = name;
         result.Authorization = BlockAuthorization(instance.Page, authored.DataSource);
         if (block.Value<string>("heading") is { Length: > 0 } title) result.Title = title;

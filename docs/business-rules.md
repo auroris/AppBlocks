@@ -181,6 +181,31 @@ Two consequences are easy to miss. Empty groups do not mean "nobody": on a page 
 
 **Row restriction** limits rows without any C#. It is added to every fetch and write, for example `OWNER_KEY = :USER_KEY` or `REGION IN (:USER_GROUPS)`, and a write that would leave the restriction is refused. It may use `:USER_KEY`, `:USER_SID`, `:USER_NAME`, `:USER_EMAIL`, `:USER_GROUPS` and `:NOW`. `:USER_GROUPS` holds the account's group display names, so a Member and a backoffice User are matched against different lists.
 
+**Application bind variables** are values your own code computes for an operation, written `:APP.name`. Register an `IBindVariableProvider`; it receives the execution context, the page key and form key, the signed-in person and the request's parameters, and answers with named values. Because they come from the application and not from the browser, they may filter a row source, appear in a row restriction and fill insert defaults, which `:PARAM.` never may. A site that gives each tenant a copy of the same pages decides the tenant from the page in one place and writes one data source for every copy, `WHERE TENANT_ID = :APP.tenant`; a field default of `:APP.tenant` hands the same value to a form class. A name no provider answers binds NULL.
+
+```csharp
+using AppBlocks.DataSources;
+using AppBlocks.Forms;
+using Umbraco.Cms.Core.PublishedCache;
+using Umbraco.Cms.Core.Services.Navigation;
+using Umbraco.Extensions;
+
+public sealed class TenantProvider(IPublishedContentCache pages, IDocumentNavigationQueryService navigation) : IBindVariableProvider
+{
+    public ValueTask<IReadOnlyDictionary<string, object?>?> ResolveAsync(FormExecutionContext context, CancellationToken ct)
+    {
+        // The tenant is a property of the nearest page at or above the calling page that has one, wherever that page sits in the tree.
+        string? tenant = null;
+        if (navigation.TryGetAncestorsOrSelfKeys(context.PageKey, out var keys))
+            foreach (var key in keys)
+                if (pages.GetById(key)?.Value<string>("tenantId") is { Length: > 0 } value) { tenant = value; break; }
+        return ValueTask.FromResult<IReadOnlyDictionary<string, object?>?>(new Dictionary<string, object?> { ["tenant"] = tenant });
+    }
+}
+```
+
+Register it with `services.AddScoped<IBindVariableProvider, TenantProvider>()`. A property on the tenant's page type is the explicit way; matching the ancestor's content type alias instead works the same way. The values are resolved once per operation and once per batch of rows, so every row of a save sees the same answer. Field defaults are resolved once per page before any form, so there the context carries the page and an empty form key, and a block report's providers see its page and block. The [worked example](activity-schedule-example.md) builds a whole application on this rule.
+
 By default, whoever can read a record can read its files and, for a custom resource, change them too if they are signed in. An anonymous visitor can change them only through this interface. They are not told which account filed a file, only that someone signed in did. Implement `IAttachmentOwner` on the resource when the rule for changing files is narrower. The data source engine already limits changes to its write groups.
 
 Interactive Reports exposes `IReportAccessPolicy` for report permissions. By default, any signed-in account that can reach a report's page can view, query and export it, and manage its own saved views. Report administration is separate: its group list is empty until a site configures `AppBlocks:ReportAdministratorGroups` with User Group aliases, and only backoffice Users can hold it. To make Members report administrators, supply your own policy. Umbraco's own backoffice management permissions remain separate from application business rules.
@@ -204,6 +229,7 @@ These are starting points, and they combine. Check the rule on every operation i
 | Roles assigned on each Member | A custom Member property. See User Group selections on a Member |
 | Each person sees only their own rows | Row restriction, or filter in your resource |
 | Rules that depend on the record | `IDataSourcePolicy` or your resource. See Ownership and record status |
+| Several tenants in one site, each with its own pages and editors | The tenant from the page tree, a bind variable provider, a policy and a form class together. See the [worked example](activity-schedule-example.md) |
 
 A person signed in as both a Member and a backoffice User can satisfy either account-type check or a rule requiring both. Use the account-specific properties when a rule depends on one identity's key, email or groups. Reports embedded in the backoffice itself continue to use only the backoffice account, including for saved-view ownership.
 

@@ -19,25 +19,33 @@ public sealed class CleanInstallComposer : IComposer
         builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, DemoSeed>();
         builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, CleanDocumentSeed>();
         builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, CleanAttachmentSeed>();
-        builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, CleanOracleProbe>();
+        builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, CleanDatabaseDriverProbe>();
     }
 }
 
-// The settings screen reports every failed connection test alike. Nothing listens on this port, so an error from the
-// driver itself is what shows a packaged site can load it, and verify.mjs reads which error this was.
-public sealed class CleanOracleProbe(ConnectionCatalog connections, IWebHostEnvironment environment)
+// Nothing listens on this port. An error from each driver shows that AppBlocks loaded the site's installed package;
+// the settings screen hides connection errors, so verify.mjs reads the original exception here.
+public sealed class CleanDatabaseDriverProbe(ConnectionCatalog connections, IWebHostEnvironment environment)
     : INotificationAsyncHandler<UmbracoApplicationStartedNotification>
 {
     public async Task HandleAsync(UmbracoApplicationStartedNotification notification, CancellationToken ct)
     {
-        string result;
-        try
+        var results = new Dictionary<string, string>();
+        foreach (var provider in new[] { "postgres", "oracle", "oracle11g" })
         {
-            await connections.TestAsync(new SaveConnection("oracle-probe", "oracle", "Data Source=127.0.0.1:1/probe;User Id=probe;Password=probe"), ct);
-            result = "opened";
+            var connectionString = provider == "postgres"
+                ? "Host=127.0.0.1;Port=1;Database=probe;Username=probe;Password=probe;Timeout=1"
+                : "Data Source=127.0.0.1:1/probe;User Id=probe;Password=probe;Connection Timeout=1";
+            try
+            {
+                await connections.TestAsync(new SaveConnection("driver-probe", provider, connectionString), ct);
+                results[provider] = "opened";
+            }
+            catch (Exception error) { results[provider] = error.GetType().FullName + ": " + error.Message; }
         }
-        catch (Exception error) { result = error.GetType().FullName + ": " + error.Message; }
-        await System.IO.File.WriteAllTextAsync(Path.Combine(environment.ContentRootPath, "oracle-probe.txt"), result, ct);
+        var path = Path.Combine(environment.ContentRootPath, "driver-probe.json");
+        await System.IO.File.WriteAllTextAsync(path + ".tmp", System.Text.Json.JsonSerializer.Serialize(results), ct);
+        System.IO.File.Move(path + ".tmp", path, overwrite: true);
     }
 }
 

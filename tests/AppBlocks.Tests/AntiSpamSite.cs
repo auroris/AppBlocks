@@ -102,6 +102,8 @@ internal sealed class AntiSpamSite : IAsyncDisposable
             ["Umbraco:CMS:Global:Id"] = Guid.NewGuid().ToString(), ["Umbraco:CMS:Global:UseHttps"] = "false",
             ["Umbraco:CMS:ModelsBuilder:ModelsMode"] = "Nothing",
             ["Umbraco:CMS:TypeFinder:AdditionalAssemblyExclusionEntries:0"] = "xunit.",
+            // As a site with the Oracle driver installed sets it, so that Umbraco's startup scan does not load the driver's optional cloud assemblies; see docs/connections.md.
+            ["Umbraco:CMS:TypeFinder:AdditionalAssemblyExclusionEntries:1"] = "Oracle.ManagedDataAccess",
             ["Umbraco:CMS:Unattended:InstallUnattended"] = "true", ["Umbraco:CMS:Unattended:UpgradeUnattended"] = "true",
             ["Umbraco:CMS:Unattended:UnattendedUserName"] = "Anti-spam admin",
             ["Umbraco:CMS:Unattended:UnattendedUserEmail"] = AdminEmail,

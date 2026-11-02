@@ -69,6 +69,33 @@ public sealed class DataSourceQueryTests : IDisposable
         Assert.Equal("One", Assert.Single(found.Rows)["LABEL"]);
     }
 
+    [Fact]
+    public async Task Application_variables_come_from_registered_providers_so_one_source_serves_every_tenant()
+    {
+        var context = Context;
+        var provider = new Provider(context.PageKey, new Dictionary<string, object?> { ["tenant"] = "owner-sid", ["Count"] = 3, ["text"] = "3" });
+        var queries = new DataSourceQueries(runtime, new Users(User), [], new BindVariableProviders([provider]));
+        var source = Definition with { Source = "SELECT ID, LABEL, OWNER FROM CHOICES WHERE OWNER = :APP.tenant" };
+        Assert.Equal(2, (await queries.QueryAsync(source, context)).Rows.Count);
+        // The provider saw this operation's context; a name it did not answer binds NULL, which matches nothing; another page is another answer.
+        Assert.Equal(context.PageKey, Assert.Single(provider.Seen).PageKey);
+        Assert.Empty((await queries.QueryAsync(source with { Source = "SELECT ID, LABEL, OWNER FROM CHOICES WHERE OWNER = :APP.region" }, context)).Rows);
+        Assert.Empty((await queries.QueryAsync(source, context with { PageKey = Guid.NewGuid() })).Rows);
+        // A number binds as a number and text as text; row 3 is the only one of the owner\x27s with that id, since the definition restricts rows to the owner.
+        foreach (var name in new[] { "count", "text" }) Assert.Single((await queries.QueryAsync(source with { Source = "SELECT ID, LABEL, OWNER FROM CHOICES WHERE ID = :APP." + name }, context)).Rows);
+        // Without a provider, as in a host that registers none, the variables bind NULL rather than failing.
+        Assert.Empty((await new DataSourceQueries(runtime, new Users(User), []).QueryAsync(source, context)).Rows);
+    }
+
+    private sealed class Provider(Guid page, IReadOnlyDictionary<string, object?> values) : IBindVariableProvider
+    {
+        public List<FormExecutionContext> Seen { get; } = [];
+        public ValueTask<IReadOnlyDictionary<string, object?>?> ResolveAsync(FormExecutionContext context, CancellationToken ct)
+        {
+            if (context.PageKey == page) Seen.Add(context);
+            return ValueTask.FromResult<IReadOnlyDictionary<string, object?>?>(context.PageKey == page ? values : null);
+        }
+    }
     private sealed class Users(DataSourceUser? user) : IDataSourceUserResolver
     {
         public Task<DataSourceUser?> ResolveAsync(ClaimsPrincipal principal, CancellationToken ct) => Task.FromResult(user);

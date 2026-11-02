@@ -62,6 +62,10 @@ FROM wing_activity_category
 ORDER BY ordering, name
 ```
 
+## One schedule for every tenant
+
+When each unit gets its own copy of the schedule page under its own part of the site, as `/en/4wing/activity-schedule/` and `/en/units/10ftts/activity-schedule/`, the data sources need no copy. The application decides what a tenant is, in one registered `IBindVariableProvider` that reads the page from the execution context, and a SELECT binds the answer as `:APP.tenant`. A bars source filtered with `WHERE tenant_id = :APP.tenant AND enddate >= :PARAM.from AND startdate <= :PARAM.to` serves every copy, and a new tenant is a page copy and nothing else. The [worked example](activity-schedule-example.md) builds the whole application around it, provider included.
+
 ## Colours and styling
 
 Bars without a colour of their own take their kind's colour, `--ah-schedule-kind-1` to `--ah-schedule-kind-8`, which a site redefines on `:root` or on `.application-blocks` as it does the other `--app-` tokens. A marker band's lane height is `--ah-schedule-marker-height`, 7rem by default. The runtime stylesheet shades a marked column with 16% of the marker's colour over the surface.

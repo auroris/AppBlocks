@@ -30,13 +30,8 @@
   <ItemGroup>
     <PackageReference Include="Umbraco.Cms" Version="$(AppBlocksUmbracoVersion)" />
     <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.14" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
-    <PackageReference Include="Npgsql" Version="10.0.3" />
-    <!-- Kept out of the output folder Umbraco scans at startup; see Connections/OracleDriver.cs. -->
-    <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.26.300" ExcludeAssets="runtime" GeneratePathProperty="true" />
-    <Content Include="$(PkgOracle_ManagedDataAccess_Core)/lib/net8.0/Oracle.ManagedDataAccess.dll" Link="oracle/Oracle.ManagedDataAccess.dll"
-             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
-             PackagePath="contentFiles/any/$(TargetFramework)/oracle/" PackageCopyToOutput="true" />
+    <!-- No database driver: Microsoft.Data.Sqlite and Microsoft.Data.SqlClient come with Umbraco.Cms, and a site installs
+         Npgsql or Oracle.ManagedDataAccess.Core itself, which Connections/DatabaseDrivers.cs loads by name. -->
   </ItemGroup>
   <ItemGroup>
     <None Include="../../README.md" Pack="true" PackagePath="/" />
