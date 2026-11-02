@@ -47,7 +47,7 @@ public static class AppBlocksExtensions
         services.AddScoped<Samples.FormInventory>();
         // Also resolvable on its own, so a site's import tool can install the definitions before it imports what uses them.
         services.AddTransient<Setup.SchemaInstaller>();
-        builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, Setup.SchemaInstaller>();
+        services.AddTransient<Setup.SchemaUsage>();
         builder.PackageMigrationPlans().Add<Setup.AppBlocksMigrationPlan>();
         services.TryAddScoped<ApplicationAccessPolicy>();
         services.AddControllersWithViews().AddApplicationPart(typeof(AppBlocksExtensions).Assembly);
@@ -62,7 +62,7 @@ public static class AppBlocksExtensions
         services.AddScoped<DataSourcePreview>();
         services.AddSingleton<IAuthorizationHandler, AppPageAuthorizationHandler>();
         Decorate<IAuthorizationPolicyProvider>(services, (_, inner) => new AppPagePolicyProvider(inner));
-        builder.AddNotificationHandler<ContentPublishingNotification, AppBlocksValidator>();
+        builder.AddNotificationAsyncHandler<ContentPublishingNotification, AppBlocksValidator>();
         // Bound at startup, so a value that is not AppBlocksPages, AllPages or Off is reported then rather than on the first page.
         services.AddOptions<Publishing.PageCacheOptions>().Bind(builder.Config.GetSection(Publishing.PageCacheOptions.Section)).ValidateOnStart();
         services.AddScoped<AppPageAssets>();

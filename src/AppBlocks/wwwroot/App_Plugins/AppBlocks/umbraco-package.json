@@ -4,32 +4,199 @@
   "version": "0.1.0-alpha.1",
   "extensions": [
     {
-      "type": "menu", "alias": "AppBlocks.Menu", "name": "AppBlocks menu"
+      "type": "menu",
+      "alias": "AppBlocks.Menu",
+      "name": "AppBlocks menu"
     },
     {
-      "type": "sectionSidebarApp", "kind": "menu", "alias": "AppBlocks.Sidebar", "name": "AppBlocks sidebar",
+      "type": "sectionSidebarApp",
+      "kind": "menu",
+      "alias": "AppBlocks.Sidebar",
+      "name": "AppBlocks sidebar",
       "weight": 140,
-      "meta": { "label": "AppBlocks", "menu": "AppBlocks.Menu" },
-      "conditions": [{ "alias": "Umb.Condition.SectionAlias", "match": "Umb.Section.Settings" }]
+      "meta": {
+        "label": "AppBlocks",
+        "menu": "AppBlocks.Menu"
+      },
+      "conditions": [
+        {
+          "alias": "Umb.Condition.SectionAlias",
+          "match": "Umb.Section.Settings"
+        }
+      ]
     },
     {
-      "type": "menuItem", "alias": "AppBlocks.MenuItem", "name": "AppBlocks menu item",
-      "meta": { "label": "AppBlocks", "icon": "icon-box", "entityType": "appblocks", "menus": ["AppBlocks.Menu"] }
+      "type": "menuItem",
+      "alias": "AppBlocks.MenuItem",
+      "name": "AppBlocks menu item",
+      "meta": {
+        "label": "AppBlocks",
+        "icon": "icon-box",
+        "entityType": "appblocks",
+        "menus": [
+          "AppBlocks.Menu"
+        ]
+      }
     },
     {
-      "type": "workspace", "kind": "default", "alias": "AppBlocks.Workspace", "name": "AppBlocks workspace",
-      "element": "/App_Plugins/AppBlocks/dashboard.js",
-      "meta": { "entityType": "appblocks", "headline": "AppBlocks" }
+      "type": "workspace",
+      "kind": "default",
+      "alias": "AppBlocks.Workspace",
+      "name": "AppBlocks workspace",
+      "meta": {
+        "entityType": "appblocks",
+        "headline": "AppBlocks"
+      }
     },
     {
-      "type": "propertyEditorUi", "alias": "AppBlocks.ConnectionPicker", "name": "AppBlocks connection",
+      "type": "propertyEditorUi",
+      "alias": "AppBlocks.ConnectionPicker",
+      "name": "AppBlocks connection",
       "element": "/App_Plugins/AppBlocks/connection-picker.js",
-      "meta": { "label": "Database connection", "icon": "icon-server", "group": "AppBlocks", "propertyEditorSchemaAlias": "Umbraco.TextBox" }
+      "meta": {
+        "label": "Database connection",
+        "icon": "icon-server",
+        "group": "AppBlocks",
+        "propertyEditorSchemaAlias": "Umbraco.TextBox"
+      }
     },
     {
-      "type": "propertyEditorUi", "alias": "AppBlocks.TablePicker", "name": "AppBlocks table",
+      "type": "propertyEditorUi",
+      "alias": "AppBlocks.TablePicker",
+      "name": "AppBlocks table",
       "element": "/App_Plugins/AppBlocks/table-picker.js",
-      "meta": { "label": "Table or SELECT", "icon": "icon-table", "group": "AppBlocks", "propertyEditorSchemaAlias": "Umbraco.TextArea" }
+      "meta": {
+        "label": "Table or SELECT",
+        "icon": "icon-table",
+        "group": "AppBlocks",
+        "propertyEditorSchemaAlias": "Umbraco.TextArea"
+      }
+    },
+    {
+      "type": "workspaceView",
+      "alias": "AppBlocks.WorkspaceView.forms",
+      "name": "AppBlocks Forms",
+      "element": "/App_Plugins/AppBlocks/dashboard.js",
+      "weight": 100,
+      "meta": {
+        "label": "Forms",
+        "pathname": "forms",
+        "icon": "icon-document"
+      },
+      "conditions": [
+        {
+          "alias": "Umb.Condition.WorkspaceAlias",
+          "match": "AppBlocks.Workspace"
+        }
+      ]
+    },
+    {
+      "type": "workspaceView",
+      "alias": "AppBlocks.WorkspaceView.connections",
+      "name": "AppBlocks Connections",
+      "element": "/App_Plugins/AppBlocks/dashboard.js",
+      "weight": 90,
+      "meta": {
+        "label": "Connections",
+        "pathname": "connections",
+        "icon": "icon-server"
+      },
+      "conditions": [
+        {
+          "alias": "Umb.Condition.WorkspaceAlias",
+          "match": "AppBlocks.Workspace"
+        }
+      ]
+    },
+    {
+      "type": "workspaceView",
+      "alias": "AppBlocks.WorkspaceView.setup",
+      "name": "AppBlocks Database setup",
+      "element": "/App_Plugins/AppBlocks/dashboard.js",
+      "weight": 80,
+      "meta": {
+        "label": "Database setup",
+        "pathname": "setup",
+        "icon": "icon-settings"
+      },
+      "conditions": [
+        {
+          "alias": "Umb.Condition.WorkspaceAlias",
+          "match": "AppBlocks.Workspace"
+        }
+      ]
+    },
+    {
+      "type": "workspaceView",
+      "alias": "AppBlocks.WorkspaceView.definitions",
+      "name": "AppBlocks Definitions",
+      "element": "/App_Plugins/AppBlocks/dashboard.js",
+      "weight": 70,
+      "meta": {
+        "label": "Definitions",
+        "pathname": "definitions",
+        "icon": "icon-layers"
+      },
+      "conditions": [
+        {
+          "alias": "Umb.Condition.WorkspaceAlias",
+          "match": "AppBlocks.Workspace"
+        }
+      ]
+    },
+    {
+      "type": "workspaceView",
+      "alias": "AppBlocks.WorkspaceView.anti-spam",
+      "name": "AppBlocks Anti-spam",
+      "element": "/App_Plugins/AppBlocks/dashboard.js",
+      "weight": 60,
+      "meta": {
+        "label": "Anti-spam",
+        "pathname": "anti-spam",
+        "icon": "icon-shield"
+      },
+      "conditions": [
+        {
+          "alias": "Umb.Condition.WorkspaceAlias",
+          "match": "AppBlocks.Workspace"
+        }
+      ]
+    },
+    {
+      "type": "workspaceView",
+      "alias": "AppBlocks.WorkspaceView.help",
+      "name": "AppBlocks Getting started",
+      "element": "/App_Plugins/AppBlocks/dashboard.js",
+      "weight": 50,
+      "meta": {
+        "label": "Getting started",
+        "pathname": "help",
+        "icon": "icon-help"
+      },
+      "conditions": [
+        {
+          "alias": "Umb.Condition.WorkspaceAlias",
+          "match": "AppBlocks.Workspace"
+        }
+      ]
+    },
+    {
+      "type": "workspaceView",
+      "alias": "AppBlocks.WorkspaceView.business-rules",
+      "name": "AppBlocks Business rules",
+      "element": "/App_Plugins/AppBlocks/dashboard.js",
+      "weight": 40,
+      "meta": {
+        "label": "Business rules",
+        "pathname": "business-rules",
+        "icon": "icon-book-alt"
+      },
+      "conditions": [
+        {
+          "alias": "Umb.Condition.WorkspaceAlias",
+          "match": "AppBlocks.Workspace"
+        }
+      ]
     }
   ]
 }

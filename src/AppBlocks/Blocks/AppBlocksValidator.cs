@@ -1,3 +1,4 @@
+using Umbraco.Cms.Core.Models.Blocks;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core.Events;
@@ -15,17 +16,27 @@ using AppBlocks.Tabular;
 namespace AppBlocks.Blocks;
 
 /// <summary>
-/// Validates authored structure without executing a report or invoking a form operation. A form bound to a data
-/// source is checked against the fields its database columns give, read from the schema rather than from rows.
+/// Validates authored structure without executing a report or invoking a form operation. Forms use their registered
+/// C# contracts; tabular forms and record owners may use published data sources and their database schemas.
 /// </summary>
 public sealed class AppBlocksValidator(FormResourceRegistry resources, PublishedDataCatalog? definitions = null, IContentService? contents = null,
     IOptions<AttachmentSettings>? attachments = null, ScheduleSources? schedules = null,
-    IContentTypeService? contentTypes = null, IEnumerable<IAppBlockPlugin>? plugins = null, AntiSpamGate? antiSpam = null) : INotificationHandler<ContentPublishingNotification>
+    IContentTypeService? contentTypes = null, IEnumerable<IAppBlockPlugin>? plugins = null, AntiSpamGate? antiSpam = null) : INotificationAsyncHandler<ContentPublishingNotification>
 {
     private static readonly string[] Aliases = ["appForm", "appFormInterface", "appFieldset", "appActions", AppBlockSchema.AttachmentsAlias, AppBlockSchema.AntiSpamAlias,
         AppBlockSchema.ScheduleAlias, AppBlockSchema.TabularAlias, ..AppBlockSchema.LayoutAliases, ..AppBlockSchema.ContentAliases, ..AppBlockSchema.FieldAliases];
-    public void Handle(ContentPublishingNotification notification)
+    /// <summary>Loads the published reference data before synchronous authored-value validation.</summary>
+    public async Task LoadAsync()
     {
+        await resources.LoadAsync();
+        if (definitions is not null) await definitions.LoadAsync();
+        if (schedules is not null) await schedules.LoadAsync();
+    }
+
+    public async Task HandleAsync(ContentPublishingNotification notification, CancellationToken cancellationToken)
+    {
+        if (!notification.PublishedEntities.Any(AppBlockSchema.HasBlocks)) return;
+        await LoadAsync();
         foreach (var page in notification.PublishedEntities.Where(AppBlockSchema.HasBlocks)) {
             foreach (var property in page.Properties.Where(p => AppBlockSchema.IsBlockEditor(p.PropertyType.PropertyEditorAlias))) {
             IEnumerable<string?> cultures = [null];
@@ -35,9 +46,9 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
                 if (string.IsNullOrWhiteSpace(json)) continue;
                 try {
                     var sets = BlockValueSets.Read(json, contentTypes);
-                    foreach (var (set, index) in sets.Select((set, index) => (set, index))) {
+                    foreach (var set in sets) {
                         var warnings = new List<string>();
-                        var errors = Validate(set.GetRawText(), website: true, embedded: true, warnings);
+                        var errors = Validate(set, website: true, embedded: true, warnings);
                         if (errors.Count > 0) notification.CancelOperation(new EventMessage("AppBlocks", page.Name + ": " + string.Join(" ", errors), EventMessageType.Error));
                         foreach (var warning in warnings.Distinct()) notification.Messages.Add(new EventMessage("AppBlocks", page.Name + ": " + warning, EventMessageType.Warning));
                     }
@@ -55,28 +66,31 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
     public IReadOnlyList<string> ValidateWebsite(string? json) => Validate(json, website: true);
     public IReadOnlyList<string> ValidateEmbedded(string? json) => Validate(json, website: true, embedded: true);
 
-    /// <param name="warnings">What will not work yet but is no reason to refuse publishing, such as a secret key an administrator has still to add.</param>
     private IReadOnlyList<string> Validate(string? json, bool website, bool embedded = false, List<string>? warnings = null)
     {
+        if (website && string.IsNullOrWhiteSpace(json)) return [];
+        try { return Validate(BlockValueSets.Parse(json ?? "{}"), website, embedded, warnings); }
+        catch (Exception error) when (error is JsonException or InvalidOperationException or KeyNotFoundException or FormatException or ArgumentException)
+        { return ["The block structure is invalid: " + error.Message]; }
+    }
+
+    private IReadOnlyList<string> Validate(BlockValue value, bool website, bool embedded, List<string>? warnings)
+    {
         var errors = new List<string>();
-        if (website && string.IsNullOrWhiteSpace(json)) return errors;
         try {
-            using var document = JsonDocument.Parse(json ?? "{}");
-            var root = document.RootElement;
-            var data = root.GetProperty("contentData").EnumerateArray().ToDictionary(d => d.GetProperty("key").GetGuid());
+            var data = value.ContentData.ToDictionary(d => d.Key);
             if (!website && data.Count > 500) return ["Use at most 500 blocks on a page."];
-            var layoutValue = root.GetProperty("layout");
-            var layout = (layoutValue.TryGetProperty("Umbraco.BlockGrid", out var grid) ? grid : layoutValue.GetProperty("Umbraco.BlockList")).EnumerateArray().ToArray();
+            var layout = BlockValueSets.Layout(value).ToArray();
             if (!website && layout.Length == 0) return ["Add a form or a report."];
             var visited = new HashSet<Guid>(); var forms = 0;
             foreach (var item in layout) {
                 if (website) { VisitContent(item); continue; }
-                var block = data[item.GetProperty("contentKey").GetGuid()];
+                var block = data[item.ContentKey];
                 var alias = Alias(block);
-                if (Plugin(alias) is { } plugin) { visited.Add(item.GetProperty("contentKey").GetGuid()); plugin.Validate(block, errors); }
-                else if (alias == AppBlockSchema.ScheduleAlias) { visited.Add(item.GetProperty("contentKey").GetGuid()); Schedule(block, errors); }
+                if (Plugin(alias) is { } plugin) { visited.Add(item.ContentKey); plugin.Validate(BlockValueSets.Element(block), errors); }
+                else if (alias == AppBlockSchema.ScheduleAlias) { visited.Add(item.ContentKey); Schedule(block, errors); }
                 // A tabular form outside a form must name its owner; Tabular says so when it does not.
-                else if (alias == AppBlockSchema.TabularAlias) { visited.Add(item.GetProperty("contentKey").GetGuid()); Tabular(block, null, errors); }
+                else if (alias == AppBlockSchema.TabularAlias) { visited.Add(item.ContentKey); Tabular(block, null, errors); }
                 else if (alias == "appForm") { forms++; Form(item, block, data, visited, errors, warnings: warnings); }
                 // Layouts, content blocks and an Attachments block that names its owner stand on the page as they do on a
                 // website page, with whatever their areas hold; fields and actions still belong to a form, and VisitContent says so.
@@ -86,19 +100,19 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
             if (!website && forms > 1) errors.Add("Use one form per page.");
             if (visited.Count != data.Count) errors.Add("The page contains unused or duplicated blocks. Remove them before publishing.");
 
-            void VisitContent(JsonElement item) {
-                var key = item.GetProperty("contentKey").GetGuid();
+            void VisitContent(IBlockLayoutItem item) {
+                var key = item.ContentKey;
                 var block = data[key]; var alias = Alias(block);
                 if (alias == "appForm") { forms++; Form(item, block, data, visited, errors, limitNesting: false, warnings: warnings); return; }
                 if (!visited.Add(key)) throw new InvalidOperationException("Blocks cannot be repeated or cyclic.");
-                if (Plugin(alias) is { } plugin) plugin.Validate(block, errors);
+                if (Plugin(alias) is { } plugin) plugin.Validate(BlockValueSets.Element(block), errors);
                 else if (alias == AppBlockSchema.AttachmentsAlias) Attachments(block, null, errors);
                 else if (alias == AppBlockSchema.ScheduleAlias) Schedule(block, errors);
                 else if (alias == AppBlockSchema.TabularAlias) Tabular(block, null, errors);
                 else if (alias == AppBlockSchema.AntiSpamAlias) errors.Add("Place the Anti-spam block inside the form it protects.");
                 else if (alias == "appActions" || AppBlockSchema.FieldAliases.Contains(alias)) errors.Add("Fields and form actions must be placed inside a form.");
                 else if (!embedded && alias != "appFieldset" && !AppBlockSchema.LayoutAliases.Contains(alias) && !AppBlockSchema.ContentAliases.Contains(alias)) errors.Add("The page contains an unsupported block.");
-                if (item.TryGetProperty("areas", out var areas)) foreach (var area in areas.EnumerateArray()) foreach (var nested in area.GetProperty("items").EnumerateArray()) VisitContent(nested);
+                foreach (var nested in BlockValueSets.Children(item)) VisitContent(nested);
             }
         } catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or FormatException or ArgumentException) {
             errors.Add("The block structure or starting view is invalid: " + error.Message);
@@ -113,23 +127,23 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
         if (node.ContentType.Alias != "paperReport") errors.Add($"Select a Paper report node for Paper report; {node.Name} is not one.");
     }
 
-    private void Form(JsonElement layout, JsonElement block, Dictionary<Guid, JsonElement> data, HashSet<Guid> visited, List<string> errors, bool limitNesting = true, List<string>? warnings = null)
+    private void Form(IBlockLayoutItem layout, BlockItemData block, Dictionary<Guid, BlockItemData> data, HashSet<Guid> visited, List<string> errors, bool limitNesting = true, List<string>? warnings = null)
     {
         if (Text(block, "paperReport") is { Length: > 0 } paper) PaperReport(paper, errors);
-        using var document = JsonDocument.Parse(Text(block, "formInterface"));
-        var interfaces = document.RootElement.GetProperty("contentData").EnumerateArray().ToArray();
-        var interfaceLayout = document.RootElement.GetProperty("layout").GetProperty("Umbraco.BlockList").EnumerateArray().ToArray();
+        var definition = BlockValueSets.Parse(Text(block, "formInterface"));
+        var interfaces = definition.ContentData.ToArray();
+        var interfaceLayout = BlockValueSets.Layout(definition).ToArray();
         if (interfaces.Length != 1 || Alias(interfaces[0]) != "appFormInterface" || interfaceLayout.Length != 1
-            || interfaceLayout[0].GetProperty("contentKey").GetGuid() != interfaces[0].GetProperty("key").GetGuid()) { errors.Add("Each form needs exactly one Form Interface."); return; }
+            || interfaceLayout[0].ContentKey != interfaces[0].Key) { errors.Add("Each form needs exactly one Form Interface."); return; }
         var configuration = interfaces[0];
         var resource = resources.RegisteredResources.GetValueOrDefault(Text(configuration, "resource"));
         if (resource is null) { errors.Add("Select a registered C# form class."); return; }
         // A data source's fields come from its database; without them every binding would look wrong.
         if (resource is SqlDataSource { Problem: { } problem }) { errors.Add($"The data source {resource.Alias} is not available: {problem}"); return; }
-        var fields = new Dictionary<string, JsonElement>(StringComparer.Ordinal); var actions = 0; var checks = 0;
-        void Visit(JsonElement item, int depth) {
+        var fields = new Dictionary<string, BlockItemData>(StringComparer.Ordinal); var actions = 0; var checks = 0;
+        void Visit(IBlockLayoutItem item, int depth) {
             if (limitNesting && depth > 16) throw new InvalidOperationException("Form nesting is too deep.");
-            var key = item.GetProperty("contentKey").GetGuid();
+            var key = item.ContentKey;
             if (!visited.Add(key)) throw new InvalidOperationException("Blocks cannot be repeated or cyclic.");
             var child = data[key]; var alias = Alias(child);
             if (depth > 0 && (alias == "appForm" || Plugin(alias)?.RequiresUser == true)) errors.Add("Forms and reports cannot be nested inside a form.");
@@ -148,7 +162,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
                     errors.Add($"Select a published list of values for '{binding}'.");
             }
             else if (alias is not ("appForm" or "appFieldset" or "appActions") && !AppBlockSchema.LayoutAliases.Contains(alias) && !AppBlockSchema.ContentAliases.Contains(alias)) errors.Add("The form contains an unsupported block.");
-            if (item.TryGetProperty("areas", out var areas)) foreach (var area in areas.EnumerateArray()) foreach (var nested in area.GetProperty("items").EnumerateArray()) Visit(nested, depth + 1);
+            foreach (var nested in BlockValueSets.Children(item)) Visit(nested, depth + 1);
         }
         Visit(layout, 0);
         if (actions > 1) errors.Add("Use one Form actions block per form.");
@@ -162,7 +176,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
     /// An Attachments block names whose files it shows, or sits in a form whose record owns them. Its limits may narrow
     /// the site's and never widen them; a block that asks for more than the site allows is refused rather than quietly capped.
     /// </summary>
-    private void Attachments(JsonElement block, IFormResource? form, List<string> errors)
+    private void Attachments(BlockItemData block, IFormResource? form, List<string> errors)
     {
         Owner(block, form, AttachmentsOwner, AttachmentBlock.OwnerResourceAlias, AttachmentBlock.OwnerKeyAlias, errors);
         var settings = attachments?.Value ?? new AttachmentSettings();
@@ -186,7 +200,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
     /// from the server is only a warning: it is an administrator's to add, and a site's content may well arrive before its keys.
     /// Without the service list, as in a test without a site, the block's own settings are all that is judged.
     /// </summary>
-    private void AntiSpam(JsonElement block, List<string> errors, List<string>? warnings)
+    private void AntiSpam(BlockItemData block, List<string> errors, List<string>? warnings)
     {
         var alias = Text(block, "service").Trim();
         var siteKey = Text(block, "siteKey").Trim();
@@ -212,7 +226,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
     /// The owner rules of a block that follows a record, such as Attachments or a tabular form: inside a form it may
     /// leave the owner to the form's record; otherwise it names a registered resource and a key the request can supply.
     /// </summary>
-    private void Owner(JsonElement block, IFormResource? form, OwnerWords words, string resourceAlias, string keyAlias, List<string> errors)
+    private void Owner(BlockItemData block, IFormResource? form, OwnerWords words, string resourceAlias, string keyAlias, List<string> errors)
     {
         var owner = Text(block, resourceAlias);
         var key = Text(block, keyAlias);
@@ -240,7 +254,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
     /// row must be completable from the columns, the link and the defaults, unless the block never adds rows. Without
     /// a catalogue, as in a test without content, a data source the registry does not know is not judged.
     /// </summary>
-    private void Tabular(JsonElement block, IFormResource? form, List<string> errors)
+    private void Tabular(BlockItemData block, IFormResource? form, List<string> errors)
     {
         Owner(block, form, TabularOwner, TabularBlock.OwnerResourceAlias, TabularBlock.OwnerKeyAlias, errors);
         if (Text(block, TabularBlock.MaxRowsAlias) is { Length: > 0 } rows
@@ -275,7 +289,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
     /// A Schedule block names two sources that must exist and carry the columns the layout reads, which the catalogue
     /// knows from the sources' schemas. Without a catalogue, as in a test without content, only the settings are checked.
     /// </summary>
-    private void Schedule(JsonElement block, List<string> errors)
+    private void Schedule(BlockItemData block, List<string> errors)
     {
         var settings = ScheduleSettings.Read(alias => Text(block, alias));
         errors.AddRange(ScheduleValidation.Validate(settings, schedules is null || definitions is null ? null : schedules.Schema, Text(block, ScheduleSettings.ColumnsAlias)));
@@ -289,12 +303,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
         "appDateTime" => field.Kind == "datetime", "appCheckbox" => field.Kind == "checkbox", _ => false,
     };
     private IAppBlockPlugin? Plugin(string alias) => plugins?.FirstOrDefault(p => p.Alias == alias);
-    private string Alias(JsonElement block) => Aliases.Concat(plugins?.Select(p => p.Alias) ?? []).FirstOrDefault(a => AppBlockSchema.Key(a) == block.GetProperty("contentTypeKey").GetGuid()) ?? "";
-    private static string Text(JsonElement block, string alias) {
-        var properties = block.GetProperty("values").EnumerateArray().Where(p => p.GetProperty("alias").GetString() == alias).ToArray();
-        if (properties.Length == 0) return "";
-        var value = properties[0].GetProperty("value");
-        return value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ? "" : value.ToString();
-    }
-    private static bool Flag(JsonElement block, string alias) => Text(block, alias) is "true" or "True" or "1";
+    private string Alias(BlockItemData block) => Aliases.Concat(plugins?.Select(p => p.Alias) ?? []).FirstOrDefault(a => AppBlockSchema.Key(a) == block.ContentTypeKey) ?? "";
+    private static string Text(BlockItemData block, string alias) => BlockValueSets.Text(block, alias);
+    private static bool Flag(BlockItemData block, string alias) => Text(block, alias) is "true" or "True" or "1";
 }

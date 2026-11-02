@@ -89,6 +89,7 @@ public sealed class ReportAdministrationController(IReportAccessPolicy access, P
     {
         Response.Headers.CacheControl = "no-store";
         if (!await access.IsAdministratorAsync(User)) return Forbid();
+        await definitions.LoadAsync();
         var sources = definitions.Reports.Where(pair => !pair.Key.StartsWith("__", StringComparison.Ordinal))
             .Select(pair => new AdministrationSource(pair.Key, pair.Value.Title ?? pair.Key, null)).ToList();
         using var reference = contexts.EnsureUmbracoContext();
@@ -99,7 +100,7 @@ public sealed class ReportAdministrationController(IReportAccessPolicy access, P
             foreach (var key in keys)
             {
                 ct.ThrowIfCancellationRequested();
-                if (reference.UmbracoContext.Content?.GetById(key) is not { } page) continue;
+                if (reference.UmbracoContext.Content is not { } cache || await cache.GetByIdAsync(key, false) is not { } page) continue;
                 var cultures = page.Cultures.Count > 0 ? page.Cultures.Keys.Cast<string?>() : [null];
                 foreach (var culture in cultures)
                 foreach (var block in AppBlockContent.Flatten(AppBlockContent.Blocks(page, culture), culture)

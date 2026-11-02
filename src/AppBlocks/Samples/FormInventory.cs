@@ -1,3 +1,4 @@
+using Umbraco.Cms.Core.Models.Blocks;
 using System.Text.Json;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Services;
@@ -49,19 +50,17 @@ public sealed class FormInventory(IContentService content, FormResourceRegistry 
         var result = new List<DiscoveredForm>();
         foreach (var set in BlockValueSets.Read(json, types))
         {
-        var data = set.GetProperty("contentData").EnumerateArray().ToDictionary(d => d.GetProperty("key").GetGuid());
-        var layout = set.GetProperty("layout");
-        var layouts = layout.TryGetProperty("Umbraco.BlockGrid", out var grid) ? grid : layout.GetProperty("Umbraco.BlockList");
-        foreach (var form in data.Values.Where(d => d.GetProperty("contentTypeKey").GetGuid() == AppBlockSchema.Key("appForm")))
+        var data = set.ContentData.ToDictionary(d => d.Key);
+        var layouts = BlockValueSets.Layout(set);
+        foreach (var form in data.Values.Where(d => d.ContentTypeKey == AppBlockSchema.Key("appForm")))
         {
-            var formKey = form.GetProperty("key").GetGuid();
+            var formKey = form.Key;
             var resourceAlias = "";
             var interfaceJson = Text(form, "formInterface");
             if (interfaceJson.Length > 0)
             {
-                using var definition = JsonDocument.Parse(interfaceJson);
-                var first = definition.RootElement.GetProperty("contentData").EnumerateArray().FirstOrDefault();
-                if (first.ValueKind == JsonValueKind.Object) resourceAlias = Text(first, "resource");
+                var first = BlockValueSets.Parse(interfaceJson).ContentData.FirstOrDefault();
+                if (first is not null) resourceAlias = Text(first, "resource");
             }
             IReadOnlyList<FormField> contract;
             try { contract = resources?.RegisteredResources.GetValueOrDefault(resourceAlias)?.Fields ?? []; }
@@ -71,7 +70,7 @@ public sealed class FormInventory(IContentService content, FormResourceRegistry 
             foreach (var key in fieldKeys)
             {
                 if (!data.TryGetValue(key, out var field)) continue;
-                var typeKey = field.GetProperty("contentTypeKey").GetGuid();
+                var typeKey = field.ContentTypeKey;
                 var kind = AppBlockSchema.FieldAliases.FirstOrDefault(alias => AppBlockSchema.Key(alias) == typeKey);
                 if (kind is null) continue;
                 var binding = Text(field, "field");
@@ -95,33 +94,18 @@ public sealed class FormInventory(IContentService content, FormResourceRegistry 
         return result;
     }
 
-    private static IReadOnlyList<Guid> FindChildren(JsonElement layout, Guid key)
+    private static IReadOnlyList<Guid> FindChildren(IEnumerable<IBlockLayoutItem> layout, Guid key)
     {
         var found = new List<Guid>();
-        void Visit(JsonElement node, bool inside)
+        void Visit(IBlockLayoutItem node, bool inside)
         {
-            if (node.ValueKind == JsonValueKind.Array) { foreach (var child in node.EnumerateArray()) Visit(child, inside); }
-            else if (node.ValueKind == JsonValueKind.Object)
-            {
-                if (node.TryGetProperty("contentKey", out var contentKey) && contentKey.TryGetGuid(out var current))
-                {
-                    inside |= current == key;
-                    if (inside && current != key) found.Add(current);
-                }
-                if (node.TryGetProperty("areas", out var areas)) Visit(areas, inside);
-                if (node.TryGetProperty("items", out var items)) Visit(items, inside);
-            }
+            inside |= node.ContentKey == key;
+            if (inside && node.ContentKey != key) found.Add(node.ContentKey);
+            foreach (var child in BlockValueSets.Children(node)) Visit(child, inside);
         }
-        Visit(layout, false);
+        foreach (var item in layout) Visit(item, false);
         return found;
     }
 
-    internal static string Text(JsonElement block, string alias)
-    {
-        if (!block.TryGetProperty("values", out var values)) return "";
-        foreach (var item in values.EnumerateArray())
-            if (item.GetProperty("alias").GetString() == alias && item.TryGetProperty("value", out var value))
-                return value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.ToString();
-        return "";
-    }
+    internal static string Text(BlockItemData block, string alias) => BlockValueSets.Text(block, alias);
 }

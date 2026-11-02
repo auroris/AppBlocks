@@ -1,19 +1,18 @@
 using System.Net;
 using System.Reflection;
 using System.Xml.Linq;
+using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Cache;
-using Umbraco.Cms.Core.Events;
+using Umbraco.Cms.Core.Configuration.Models;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Models.Entities;
-using Umbraco.Cms.Core.Notifications;
 using Umbraco.Cms.Core.Packaging;
 using Umbraco.Cms.Core.PropertyEditors;
 using Umbraco.Cms.Core.Scoping;
 using Umbraco.Cms.Core.Serialization;
 using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Core.Services.OperationStatus;
-using Umbraco.Cms.Core.Strings;
 
 namespace AppBlocks.Setup;
 
@@ -21,26 +20,21 @@ namespace AppBlocks.Setup;
 /// Installs missing package definitions from the current schema for a fresh site, and on request resets every definition to
 /// the schema or removes them all. Existing site definitions are never replaced on startup: Umbraco's package migration plan of
 /// each package (<see cref="AppBlocksPackagePlan"/>) carries changes to existing sites, and <see cref="ReinstallAsync"/> is the
-/// reset for when no step does. Runs when the application has started, and a site that imports definitions from elsewhere first
-/// calls <see cref="EnsureAsync"/> itself, as UmbracoAppHost does for uSync.
+/// reset for when no step does. Package migrations install missing definitions using Umbraco's package importer. Hosts may also
+/// call <see cref="EnsureAsync"/> before an external schema import; it respects Umbraco's schema migration setting.
 /// </summary>
 public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeService dataTypes,
     IContentTypeContainerService contentFolders, IDataTypeContainerService dataFolders,
-    PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer, IShortStringHelper strings,
+    PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer, IPackagingService packaging,
     ICoreScopeProvider scopes, ILogger<SchemaInstaller> logger, IEnumerable<AppBlocksSchema> schemas,
-    SchemaProperties properties, IRuntimeState runtime, AppCaches caches, IIdKeyMap keys, IKeyValueService keyValues,
-    PackageMigrationPlanCollection plans, PendingPackageMigrations pending, IMediaTypeService mediaTypes, IMemberTypeService memberTypes)
-    : INotificationAsyncHandler<UmbracoApplicationStartedNotification>
+    SchemaProperties properties, IOptions<PackageMigrationSettings> migrationSettings, AppCaches caches, IIdKeyMap keys, IKeyValueService keyValues,
+    PackageMigrationPlanCollection plans, PendingPackageMigrations pending, IMediaTypeService mediaTypes, IMemberTypeService memberTypes,
+    SchemaUsage usage)
 {
     /// <summary>The key-value entry that <see cref="UninstallAsync"/> sets, so that no start installs the definitions again until <see cref="ReinstallAsync"/>.</summary>
     public const string UninstalledKey = "AppBlocks.Definitions.Uninstalled";
 
     private static readonly SemaphoreSlim Gate = new(1, 1);
-
-    public Task HandleAsync(UmbracoApplicationStartedNotification notification, CancellationToken cancellationToken)
-        // The installation wizard starts the application before a database exists. Direct callers still decide
-        // when to call EnsureAsync themselves, including hosts installing definitions before a schema import.
-        => runtime.Level == RuntimeLevel.Run ? EnsureAsync(cancellationToken) : Task.CompletedTask;
 
     /// <summary>Whether <see cref="UninstallAsync"/> removed the definitions and nothing has installed them since.</summary>
     public bool Uninstalled => keyValues.GetValue(UninstalledKey) == "true";
@@ -48,6 +42,7 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
     /// <summary>Installs what is missing. After an uninstall it does nothing, and says so, until a reinstall.</summary>
     public async Task EnsureAsync(CancellationToken ct)
     {
+        if (!migrationSettings.Value.RunSchemaAndContentMigrations) return;
         if (Uninstalled)
         {
             logger.LogInformation("The AppBlocks definitions were uninstalled from this site. Nothing installs until they are reinstalled from Settings > AppBlocks > Definitions.");
@@ -83,7 +78,7 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
     /// <summary>Each package's definitions and migration plan as they stand. Looking changes nothing.</summary>
     public async Task<DefinitionsStatus> StatusAsync(CancellationToken ct)
     {
-        var states = keyValues.FindByKeyPrefix(Constants.Conventions.Migrations.KeyValuePrefix);
+        var states = keyValues.FindByKeyPrefix(Constants.Conventions.Migrations.KeyValuePrefix) ?? new Dictionary<string, string?>();
         var pendingPlans = pending.GetPendingPackageMigrations(states);
         var packages = new List<DefinitionsPackage>();
         foreach (var schema in schemas.DistinctBy(s => s.Assembly))
@@ -123,18 +118,13 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
         // Roll back folders and definitions together, so a retry cannot mistake a partial type for a customization.
         using var scope = scopes.CreateCoreScope();
         var change = new Change();
+        var created = await ImportMissingAsync(change, ct);
         foreach (var definition in Definitions("DataTypes"))
         {
             ct.ThrowIfCancellationRequested();
             var key = Key(definition);
             var existing = await dataTypes.GetAsync(key);
-            if (existing is not null && !force) continue;
-            if (existing is null)
-            {
-                await CreateDataTypeAsync(definition, dataTypes, dataFolders, editors, serializer);
-                change.Created++;
-            }
-            else
+            if (existing is not null && force && !created.Contains(key))
             {
                 var (info, editor, storage, configuration) = Editor(definition, editors, serializer);
                 var folder = await FolderAsync(dataFolders, Value(info, "Folder"));
@@ -165,13 +155,9 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
                     if (force) change.Notes.Add($"Left the site's own '{taken.Name}' ({alias}) alone, so the package's {alias} is not installed.");
                     continue;
                 }
-                var type = await ContentTypeAsync(definition);
-                var result = await contentTypes.CreateAsync(type, Constants.Security.SuperUserKey);
-                if (!result.Success) throw new InvalidOperationException($"AppBlocks could not install content type '{alias}' ({key}): {result.Result}.");
-                touched.Add((definition, type, false));
-                change.Created++;
-                continue;
+                throw new InvalidOperationException($"The package importer did not install content type '{alias}' ({key}).");
             }
+            if (created.Contains(key)) { touched.Add((definition, existing, false)); continue; }
             if (!force) continue;
             await ResetAsync(existing, definition, change);
             var reset = await contentTypes.UpdateAsync(existing, Constants.Security.SuperUserKey);
@@ -294,8 +280,27 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
         var others = contentTypes.GetAll().Where(t => !declaredTypes.Contains(t.Key)).Cast<IContentTypeComposition>()
             .Concat(mediaTypes.GetAll()).Concat(memberTypes.GetAll());
         foreach (var other in others)
+        {
+            foreach (var composition in other.ContentTypeComposition.Where(c => declaredTypes.Contains(c.Key)))
+                problems.Add($"The site's own type '{other.Name}' uses the composition '{composition.Name}'. Remove that composition first.");
             foreach (var property in other.PropertyTypes.Where(p => declaredData.Contains(p.DataTypeKey)))
                 problems.Add($"The site's own type '{other.Name}' ({other.Alias}) uses the data type '{installedData.FirstOrDefault(d => d.Key == property.DataTypeKey)?.Name}' on its property '{property.Alias}'. Remove that property first.");
+        }
+        foreach (var dataType in (await dataTypes.GetAllAsync()).Where(d => !declaredData.Contains(d.Key)))
+        {
+            IEnumerable<IBlockConfiguration> blocks = dataType.ConfigurationObject switch
+            {
+                BlockGridConfiguration grid => grid.Blocks ?? [],
+                BlockListConfiguration list => list.Blocks ?? [],
+                SingleBlockConfiguration single => single.Blocks ?? [],
+                RichTextConfiguration richText => richText.Blocks ?? [],
+                _ => []
+            };
+            foreach (var key in blocks.SelectMany(b => new[] { b.ContentElementTypeKey, b.SettingsElementTypeKey ?? Guid.Empty }).Distinct().Where(declaredTypes.Contains))
+                problems.Add($"The site's data type '{dataType.Name}' allows the AppBlocks element '{contentTypes.Get(key)?.Name}'. Remove that block or settings type from the data type first.");
+        }
+        // Saved blocks can outlive a data type's allowed-block configuration.
+        problems.AddRange(usage.Find(declaredTypes, ct));
         if (problems.Count > 0) throw new SchemaInUseException(problems);
 
         foreach (var type in installedTypes)
@@ -360,29 +365,54 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
         return (info, editor, ValueTypes.ToStorageType(editor.GetValueEditor().ValueType), editor.GetConfigurationEditor().FromDatabase(Value(definition, "Config"), serializer));
     }
 
-    private async Task<IContentType> ContentTypeAsync(XElement definition)
+    // The embedded files also serve uSync hosts. Adapt that format at this boundary, letting Umbraco own initial creation.
+    // Only missing definitions are passed: the native importer otherwise merges existing types and moves existing data types.
+    private async Task<HashSet<Guid>> ImportMissingAsync(Change change, CancellationToken ct)
     {
-        var info = Info(definition);
-        var type = new ContentType(strings, await FolderAsync(contentFolders, Value(info, "Folder")))
+        var created = new HashSet<Guid>();
+        var data = new XElement("DataTypes");
+        foreach (var definition in Definitions("DataTypes"))
         {
-            Key = Key(definition),
-            Alias = definition.Attribute("Alias")!.Value,
-            Name = Value(info, "Name"),
-            Icon = Value(info, "Icon"),
-            Thumbnail = Value(info, "Thumbnail"),
-            Description = Value(info, "Description"),
-            AllowedAsRoot = (bool)info.Element("AllowAtRoot")!,
-            IsElement = (bool)info.Element("IsElement")!,
-            AllowedInLibrary = (bool)info.Element("AllowedInLibrary")!,
-            Variations = Enum.Parse<ContentVariation>(Value(info, "Variations")),
-            ListView = Guid.Parse(Value(info, "ListView")),
-            HistoryCleanup = Cleanup(info),
-        };
-        foreach (var tab in definition.Element("Tabs")!.Elements("Tab"))
-            type.PropertyGroups.Add(SchemaProperties.Group(tab));
-        foreach (var property in definition.Element("GenericProperties")!.Elements("GenericProperty"))
-            SchemaProperties.Add(type, await properties.PropertyAsync(type.Alias, property), (string?)property.Element("Tab")?.Attribute("Alias"));
-        return type;
+            ct.ThrowIfCancellationRequested();
+            if (await dataTypes.GetAsync(Key(definition)) is not null) continue;
+            var (info, editor, storage, _) = Editor(definition, editors, serializer);
+            data.Add(new XElement("DataType", new XAttribute("Definition", Key(definition)), new XAttribute("Name", Value(info, "Name")),
+                new XAttribute("Id", editor.Alias), new XAttribute("EditorUiAlias", Value(info, "EditorUIAlias")),
+                new XAttribute("DatabaseType", storage), new XAttribute("Folders", Value(info, "Folder")),
+                new XAttribute("Configuration", Value(definition, "Config"))));
+            created.Add(Key(definition));
+        }
+        var types = new XElement("DocumentTypes");
+        foreach (var definition in Definitions("ContentTypes"))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (contentTypes.Get(Key(definition)) is not null || contentTypes.Get(definition.Attribute("Alias")!.Value) is not null) continue;
+            var native = new XElement(definition);
+            native.Name = "DocumentType";
+            var info = Info(native);
+            info.Add(new XElement("Key", Key(definition)), new XElement("Alias", definition.Attribute("Alias")!.Value));
+            native.SetAttributeValue("Folders", Value(info, "Folder"));
+            foreach (var property in native.Element("GenericProperties")!.Elements("GenericProperty"))
+                if (await dataTypes.GetAsync(Guid.Parse(Value(property, "Definition"))) is { } existingData)
+                    // Preserve a host's editor customization on this exact data type instead of the importer's alias fallback.
+                    property.SetElementValue("Type", existingData.EditorAlias);
+            // Structure is applied after all packages' types exist, retaining the optional companion references.
+            native.Element("Structure")!.RemoveNodes();
+            types.Add(native);
+            created.Add(Key(definition));
+        }
+        if (created.Count == 0) return created;
+        packaging.InstallCompiledPackageData(new XDocument(new XElement("umbPackage",
+            new XElement("info", new XElement("package", new XElement("name", "AppBlocks"))), data, types)));
+        // Cancelable Umbraco notifications can refuse individual saves. Do not commit or record a successful migration then.
+        foreach (var definition in data.Elements())
+            if (await dataTypes.GetAsync(Guid.Parse(definition.Attribute("Definition")!.Value)) is null)
+                throw new InvalidOperationException($"The package importer did not install data type '{definition.Attribute("Name")!.Value}'.");
+        foreach (var definition in types.Elements())
+            if (contentTypes.Get(Key(definition)) is null)
+                throw new InvalidOperationException($"The package importer did not install content type '{definition.Attribute("Alias")!.Value}'.");
+        change.Created += created.Count;
+        return created;
     }
 
     /// <summary>The definition's Info, checked: the package catalogue contains standalone types and no site templates or compositions.</summary>

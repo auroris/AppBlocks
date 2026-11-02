@@ -29,11 +29,11 @@ export default class ReportSource extends UmbLitElement {
         const version = this.requestVersion = (this.requestVersion ?? 0) + 1;
         this.loading = true; this.error = "";
         try {
-            const connections = await request(this.auth, "connections");
+            const connections = await request("connections");
             if (version !== this.requestVersion) return;
             this.connections = connections;
             const results = await Promise.allSettled(connections.map(async connection => {
-                const tables = await request(this.auth, `tables?connection=${encodeURIComponent(connection.name)}`);
+                const tables = await request(`tables?connection=${encodeURIComponent(connection.name)}`);
                 return tables.map(table => ({ connection: connection.name, source: table.value, label: `${connection.name}.${table.name}` }));
             }));
             if (version !== this.requestVersion) return;

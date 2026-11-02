@@ -88,12 +88,12 @@ public sealed class DataSourceReportAccess(PublishedReportCatalog catalog, DataS
         }
         else if (AppBlockContent.ParseReportName(alias, out _, out _))
         {
-            if (content?.Report(alias) is not { } instance) return RowRestriction.Deny;
+            if (content is null || await content.ReportAsync(alias) is not { } instance) return RowRestriction.Deny;
             var selection = instance.Block.Content.Value<string>("dataSource", culture: instance.Culture) ?? "";
             source = catalog.ResolveBlockSource(instance.Block.Content.Key, selection, new List<string>());
             if (source is null) return RowRestriction.Deny;
         }
-        else source = catalog.SourceForReport(alias);
+        else { await catalog.LoadAsync(); source = catalog.SourceForReport(alias); }
         if (source is null) return RowRestriction.NotApplicable;
         AppBlockContent.ParseReportName(request.ReportName, out var page, out var block);
         var parameters = DataSourceReportParameters.From(http.HttpContext);

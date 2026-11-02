@@ -60,11 +60,12 @@ public sealed class TabularBlockTests
     }
 
     [Fact]
-    public void Publishing_accepts_the_sample_tabular_forms_and_judges_the_data_source()
+    public async Task Publishing_accepts_the_sample_tabular_forms_and_judges_the_data_source()
     {
         using var provider = Services();
         using var scope = provider.CreateScope();
         var validator = scope.ServiceProvider.GetRequiredService<AppBlocksValidator>();
+        await validator.LoadAsync();
         Assert.Empty(validator.Validate(BlockPages.OrdersForm().ToJsonString()));
         Assert.Empty(validator.Validate(Form(("fields", ""))));
 
@@ -89,11 +90,12 @@ public sealed class TabularBlockTests
     }
 
     [Fact]
-    public void Publishing_requires_new_rows_to_be_completable_unless_the_block_never_adds_them()
+    public async Task Publishing_requires_new_rows_to_be_completable_unless_the_block_never_adds_them()
     {
         using var provider = Services();
         using var scope = provider.CreateScope();
         var validator = scope.ServiceProvider.GetRequiredService<AppBlocksValidator>();
+        await validator.LoadAsync();
         // Item is required and has no default; quantity and unit price have defaults, so they may be left out.
         const string message = "Required field 'item' of orders.lines must be a column of the tabular form, or have a default.";
         Assert.Contains(validator.Validate(Form(("fields", "quantity, unitPrice"))), e => e == message);
@@ -103,11 +105,12 @@ public sealed class TabularBlockTests
     }
 
     [Fact]
-    public void Publishing_applies_the_attachments_owner_rules_to_the_tabular_form()
+    public async Task Publishing_applies_the_attachments_owner_rules_to_the_tabular_form()
     {
         using var provider = Services();
         using var scope = provider.CreateScope();
         var validator = scope.ServiceProvider.GetRequiredService<AppBlocksValidator>();
+        await validator.LoadAsync();
 
         // Inside a form the rows belong to the form's record unless an owner is named.
         Assert.Contains(validator.Validate(Form(("ownerKey", "4"))),

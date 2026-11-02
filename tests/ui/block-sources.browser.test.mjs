@@ -1,3 +1,4 @@
+import { backofficeRoute } from "./backoffice-harness.mjs";
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import { createRequire } from "node:module";
@@ -21,11 +22,12 @@ async function mount({ value = "", readonly = false, fail = false, form = false 
     const errors = [], requests = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.route("**/*", async route => {
+        if (await backofficeRoute(route, assets, "editor-token")) return;
         const url = new URL(route.request().url());
         const path = url.pathname;
         const js = body => route.fulfill({ contentType: "text/javascript", body });
         const json = (body, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
-        if (path === "/sub/editor") return route.fulfill({ contentType: "text/html", body: `<script type="importmap">{"imports":{
+        if (path === "/sub/editor") return route.fulfill({ contentType: "text/html", body: `<script type="importmap">{"imports":{ "@umbraco-cms/backoffice/http-client":"/http-client.js", "@umbraco-cms/backoffice/repository":"/repository.js",
             "@umbraco-cms/backoffice/lit-element":"/umb.js", "@umbraco-cms/backoffice/external/lit":"/lit.js",
             "@umbraco-cms/backoffice/event":"/umb.js", "@umbraco-cms/backoffice/auth":"/umb.js"
         }}</script><script type="module">
@@ -37,7 +39,8 @@ async function mount({ value = "", readonly = false, fail = false, form = false 
         </script>` });
         if (path === "/lit.js") return js(await readFile(resolve(assets, "umbraco/backoffice/external/lit/index.js"), "utf8"));
         if (path === "/umb.js") return js(`import {LitElement} from "/lit.js";
-            export class UmbLitElement extends LitElement { consumeContext(token, callback) { queueMicrotask(() => callback({ getLatestToken: async () => "editor-token" })); } }
+            const auth = { isAuthorized: { subscribe(callback) { window.authorizationChanged = callback; callback(true); } } };
+            export class UmbLitElement extends LitElement { consumeContext(token, callback) { queueMicrotask(() => callback(auth)); } }
             export const UMB_AUTH_CONTEXT = "auth";
             export class UmbChangeEvent extends Event { constructor() { super("change", { bubbles: true }); } }`);
         if (path.includes("/App_Plugins/")) {
@@ -113,4 +116,22 @@ test("forms offer registered C# classes without content-node sources", async () 
     await page.getByLabel("Form class").selectOption("Orders");
     assert.equal(await page.evaluate(() => window.changes.at(-1)), "Orders");
     assert.deepEqual(errors, []); await page.close();
+});
+
+test("pickers share the catalogue and discard it when the backoffice session ends", async () => {
+    const { page, errors, requests } = await mount({ form: true });
+    await page.evaluate(() => {
+        for (let i = 0; i < 5; i++) document.body.append(document.createElement('appblocks-form-class-picker'));
+    });
+    await page.waitForFunction(() => [...document.querySelectorAll('appblocks-form-class-picker')].every(editor => editor.catalogue));
+    assert.equal(requests.filter(request => request.path.endsWith('/catalogue')).length, 1);
+    await page.evaluate(() => {
+        window.authorizationChanged(false);
+        window.authorizationChanged(true);
+        document.body.append(document.createElement('appblocks-form-class-picker'));
+    });
+    await page.waitForFunction(() => [...document.querySelectorAll('appblocks-form-class-picker')].every(editor => editor.catalogue));
+    assert.equal(requests.filter(request => request.path.endsWith('/catalogue')).length, 2);
+    assert.deepEqual(errors, []);
+    await page.close();
 });

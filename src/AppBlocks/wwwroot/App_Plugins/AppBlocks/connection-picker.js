@@ -9,7 +9,7 @@ export default class ConnectionPicker extends UmbLitElement {
     static styles = css`select { width:100%; padding:10px; border:1px solid var(--uui-color-border); border-radius:4px; background:var(--uui-color-surface); color:inherit; } p { color:var(--uui-color-text-alt); }`;
     constructor() {
         super(); this.items = [];
-        this.consumeContext(UMB_AUTH_CONTEXT, async auth => { if (!auth) return; try { this.items = await request(auth, "connections"); } catch(error) { this.error=error.message; } });
+        this.consumeContext(UMB_AUTH_CONTEXT, async auth => { if (!auth) return; try { this.items = await request("connections"); } catch(error) { this.error=error.message; } });
     }
     render() {
         const selected = this.value || "AppBlocksDb";

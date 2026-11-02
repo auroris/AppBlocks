@@ -17,7 +17,7 @@ namespace AppBlocks.InteractiveReports.Tests;
 public sealed class FormsTests
 {
     [Fact]
-    public void Publishing_rejects_duplicate_unknown_and_incompatible_bindings_and_bad_report_settings()
+    public async Task Publishing_rejects_duplicate_unknown_and_incompatible_bindings_and_bad_report_settings()
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -37,6 +37,7 @@ public sealed class FormsTests
         services.AddScoped<AppBlocksValidator>();
         using var provider = services.AddReportBlockSupport().BuildServiceProvider(); using var scope = provider.CreateScope();
         var validator = scope.ServiceProvider.GetRequiredService<AppBlocksValidator>();
+        await validator.LoadAsync();
         Assert.Empty(validator.Validate(BlockPages.OrdersForm().ToJsonString()));
         Assert.Empty(validator.Validate(ReportBlockSupport.OrdersReport().ToJsonString()));
         var form = BlockPages.OrdersForm();

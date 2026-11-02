@@ -21,11 +21,12 @@ public sealed class PageLevelBlocksTests
     private const string ReportSource = """{"kind":"sql","connection":"sample","source":"SELECT 1 AS ORDER_ID"}""";
 
     [Fact]
-    public void Layouts_and_content_blocks_stand_at_the_page_level()
+    public async Task Layouts_and_content_blocks_stand_at_the_page_level()
     {
         using var provider = Services();
         using var scope = provider.CreateScope();
         var validator = scope.ServiceProvider.GetRequiredService<AppBlocksValidator>();
+        await validator.LoadAsync();
         var columns = Guid.NewGuid(); var text = Guid.NewGuid(); var report = Guid.NewGuid(); var html = Guid.NewGuid();
         var page = Page(
             [Block("appColumns", columns), Block("appRichText", text, ("text", "<p>Reports of the day.</p>")), Block("appReport", report, ("dataSource", ReportSource)), Block("appHtml", html, ("html", "<script src=\"/inn/page-links.js\"></script>"))],
@@ -35,11 +36,12 @@ public sealed class PageLevelBlocksTests
     }
 
     [Fact]
-    public void Fields_at_the_page_level_still_belong_to_a_form()
+    public async Task Fields_at_the_page_level_still_belong_to_a_form()
     {
         using var provider = Services();
         using var scope = provider.CreateScope();
         var validator = scope.ServiceProvider.GetRequiredService<AppBlocksValidator>();
+        await validator.LoadAsync();
         var columns = Guid.NewGuid(); var field = Guid.NewGuid(); var actions = Guid.NewGuid();
         var page = Page([Block("appColumns", columns), Block("appText", field, ("field", "customer")), Block("appActions", actions)], [Item(columns, Area(Item(field))), Item(actions)]);
         var errors = validator.Validate(page);
@@ -47,11 +49,12 @@ public sealed class PageLevelBlocksTests
     }
 
     [Fact]
-    public void A_report_page_with_no_form_needs_no_form()
+    public async Task A_report_page_with_no_form_needs_no_form()
     {
         using var provider = Services();
         using var scope = provider.CreateScope();
         var validator = scope.ServiceProvider.GetRequiredService<AppBlocksValidator>();
+        await validator.LoadAsync();
         var first = Guid.NewGuid(); var second = Guid.NewGuid(); var columns = Guid.NewGuid();
         var page = Page([Block("appColumns", columns), Block("appReport", first, ("dataSource", ReportSource)), Block("appReport", second, ("dataSource", ReportSource))],
             [Item(columns, Area(Item(first)), Area(Item(second)))]);

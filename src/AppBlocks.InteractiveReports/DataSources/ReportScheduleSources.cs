@@ -5,6 +5,7 @@ namespace AppBlocks.InteractiveReports;
 
 public sealed class ReportScheduleSources(PublishedReportCatalog catalog) : IScheduleSourceProvider
 {
+    public Task LoadAsync() => catalog.LoadAsync();
     public bool TryResolve(string alias, out ScheduleSource? source)
     {
         source = null;

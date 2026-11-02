@@ -4,7 +4,7 @@ import { UMB_AUTH_CONTEXT } from "@umbraco-cms/backoffice/auth";
 import { UMB_DOCUMENT_WORKSPACE_CONTEXT } from "@umbraco-cms/backoffice/document";
 import { UMB_PARENT_ENTITY_CONTEXT } from "@umbraco-cms/backoffice/entity";
 
-const pathBase = new URL(import.meta.url).pathname.split("/App_Plugins/")[0];
+import { managementRequest } from "../AppBlocks/api.js";
 export default class DataSourceTest extends UmbLitElement {
     static properties = { busy: { state: true }, error: { state: true }, result: { state: true } };
     static styles = css`
@@ -26,19 +26,10 @@ export default class DataSourceTest extends UmbLitElement {
             if (!samples || Array.isArray(samples) || typeof samples !== "object") throw new Error("Enter sample bind values as a JSON object.");
             const data = this.workspace?.getData();
             if (!data) throw new Error("The data source is still loading.");
-            const token = await this.auth?.getLatestToken();
             const values = Object.fromEntries((data.values ?? []).map(property => [property.alias, property.value]));
-            const response = await fetch(`${pathBase}/umbraco/management/api/v1/data-sources/test`, {
-                method: "POST", credentials: "same-origin",
-                headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-                body: JSON.stringify({ key: data.unique, parentKey: this.parent?.getParent()?.unique, values, samples }),
+            this.result = await managementRequest("data-sources/test", {
+                method: "POST", body: { key: data.unique, parentKey: this.parent?.getParent()?.unique, values, samples },
             });
-            if (!response.ok) {
-                if (response.status === 403) throw new Error("You need permission to edit this data source to test it.");
-                const problem = await response.json().catch(() => null);
-                throw new Error(problem?.detail ?? `The test could not run (${response.status}).`);
-            }
-            this.result = await response.json();
         } catch (error) { this.error = error.message; }
         finally { this.busy = false; }
     }

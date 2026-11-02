@@ -16,12 +16,18 @@ public sealed record ScheduleSource(string Alias, DataSourceDefinition Definitio
 /// </summary>
 public interface IScheduleSourceProvider
 {
+    Task LoadAsync() => Task.CompletedTask;
     bool TryResolve(string alias, out ScheduleSource? source);
     IReadOnlyList<string>? Columns(ScheduleSource source);
 }
 
 public sealed class ScheduleSources(PublishedDataCatalog catalog, DataSourceRuntime runtime, IEnumerable<IScheduleSourceProvider>? providers = null)
 {
+    public async Task LoadAsync()
+    {
+        await catalog.LoadAsync();
+        foreach (var provider in providers ?? []) await provider.LoadAsync();
+    }
     public ScheduleSource? Resolve(string? alias)
     {
         if (string.IsNullOrWhiteSpace(alias)) return null;
@@ -58,9 +64,13 @@ public sealed record ScheduleData(DataSourceQueryResult? Rows, DataSourceQueryRe
 public sealed class ScheduleQueries(ScheduleSources sources, DataSourceQueries queries, ILogger<ScheduleQueries> logger)
 {
     /// <summary>Both sources must allow anonymous reads; policies are still checked when they are queried.</summary>
-    public bool AllowsAnonymousRead(ScheduleSettings settings) => sources.Resolve(settings.RowsSource) is { } rows
+    public async Task<bool> AllowsAnonymousReadAsync(ScheduleSettings settings)
+    {
+        await sources.LoadAsync();
+        return sources.Resolve(settings.RowsSource) is { } rows
         && sources.Resolve(settings.BarsSource) is { } bars
         && queries.AllowsAnonymousRead(rows.Definition) && queries.AllowsAnonymousRead(bars.Definition);
+    }
 
     /// <summary>Rows beyond this are a problem the editor must narrow, not a slower page.</summary>
     public const int MaxRows = 2000;
@@ -69,6 +79,7 @@ public sealed class ScheduleQueries(ScheduleSources sources, DataSourceQueries q
     public async Task<ScheduleData> LoadAsync(ScheduleSettings settings, ScheduleWindow window, ClaimsPrincipal person, Guid page, Guid block,
         IReadOnlyDictionary<string, string>? parameters, CancellationToken ct)
     {
+        await sources.LoadAsync();
         if (sources.Resolve(settings.RowsSource) is not { } rows) return ScheduleData.Failed(Unknown("rows", settings.RowsSource));
         if (sources.Resolve(settings.BarsSource) is not { } bars) return ScheduleData.Failed(Unknown("bars", settings.BarsSource));
         var bound = window.Parameters(parameters);

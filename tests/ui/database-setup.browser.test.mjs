@@ -1,3 +1,4 @@
+import { backofficeRoute } from "./backoffice-harness.mjs";
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
 import { createRequire } from 'node:module';
@@ -33,13 +34,14 @@ async function mountDashboard({ features = [uploads, saved], search = '', forbid
     const errors = [], calls = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', async route => {
+        if (await backofficeRoute(route, assets, "setup-token")) return;
         const url = new URL(route.request().url()), path = url.pathname;
         const js = body => route.fulfill({contentType:'text/javascript', body});
-        if (path === '/sub/dashboard') return route.fulfill({contentType:'text/html', body:`<script type="importmap">{"imports":{
+        if (path === '/sub/dashboard') return route.fulfill({contentType:'text/html', body:`<script type="importmap">{"imports":{ "@umbraco-cms/backoffice/http-client":"/http-client.js", "@umbraco-cms/backoffice/repository":"/repository.js",
             "@umbraco-cms/backoffice/lit-element":"/umb.js", "@umbraco-cms/backoffice/auth":"/umb.js", "@umbraco-cms/backoffice/components":"/components.js",
             "@umbraco-cms/backoffice/external/lit":"/vendor/lit/index.js", "@umbraco-cms/backoffice/external/marked":"/vendor/marked/index.js",
             "@umbraco-cms/backoffice/external/dompurify":"/vendor/dompurify/index.js"
-        }}</script><script type="module" src="/sub/App_Plugins/AppBlocks/dashboard.js"></script><appblocks-dashboard></appblocks-dashboard>`});
+        }}</script><script type="module" src="/workspace-harness.js"></script><appblocks-dashboard></appblocks-dashboard>`});
         if (path.startsWith('/vendor/')) return js(await readFile(resolve(assets, 'external', path.slice('/vendor/'.length)), 'utf8'));
         if (path === '/umb.js') return js(`import {LitElement} from '/vendor/lit/index.js';
             export class UmbLitElement extends LitElement { consumeContext(token, callback) { queueMicrotask(() => callback({getLatestToken: async () => 'setup-token'})); } }
@@ -110,7 +112,7 @@ test('an unsupported upload store shows why and no remedies it cannot use', asyn
 });
 
 test('the tab opens from the address the notices link to, and refreshes', async () => {
-    const {page, errors, calls} = await mountDashboard({ search:'?tab=setup' });
+    const {page, errors, calls} = await mountDashboard({ search:'?view=setup' });
     await page.locator('[data-feature="uploads"]').getByRole('heading', {name:'File uploads', exact:true}).waitFor();
     assert.equal(calls.length, 1);
     await page.getByRole('button', {name:'Refresh'}).or(page.locator('uui-button[label="Refresh"]')).first().click();
@@ -123,7 +125,7 @@ test('the tab opens from the address the notices link to, and refreshes', async 
 test('someone who is not an administrator gets the screen\'s refusal, not a broken page', async () => {
     const {page, errors} = await mountDashboard({ forbidden:true });
     await page.getByRole('tab', {name:'Database setup', exact:true}).click();
-    await page.getByRole('alert').getByText(/Only an Umbraco administrator/).waitFor();
+    await page.getByRole('alert').getByText(/You do not have permission/).waitFor();
     assert.deepEqual(errors, []);
     await page.close();
 });
@@ -133,6 +135,7 @@ async function mountBlock(answer) {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', async route => {
+        if (await backofficeRoute(route, assets, "setup-token")) return;
         const path = new URL(route.request().url()).pathname;
         if (path === '/page') return route.fulfill({contentType:'text/html', body:`<section data-app-attachments data-api="/api/attachments/p/b" data-owner="page" data-read-only="false" data-max-size="1000">
             <div class="app-attachments-message" role="status"></div><div class="app-attachments-errors" role="alert" hidden></div><ul class="app-attachments-list" aria-busy="true"></ul>
@@ -159,7 +162,7 @@ test('without file storage a visitor gets a plain notice, no controls and no poi
 });
 
 test('without file storage an administrator also gets the way to the setup screen', async () => {
-    const setupUrl = '/umbraco/section/settings/workspace/appblocks?tab=setup';
+    const setupUrl = '/umbraco/section/settings/workspace/appblocks/view/setup';
     const {page, errors} = await mountBlock({ owner:{alias:'a', key:'1'}, canWrite:false, purposes:[], maxFileSize:1000, accept:null, items:[], storage:{ message, setupUrl } });
     const link = page.getByRole('status').getByRole('link', {name:'Open database setup', exact:true});
     await link.waitFor();

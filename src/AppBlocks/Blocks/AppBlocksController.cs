@@ -21,6 +21,8 @@ public sealed class AppBlocksController(FormResourceRegistry resources, DataSour
     public async Task<IActionResult> Catalogue()
     {
         Response.Headers.CacheControl = "no-store";
+        await resources.LoadAsync();
+        await definitions.LoadAsync();
         var catalogue = new Dictionary<string, object> {
             ["formClasses"] = resources.RegisteredResources.Values.Select(r => new { alias = r.Alias, fields = r.Fields }).OrderBy(r => r.alias),
             ["dataSourceHandlers"] = handlers.All.Keys.Order(StringComparer.Ordinal).Select(alias => new { alias }),

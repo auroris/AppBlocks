@@ -22,7 +22,7 @@ public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker 
     /// <summary>The signed-in Member and/or backoffice User this page admits, Member first when both are present. Null for everyone else, including an anonymous visitor to an open page.</summary>
     public async Task<ClaimsPrincipal?> UserAsync(Guid pageKey)
     {
-        if (content.Page(pageKey) is not { } page) return null;
+        if (await content.PageAsync(pageKey) is not { } page) return null;
         return await UserAsync(page);
     }
 
@@ -75,7 +75,7 @@ public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker 
 
     /// <inheritdoc cref="VisitorAsync(IPublishedContent)"/>
     public async Task<ClaimsPrincipal?> VisitorAsync(Guid pageKey)
-        => content.Page(pageKey) is { } page ? await VisitorAsync(page) : null;
+        => await content.PageAsync(pageKey) is { } page ? await VisitorAsync(page) : null;
 
     /// <summary>Whether Umbraco's Public Access leaves this page open, on the page itself and on every ancestor.</summary>
     public bool IsOpen(IPublishedContent page) => !publicAccess.IsProtected(page.Path).Success;

@@ -1,3 +1,4 @@
+import { backofficeRoute } from "./backoffice-harness.mjs";
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
 import { createRequire } from 'node:module';
@@ -19,9 +20,10 @@ async function mount({ value = '', readonly = false, fail = false } = {}) {
     const errors = [], requests = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', async route => {
+        if (await backofficeRoute(route, assets, "test-token")) return;
         const path = new URL(route.request().url()).pathname;
         const js = body => route.fulfill({ contentType: 'text/javascript', body });
-        if (path === '/sub/editor') return route.fulfill({ contentType: 'text/html', body: `<script type="importmap">{"imports":{
+        if (path === '/sub/editor') return route.fulfill({ contentType: 'text/html', body: `<script type="importmap">{"imports":{ "@umbraco-cms/backoffice/http-client":"/http-client.js", "@umbraco-cms/backoffice/repository":"/repository.js",
             "@umbraco-cms/backoffice/lit-element":"/umb.js", "@umbraco-cms/backoffice/external/lit":"/lit.js",
             "@umbraco-cms/backoffice/event":"/umb.js", "@umbraco-cms/backoffice/auth":"/umb.js", "@umbraco-cms/backoffice/document":"/umb.js"
         }}</script><script type="module">

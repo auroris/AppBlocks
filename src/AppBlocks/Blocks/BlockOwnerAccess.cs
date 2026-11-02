@@ -53,7 +53,7 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
         Func<IPublishedElement, (string? Resource, string? Key)> owner, string definition, CancellationToken ct, bool allowAnonymous = false, bool newRecord = false)
     {
         if (http.HttpContext is not { } request) return BlockOwnerScope.Refused(403, "This request has no context.");
-        if (content.Page(pageKey) is not { } page) return BlockOwnerScope.Refused(403, $"You do not have access to {words.These}.");
+        if (await content.PageAsync(pageKey) is not { } page) return BlockOwnerScope.Refused(403, $"You do not have access to {words.These}.");
         var user = allowAnonymous ? await access.VisitorAsync(page) : await access.UserAsync(page);
         if (user is null) return BlockOwnerScope.Refused(403, $"You do not have access to {words.These}.");
         // Antiforgery tokens and the audit log name the actual Umbraco Member or backoffice User, or nobody.
@@ -66,8 +66,8 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
         var (ownerResource, ownerKey) = owner(item.Content);
         var parameters = FormEndpoints.Parameters(request.Request.Query);
         // The form the block sits in, if any: its record is the owner by default and supplies :FIELD values.
-        var form = flat.Where(b => b.Content.ContentType.Alias == "appForm" && AppBlockContent.Flatten(b.Areas.SelectMany(a => a)).Any(c => c.ContentKey == blockKey))
-            .Select(b => FormDefinition.Resolve(page, b.ContentKey, resources, catalog, culture)).FirstOrDefault();
+        var formBlock = flat.FirstOrDefault(b => b.Content.ContentType.Alias == "appForm" && AppBlockContent.Flatten(b.Areas.SelectMany(a => a)).Any(c => c.ContentKey == blockKey));
+        var form = formBlock is null ? null : await FormDefinition.ResolveAsync(page, formBlock.ContentKey, resources, catalog, culture);
 
         IFormResource resource; string? key;
         if (string.IsNullOrWhiteSpace(ownerResource))
@@ -81,7 +81,7 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
         else
         {
             if (newRecord) return BlockOwnerScope.Refused(422, $"This {words.BlockName} block names its own owner, so it has no {words.Things} before that record exists.");
-            if (resources.Find(ownerResource.Trim()) is not { } named) return BlockOwnerScope.Refused(422, $"The owner resource {ownerResource} is not registered.");
+            if (await resources.FindAsync(ownerResource.Trim()) is not { } named) return BlockOwnerScope.Refused(422, $"The owner resource {ownerResource} is not registered.");
             resource = named;
             key = await OwnerKeyAsync(ownerKey, form, parameters, user, pageKey, request, ct);
             if (key is null) return BlockOwnerScope.Refused(404, $"The record {words.These} belong to is not known yet.");

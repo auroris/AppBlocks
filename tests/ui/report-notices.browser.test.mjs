@@ -91,7 +91,7 @@ test("someone signed in is not asked about first and keeps the widget's own answ
 });
 
 test("the note about saving views comes from the server's answer, for whoever it answers", async () => {
-    const setupUrl = "/sub/umbraco/section/settings/workspace/appblocks?tab=setup";
+    const setupUrl = "/sub/umbraco/section/settings/workspace/appblocks/view/setup";
     const told = await mount({ anonymous: false, setupNote: { contentType: "application/json", body: JSON.stringify({ setupUrl }) } });
     const note = told.page.locator("section.app-block-report > .app-report-setup-note[role=status]");
     await note.waitFor();

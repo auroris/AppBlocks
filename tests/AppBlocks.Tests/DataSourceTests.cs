@@ -168,7 +168,7 @@ public sealed class DataSourceTests : IDisposable
         var definition = Definition(Tasks(("insertDefaults", "OWNER_SID = visitor")));
         var optedIn = definition with { AllowAnonymousWrites = true };
         Assert.NotEqual(definition.ComputeFingerprint(), optedIn.ComputeFingerprint());
-        Assert.True(Definition(Tasks(("allowAnonymousWrites", true))).AllowAnonymousWrites);
+        Assert.True(Definition(Tasks(("allowAnonymousWrites", true), ("insertDefaults", "OWNER_SID = visitor"))).AllowAnonymousWrites);
         var seen = new List<DataSourceRequest>();
         var source = new SqlDataSource(optedIn, runtime, new TestUsers(), [new Policy(request => { seen.Add(request); return true; })]);
         var context = AnonymousContext;

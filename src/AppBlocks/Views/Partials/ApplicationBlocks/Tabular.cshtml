@@ -29,11 +29,11 @@
     heading.Attributes["id"] = id + "-title";
     heading.InnerHtml.Append(block.Heading ?? "");
     // The headings are known before any row is: the data source's fields, or the configured names while it is unavailable.
-    var columns = Resources.Find(block.DataSource) is SqlDataSource source
+    var columns = await Resources.FindAsync(block.DataSource) is SqlDataSource source
         ? block.Columns(source.Fields)
         : block.Fields.Select(name => new FormField(name, name, "text")).ToArray();
 }
-@if (!Model.Admitted || Model.Anonymous && Resources.Find(block.DataSource) is not SqlDataSource { AllowsAnonymousRead: true })
+@if (!Model.Admitted || Model.Anonymous && await Resources.FindAsync(block.DataSource) is not SqlDataSource { AllowsAnonymousRead: true })
 {
     <p class="app-block-signin" role="status">Sign in to see the rows.</p>
 }

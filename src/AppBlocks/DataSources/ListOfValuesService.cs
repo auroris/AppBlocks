@@ -8,6 +8,7 @@ public sealed class ListOfValuesService(PublishedDataCatalog catalog, DataSource
 {
     public async Task<IReadOnlyList<FormChoice>> ChoicesAsync(string selection, FormExecutionContext context, CancellationToken ct = default)
     {
+        await catalog.LoadAsync();
         var list = catalog.FindList(selection) ?? throw new DataSourceException("The selected list of values is not published.");
         var result = await queries.QueryAsync(list.DataSource, context, list.MaximumRows, ct);
         return result.Rows.Where(row => row.GetValueOrDefault(list.ValueColumn) is not null)

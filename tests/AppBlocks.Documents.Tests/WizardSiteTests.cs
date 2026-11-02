@@ -38,9 +38,6 @@ public sealed class WizardSiteTests
             await app.StartAsync();
             Assert.Equal(RuntimeLevel.Install, app.Services.GetRequiredService<IRuntimeState>().Level);
             Assert.Empty(errors.Messages);
-            // Explicitly await the startup handler too: Umbraco can dispatch startup notifications after StartAsync.
-            using (var scope = app.Services.CreateScope())
-                await scope.ServiceProvider.GetRequiredService<SchemaInstaller>().HandleAsync(new Umbraco.Cms.Core.Notifications.UmbracoApplicationStartedNotification(false), default);
             var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
             using var client = new HttpClient { BaseAddress = new Uri(address) };
             using var response = await client.GetAsync("/umbraco/management/api/v1/install/settings");

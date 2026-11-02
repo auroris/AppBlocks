@@ -18,7 +18,7 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
     public string Revision => $"{Page.UpdateDate.Ticks}:{Culture}{ListsRevision}:{Resource.ContractVersion}";
     public bool ViewOnly => Interface.Value<bool>("viewOnly");
     public string KeyParameter => Interface.Value<string>("keyParameter") is { Length: > 0 } key ? key : "id";
-    public static FormDefinition? Resolve(IPublishedContent page, Guid key, FormResourceRegistry resources, PublishedDataCatalog? definitions = null, string? culture = null)
+    public static async Task<FormDefinition?> ResolveAsync(IPublishedContent page, Guid key, FormResourceRegistry resources, PublishedDataCatalog? definitions = null, string? culture = null)
     {
         var blocks = AppBlockContent.Blocks(page, culture);
         var forms = AppBlockContent.Flatten(blocks, culture)
@@ -35,6 +35,7 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
         if (bindings.Distinct(StringComparer.Ordinal).Count() != bindings.Length || bindings.Any(binding => !resource.Fields.Any(f => f.Key == binding))) return null;
         if (fields.Any(f => !AppBlocksValidator.Compatible(f.Content.ContentType.Alias, resource.Fields.First(r => r.Key == f.Content.Value<string>("field")), !string.IsNullOrWhiteSpace(f.Content.Value<string>("listOfValues"))))) return null;
         var selected = fields.Where(f => f.Content.ContentType.Alias is "appSelect" or AppBlockSchema.ShuttleAlias).Select(f => f.Content.Value<string>("listOfValues")).Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (selected.Length > 0 && definitions is not null) await definitions.LoadAsync();
         var lists = selected.Select(s => definitions?.FindList(s)).ToArray();
         if (lists.Any(list => list is null)) return null;
         return new(page, block, interfaces[0].Content, resource, fields) { Culture = culture, AntiSpam = children.Where(b => b.Content.ContentType.Alias == AppBlockSchema.AntiSpamAlias).ToArray(), ListsRevision = string.Concat(lists.Select(list => ":" + list!.Key + ":" + list.DataSource.ComputeFingerprint() + ":" + list.DisplayColumn + ":" + list.ValueColumn + ":" + list.MaximumRows)) };

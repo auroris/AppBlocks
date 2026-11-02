@@ -44,12 +44,16 @@ public sealed class DefaultReportAccessPolicy(ApplicationAccessPolicy access, IO
         var saved = request.Resource.SavedReport;
         var owner = saved is not null && OwnerKey(request.User) is { } id && saved.Owner == id;
         var name = request.Resource.SourceReportName ?? request.Resource.ReportName;
-        var restricted = name.StartsWith("__", StringComparison.Ordinal)
-            || definitions.Reports.TryGetValue(name, out var report) && report.Authorization?.Policy == ReportAdministratorRequirement.Policy;
+        if (request.Action is InteractiveReportAction.ViewReport or InteractiveReportAction.Query or InteractiveReportAction.Export
+            or InteractiveReportAction.ListSavedReports or InteractiveReportAction.CreateSavedReport)
+        {
+            if (admin) return true;
+            if (name.StartsWith("__", StringComparison.Ordinal)) return false;
+            await definitions.LoadAsync();
+            return !definitions.Reports.TryGetValue(name, out var report) || report.Authorization?.Policy != ReportAdministratorRequirement.Policy;
+        }
         return request.Action switch
         {
-            InteractiveReportAction.ViewReport or InteractiveReportAction.Query or InteractiveReportAction.Export
-                or InteractiveReportAction.ListSavedReports or InteractiveReportAction.CreateSavedReport => admin || !restricted,
             InteractiveReportAction.ReadSavedReport => admin || owner || saved is { IsGlobal: true } or { IsDefault: true },
             InteractiveReportAction.UpdateSavedReport or InteractiveReportAction.DeleteSavedReport => admin || owner,
             _ => admin,

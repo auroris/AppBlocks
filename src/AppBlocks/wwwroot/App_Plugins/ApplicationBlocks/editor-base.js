@@ -2,6 +2,7 @@ import { UmbLitElement } from "@umbraco-cms/backoffice/lit-element";
 import { html, css } from "@umbraco-cms/backoffice/external/lit";
 import { UmbChangeEvent } from "@umbraco-cms/backoffice/event";
 import { UMB_AUTH_CONTEXT } from "@umbraco-cms/backoffice/auth";
+import { AppBlocksCatalogueRepository } from "./catalogue.repository.js";
 
 export const pathBase = new URL(import.meta.url).pathname.split("/App_Plugins/")[0];
 export class AppEditor extends UmbLitElement {
@@ -12,16 +13,12 @@ export class AppEditor extends UmbLitElement {
     `;
     constructor() {
         super(); this.value = ""; this.readonly = false;
+        this.repository = new AppBlocksCatalogueRepository(this);
         this.consumeContext(UMB_AUTH_CONTEXT, async auth => {
             if (!auth) return;
             this.auth = auth;
             try {
-                const token = await auth.getLatestToken();
-                const response = await fetch(`${pathBase}/umbraco/management/api/v1/application-blocks/catalogue`, {
-                    credentials: "same-origin", headers: token ? { Authorization: `Bearer ${token}` } : {},
-                });
-                if (!response.ok) throw new Error("The resource catalogue could not be loaded.");
-                this.catalogue = await response.json();
+                this.catalogue = await this.repository.requestCatalogue(auth);
             } catch (error) { this.error = error.message; }
         });
     }

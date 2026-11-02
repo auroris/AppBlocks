@@ -8,7 +8,7 @@ export default class ReportAdministratorCondition extends UmbConditionBase {
         this.consumeContext(UMB_AUTH_CONTEXT, async auth => {
             this.permitted = false;
             if (!auth) return;
-            try { this.permitted = (await request(auth, "report-administration/access")).allowed; }
+            try { this.permitted = (await request("report-administration/access")).allowed; }
             catch { this.permitted = false; }
         });
     }

@@ -42,13 +42,14 @@ public sealed class AppReportDefinitionStore(
                 : new(name, new ReportAuthorization { Policy = ReportAdministratorRequirement.Policy });
         if (!AppBlockContent.ParseReportName(name, out _, out _))
         {
+            await catalog.LoadAsync();
             if (catalog.IsUnavailableReport(name)) return null;
             if (catalog.ReportNodes.TryGetValue(name, out var node)) return new(node.Alias, node.Definition.Authorization);
             return configured.Value is IReportDefinitionAuthorizationStore authorization
                 ? await authorization.FindAuthorization(name, ct)
                 : await configured.Value.Find(name, ct) is { } normal ? new(normal.Name, normal.Authorization) : null;
         }
-        if (content.Report(name) is not { } instance) return null;
+        if (await content.ReportAsync(name) is not { } instance) return null;
         if (instance.Block.Content.Value<string>("dataSource", culture: instance.Culture) is { Length: > 0 } selection)
             return catalog.ResolveBlockSource(instance.Block.Content.Key, selection, new List<string>()) is { } source
                 ? new(name, BlockAuthorization(instance.Page, source)) : null;
@@ -86,13 +87,14 @@ public sealed class AppReportDefinitionStore(
         }
         if (!AppBlockContent.ParseReportName(name, out var pageKey, out var blockKey))
         {
+            await catalog.LoadAsync();
             if (catalog.IsUnavailableReport(name)) return null;
             if (!catalog.ReportNodes.TryGetValue(name, out var node)) return await configured.Value.Find(name, ct);
             var definition = Copy(node.Definition);
             if (node.DataSource is { } nodeSource) await bindings.BindAsync(definition, nodeSource, ct);
             return compiler.CompileManaged(node.Alias, definition, managed);
         }
-        if (content.Report(name) is not { } instance) return null;
+        if (await content.ReportAsync(name) is not { } instance) return null;
         var block = instance.Block.Content;
         var authored = ReadBlock(block.Key, property => block.GetProperty(property)?.GetValue(instance.Culture));
         if (authored?.DataSource is null) return null;

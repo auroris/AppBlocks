@@ -3,10 +3,11 @@ using Umbraco.Cms.Core.Notifications;
 
 namespace AppBlocks.InteractiveReports.DataSources;
 
-public sealed class PublishedReportValidator(PublishedReportCatalog catalog) : INotificationHandler<ContentPublishingNotification>
+public sealed class PublishedReportValidator(PublishedReportCatalog catalog) : INotificationAsyncHandler<ContentPublishingNotification>
 {
-    public void Handle(ContentPublishingNotification notification)
+    public async Task HandleAsync(ContentPublishingNotification notification, CancellationToken cancellationToken)
     {
+        await catalog.LoadAsync();
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var node in notification.PublishedEntities.Where(n => n.ContentType.Alias == PublishedReportCatalog.ReportAlias))
         {

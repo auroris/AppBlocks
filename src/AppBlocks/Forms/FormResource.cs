@@ -94,16 +94,17 @@ public abstract class FormResource<TCreate, TUpdate> : IFormResource where TCrea
 }
 
 /// <summary>
-/// Supplies resources that are defined outside code, such as the published data source nodes, so the form
-/// endpoints, the publishing validator and the back-office pickers find them by alias beside the C# resources.
+/// Supplies resources defined outside code, such as published SQL data sources, for record owners and tabular forms.
+/// Form Interface binds only to registered C# resources, exposed through <see cref="FormResourceRegistry.RegisteredResources"/>.
 /// </summary>
 public interface IFormResourceProvider
 {
     IEnumerable<IFormResource> Resources { get; }
+    Task<IEnumerable<IFormResource>> GetResourcesAsync() => Task.FromResult(Resources);
 }
 
 /// <summary>
-/// The resources a form can bind to, by alias. C# resources come first and keep their alias when a provider
+/// Resources available to record owners and tabular forms, by alias. C# resources come first and keep their alias when a provider
 /// offers the same one: code is the authority, and publishing a data source with a taken alias is refused.
 /// Provider resources are read on first use, so a request that only needs a C# resource never reads content.
 /// </summary>
@@ -112,14 +113,25 @@ public sealed class FormResourceRegistry(IEnumerable<IFormResource> resources, I
     private readonly Dictionary<string, IFormResource> code = resources.ToDictionary(r => r.Alias, StringComparer.Ordinal);
     private IReadOnlyDictionary<string, IFormResource>? all;
 
-    public IReadOnlyDictionary<string, IFormResource> Resources => all ??= Merge();
+    private Task? loading;
+    public Task LoadAsync() => loading ??= LoadCoreAsync();
+    public IReadOnlyDictionary<string, IFormResource> Resources => all ?? (providers.Any()
+        ? throw new InvalidOperationException("Call LoadAsync before reading provider resources.") : code);
     public IReadOnlyDictionary<string, IFormResource> RegisteredResources => code;
     public IFormResource? Find(string alias) => code.GetValueOrDefault(alias) ?? Resources.GetValueOrDefault(alias);
 
-    private Dictionary<string, IFormResource> Merge()
+    public async Task<IFormResource?> FindAsync(string alias)
+    {
+        if (code.TryGetValue(alias, out var resource)) return resource;
+        await LoadAsync();
+        return Resources.GetValueOrDefault(alias);
+    }
+
+    private async Task LoadCoreAsync()
     {
         var merged = new Dictionary<string, IFormResource>(code, StringComparer.Ordinal);
-        foreach (var resource in providers.SelectMany(provider => provider.Resources)) merged.TryAdd(resource.Alias, resource);
-        return merged;
+        foreach (var provider in providers)
+            foreach (var resource in await provider.GetResourcesAsync()) merged.TryAdd(resource.Alias, resource);
+        all = merged;
     }
 }

@@ -27,7 +27,7 @@ public static class PaperReportExtensions
             client.Timeout = TimeSpan.FromSeconds(10);
             client.MaxResponseContentBufferSize = 8 * 1024 * 1024;
         }).ConfigurePrimaryHttpMessageHandler(SelfContainedHtml.CreateHandler);
-        builder.AddNotificationHandler<ContentPublishingNotification, PaperReportPublishValidator>();
+        builder.AddNotificationAsyncHandler<ContentPublishingNotification, PaperReportPublishValidator>();
         // Registered after AppBlocks' schema installer so fresh sites already have the document type.
         builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, PaperReportTemplates>();
         builder.AddNotificationAsyncHandler<TemplateSavedNotification, PaperReportTemplates>();
@@ -48,7 +48,7 @@ public static class PaperReportExtensions
         PaperReportRenderer renderer, PaperReportDelivery delivery, CancellationToken ct)
     {
         using var reference = contexts.EnsureUmbracoContext();
-        var page = reference.UmbracoContext.Content?.GetById(false, key);
+        var page = reference.UmbracoContext.Content is { } cache ? await cache.GetByIdAsync(key, false) : null;
         if (page?.ContentType.Alias != PaperReportDefinition.Alias) return Results.NotFound();
         if (await access.UserAsync(page) is not { } user)
         {
@@ -67,9 +67,9 @@ public static class PaperReportExtensions
     }
 }
 
-public sealed class PaperReportPublishValidator(ITemplateService templates, ICompositeViewEngine views) : INotificationHandler<ContentPublishingNotification>
+public sealed class PaperReportPublishValidator(ITemplateService templates, ICompositeViewEngine views) : INotificationAsyncHandler<ContentPublishingNotification>
 {
-    public void Handle(ContentPublishingNotification notification)
+    public async Task HandleAsync(ContentPublishingNotification notification, CancellationToken cancellationToken)
     {
         foreach (var page in notification.PublishedEntities.Where(p => p.ContentType.Alias == PaperReportDefinition.Alias))
         {
@@ -78,7 +78,7 @@ public sealed class PaperReportPublishValidator(ITemplateService templates, ICom
                 _ = PaperReportDefinition.Read(alias => page.GetValue(alias));
                 if (page.TemplateId is not { } templateId) throw new DataSourceException("Choose a template for the paper report.");
                 // Every download renders ~/Views/{alias}.cshtml, so a template registered without its view would fail them all.
-                var template = templates.GetAsync(templateId).GetAwaiter().GetResult();
+                var template = await templates.GetAsync(templateId);
                 if (template is null || !views.GetView(null, "~/Views/" + template.Alias + ".cshtml", isMainPage: false).Success)
                     throw new DataSourceException($"The paper report's template has no view. Add Views/{template?.Alias ?? "the template"}.cshtml, or choose another template.");
             }

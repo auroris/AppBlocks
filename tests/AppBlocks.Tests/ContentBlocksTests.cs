@@ -119,13 +119,14 @@ public sealed class ContentBlocksTests
     }
 
     [Fact]
-    public void Publishing_accepts_content_blocks_inside_a_form_and_still_rejects_unknown_blocks()
+    public async Task Publishing_accepts_content_blocks_inside_a_form_and_still_rejects_unknown_blocks()
     {
         var services = new ServiceCollection();
         services.AddScoped<IFormResource, SampleOrdersResource>(); services.AddScoped<FormResourceRegistry>();
         services.AddScoped<AppBlocksValidator>();
         using var provider = services.BuildServiceProvider(); using var scope = provider.CreateScope();
         var validator = scope.ServiceProvider.GetRequiredService<AppBlocksValidator>();
+        await validator.LoadAsync();
 
         var page = BlockPages.ContentBlocksForm();
         var aliases = page["contentData"]!.AsArray().Select(block => Guid.Parse(block!["contentTypeKey"]!.GetValue<string>())).ToHashSet();

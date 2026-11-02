@@ -46,7 +46,7 @@ export default class BusinessRulesHelp extends UmbLitElement {
     async load() {
         this.loading = true; this.error = undefined; this.notice = undefined;
         try {
-            const markdown = await request(this.auth, "guide", undefined, true);
+            const markdown = await request("guide", undefined, true);
             const safe = DOMPurify.sanitize(new Marked().parse(markdown), { USE_PROFILES: { html: true } });
             const document = new DOMParser().parseFromString(safe, "text/html");
             const sections = [];

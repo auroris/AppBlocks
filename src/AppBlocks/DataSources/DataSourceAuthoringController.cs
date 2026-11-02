@@ -36,7 +36,7 @@ public sealed class DataSourceAuthoringController(IContentService content, IAuth
         var errors = new List<string>();
         var definition = DataSourceDefinition.Read(node?.Key ?? request.Key ?? Guid.NewGuid(), node?.Name ?? "New data source",
             alias => request.Values.TryGetValue(alias, out var value) ? PropertyValue(value) : null,
-            new MemberGroupNames(groups).Resolve, errors);
+            new MemberGroupNames((await groups.GetAllAsync()).ToArray()).Resolve, errors);
         if (definition is null) return Ok(new DataSourcePreviewResult([], null, errors));
         var editor = new DataSourceUser("backoffice:" + user.Key, null, user.Username, user.Email,
             user.Groups.Select(g => g.Name ?? g.Alias).ToArray(), IsBackOfficeUser: true) {

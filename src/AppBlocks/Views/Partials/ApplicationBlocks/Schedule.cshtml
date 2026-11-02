@@ -120,7 +120,7 @@
         </tr>
     }
 }
-@if (!Model.Admitted || Model.Anonymous && !Queries.AllowsAnonymousRead(settings))
+@if (!Model.Admitted || Model.Anonymous && !await Queries.AllowsAnonymousReadAsync(settings))
 {
     <p class="app-block-signin" role="status">Sign in to see the schedule.</p>
 }

@@ -2,5 +2,24 @@
   "id": "AppBlocks.Documents",
   "name": "AppBlocks.Documents",
   "version": "0.1.0-alpha.1",
-  "extensions": []
+  "extensions": [
+    {
+      "type": "workspaceView",
+      "alias": "AppBlocks.Documents.WorkspaceView",
+      "name": "AppBlocks Documents settings",
+      "element": "/App_Plugins/AppBlocks.Documents/settings.js",
+      "weight": 25,
+      "meta": {
+        "label": "Documents",
+        "pathname": "documents",
+        "icon": "icon-document"
+      },
+      "conditions": [
+        {
+          "alias": "Umb.Condition.WorkspaceAlias",
+          "match": "AppBlocks.Workspace"
+        }
+      ]
+    }
+  ]
 }

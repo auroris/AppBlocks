@@ -1,3 +1,4 @@
+import { backofficeRoute } from "./backoffice-harness.mjs";
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
 import { createRequire } from 'node:module';
@@ -80,6 +81,7 @@ async function open(path, { blocked = false, nextToken = '' } = {}) {
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(token => { window.nextToken = token; }, nextToken);
     await page.route('**/*', async route => {
+        if (await backofficeRoute(route, assets, "a-token")) return;
         const request = route.request(), url = new URL(request.url());
         if (url.origin === new URL(base).origin) {
             // The test site serves no static files of its own, so the runtime comes straight from the source.
@@ -252,6 +254,7 @@ for (const [service, path, field] of [['turnstile', '/real-turnstile/', 'cf-turn
         const errors = [];
         page.on('pageerror', error => errors.push(error.message));
         await page.route(new URL('/App_Plugins/**', base).href, async route => {
+        if (await backofficeRoute(route, assets, "a-token")) return;
             const url = new URL(route.request().url());
             return route.fulfill({ contentType: url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript', body: await readFile(resolve(pluginRoot, url.pathname.slice(1)), 'utf8') });
         });
@@ -277,13 +280,14 @@ async function mountDashboard(services, onSave) {
     const errors = [], saves = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', async route => {
+        if (await backofficeRoute(route, assets, "a-token")) return;
         const url = new URL(route.request().url()), path = url.pathname;
         const js = body => route.fulfill({ contentType: 'text/javascript', body });
-        if (path === '/sub/dashboard') return route.fulfill({ contentType: 'text/html', body: `<script type="importmap">{"imports":{
+        if (path === '/sub/dashboard') return route.fulfill({ contentType: 'text/html', body: `<script type="importmap">{"imports":{ "@umbraco-cms/backoffice/http-client":"/http-client.js", "@umbraco-cms/backoffice/repository":"/repository.js",
             "@umbraco-cms/backoffice/lit-element":"/umb.js", "@umbraco-cms/backoffice/auth":"/umb.js", "@umbraco-cms/backoffice/components":"/components.js",
             "@umbraco-cms/backoffice/external/lit":"/vendor/lit/index.js", "@umbraco-cms/backoffice/external/marked":"/vendor/marked/index.js",
             "@umbraco-cms/backoffice/external/dompurify":"/vendor/dompurify/index.js"
-        }}</script><script type="module" src="/sub/App_Plugins/AppBlocks/dashboard.js"></script><appblocks-dashboard></appblocks-dashboard>` });
+        }}</script><script type="module" src="/workspace-harness.js"></script><appblocks-dashboard></appblocks-dashboard>` });
         if (path.startsWith('/vendor/')) return js(await readFile(resolve(assets, 'external', path.slice('/vendor/'.length)), 'utf8'));
         if (path === '/umb.js') return js(`import {LitElement} from '/vendor/lit/index.js';
             export class UmbLitElement extends LitElement { consumeContext(token, callback) { queueMicrotask(() => callback({getLatestToken: async () => 'a-token'})); } }

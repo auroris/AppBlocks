@@ -46,13 +46,13 @@ public static class FormEndpoints
 
     private static async Task<(FormDefinition? Form, ClaimsPrincipal? Member)> Resolve(Guid pageKey, Guid formKey, HttpContext http)
     {
-        if (http.RequestServices.GetRequiredService<AppBlockContent>().Page(pageKey) is not { } page) return (null, null);
+        if (await http.RequestServices.GetRequiredService<AppBlockContent>().PageAsync(pageKey) is not { } page) return (null, null);
         // On an open page an anonymous visitor reaches the form's class, which decides from here on.
         var member = await http.RequestServices.GetRequiredService<AppPageAccess>().VisitorAsync(page);
         if (member is null) return (null, null);
         // Bind antiforgery tokens to the actual Umbraco Member or backoffice User, or to nobody.
         http.User = member;
-        return (FormDefinition.Resolve(page, formKey, http.RequestServices.GetRequiredService<FormResourceRegistry>(), http.RequestServices.GetRequiredService<PublishedDataCatalog>(), AppBlockContent.RequestCulture(http)), member);
+        return (await FormDefinition.ResolveAsync(page, formKey, http.RequestServices.GetRequiredService<FormResourceRegistry>(), http.RequestServices.GetRequiredService<PublishedDataCatalog>(), AppBlockContent.RequestCulture(http)), member);
     }
 
     private static IResult Result(FormResult result) => result.Status == 204 ? Results.NoContent() : Results.Json(result, statusCode: result.Status);
@@ -264,7 +264,7 @@ public static class FormEndpoints
             if (blocks.FirstOrDefault(b => b.ContentKey == detail.Block) is not { } item) return (null, DetailRefusal(detail.Block, 422, "This form has no such Tabular form block."));
             var block = TabularBlock.Read(item.Content);
             if (!block.OwnedByForm) return (null, DetailRefusal(detail.Block, 422, "This Tabular form block names its own owner, so its rows save on their own."));
-            if (resources.Find(block.DataSource) is not SqlDataSource source || block.LinkField.Length == 0)
+            if (await resources.FindAsync(block.DataSource) is not SqlDataSource source || block.LinkField.Length == 0)
                 return (null, DetailRefusal(detail.Block, 422, $"The data source {block.DataSource} is not a published data source."));
             if (source.Problem is { } problem) return (null, DetailRefusal(detail.Block, 503, $"The data source {block.DataSource} is not available: {problem}"));
             if (block.ReadOnly || !await source.MayWriteAsync(member, ct)) return (null, DetailRefusal(detail.Block, 403, "This tabular form is read only."));

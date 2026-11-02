@@ -33,7 +33,13 @@ function key(name) {
 
 const anonymous = await request.newContext({ baseURL: url });
 const security = '/umbraco/management/api/v1/security/back-office';
-const login = await anonymous.post(security + '/login', { data: { username: unattended.UnattendedUserEmail, password: unattended.UnattendedUserPassword } });
+// The backoffice shell can respond while unattended package migrations are still running.
+let login;
+for (let attempt = 0; attempt < 90; attempt++) {
+  login = await anonymous.post(security + '/login', { data: { username: unattended.UnattendedUserEmail, password: unattended.UnattendedUserPassword } });
+  if (login.status() !== 503) break;
+  await new Promise(resolve => setTimeout(resolve, 1000));
+}
 assert.ok(login.ok(), `Administrator login: ${login.status()} ${await login.text()}`);
 const verifier = randomBytes(32).toString('base64url');
 const redirect = url + '/umbraco/oauth_complete';
@@ -267,6 +273,32 @@ try {
   await page.getByRole('tab', { name: 'Connections', exact: true }).click();
   await page.getByRole('row').filter({ hasText: 'AppBlocks database' }).waitFor();
   await page.screenshot({ path: resolve(output, stage + '-dashboard.png'), fullPage: true });
+  const catalogueRequests = [];
+  const trackCatalogue = request => { if (request.url().includes('/application-blocks/catalogue')) catalogueRequests.push(request); };
+  page.on('request', trackCatalogue);
+  await page.locator('appblocks-dashboard').evaluate(async dashboard => {
+    await import('/App_Plugins/ApplicationBlocks/form-class-picker.js');
+    const probe = document.createElement('div'); probe.id = 'catalogue-probe';
+    for (let i = 0; i < 3; i++) probe.append(document.createElement('appblocks-form-class-picker'));
+    dashboard.shadowRoot.append(probe);
+  });
+  await page.waitForFunction(dashboard => [...dashboard.shadowRoot.querySelectorAll('appblocks-form-class-picker')]
+    .every(picker => picker.catalogue), await page.locator('appblocks-dashboard').elementHandle());
+  assert.equal(catalogueRequests.length, 1, 'Native picker repositories share one authenticated catalogue request');
+  page.off('request', trackCatalogue);
+  await page.locator('appblocks-dashboard').evaluate(dashboard => dashboard.shadowRoot.querySelector('#catalogue-probe').remove());
+  passed('Native picker repositories share the catalogue using Umbraco authentication');
+  await page.goto(url + '/umbraco/section/settings/workspace/appblocks/view/definitions');
+  await page.getByRole('heading', { name: 'Package definitions', exact: true }).waitFor();
+  await page.goto(url + '/umbraco/section/settings/workspace/appblocks/view/setup');
+  await page.locator('[data-feature="uploads"]').waitFor();
+  await page.getByRole('tab', { name: 'Getting started', exact: true }).click();
+  await page.getByRole('heading', { name: 'From form class to working page', exact: true }).waitFor();
+  if (documents) {
+    await page.getByRole('tab', { name: 'Documents', exact: true }).click();
+    await page.locator('appblocks-documents-settings').getByRole('heading', { name: 'Documents', exact: true }).waitFor();
+  }
+  passed('Native workspace views support direct URLs, form guidance and installed companions');
   await page.getByRole('tab', { name: 'Business rules', exact: true }).click();
   await page.getByRole('heading', { name: 'Business rules for AppBlocks forms', exact: true }).waitFor();
   assert.match(await page.locator('appblocks-business-rules pre code').first().textContent(), /using AppBlocks\.Forms;/);

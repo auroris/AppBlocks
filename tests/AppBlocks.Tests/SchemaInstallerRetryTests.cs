@@ -4,6 +4,10 @@ using AppBlocks.DataSources;
 using AppBlocks.Setup;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
+using Umbraco.Cms.Core;
+using Umbraco.Cms.Core.Configuration.Models;
 using Umbraco.Cms.Core.Events;
 using Umbraco.Cms.Core.Notifications;
 using Umbraco.Cms.Core.Services;
@@ -32,8 +36,18 @@ public sealed class SchemaInstallerRetryTests
 
     private static void Fail(WebApplicationBuilder builder)
     {
+        // Boot a usable empty site, then exercise a failing installation explicitly. A failed startup migration now fails boot.
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+            ["Umbraco:CMS:PackageMigration:RunSchemaAndContentMigrations"] = "false",
+        });
         builder.Services.AddSingleton<Failure>();
         builder.Services.AddSingleton<INotificationHandler<ContentTypeSavingNotification>, FailingSave>();
+    }
+
+    private static void EnableInstallation(IServiceProvider services)
+    {
+        services.GetRequiredService<IOptions<PackageMigrationSettings>>().Value.RunSchemaAndContentMigrations = true;
+        services.GetRequiredService<IKeyValueService>().SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-02-data-source-backing-class");
     }
 
     [Fact]
@@ -43,8 +57,9 @@ public sealed class SchemaInstallerRetryTests
         using var scope = site.CreateScope();
         var services = scope.ServiceProvider;
         await AssertNothingInstalledAsync(services);
+        EnableInstallation(services);
 
-        // As a site that calls the installer before an import and then has the started notification call it. The second meets the same failure, not one the first left behind.
+        // A repeated explicit install must meet the original failure, without stale cached definitions from the rollback.
         var installer = services.GetRequiredService<SchemaInstaller>();
         Assert.Equal("Simulated schema failure.", (await Assert.ThrowsAsync<InvalidOperationException>(() => installer.EnsureAsync(default))).Message);
         await AssertNothingInstalledAsync(services);
@@ -83,13 +98,16 @@ public sealed class SchemaInstallerRetryTests
         {
             await using var failed = await BlockSite.BootAsync(root, Fail);
             using var scope = failed.CreateScope();
+            EnableInstallation(scope.ServiceProvider);
+            Assert.Equal("Simulated schema failure.", (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                scope.ServiceProvider.GetRequiredService<SchemaInstaller>().EnsureAsync(default))).Message);
             await AssertNothingInstalledAsync(scope.ServiceProvider);
             return;
         }
         await using var site = await BlockSite.BootAsync(root);
         using (var scope = site.CreateScope())
         {
-            // The started notification does it on this boot, like any other start.
+            // The pending package migration retries the installation on this boot.
             var types = scope.ServiceProvider.GetRequiredService<IContentTypeService>();
             for (var i = 0; i < 100 && types.Get(DataSourceSchema.SqlAlias) is null; i++) await Task.Delay(100);
             await AssertInstalledAsync(scope.ServiceProvider);

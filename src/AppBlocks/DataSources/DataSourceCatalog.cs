@@ -21,20 +21,27 @@ public sealed class DataSourceCatalog(IUmbracoContextFactory contexts, IDocument
 {
     private IReadOnlyList<SqlDataSource>? sources;
 
-    public IReadOnlyList<SqlDataSource> DataSources => sources ??= Load();
+    private Task? loading;
+    public Task LoadAsync() => loading ??= LoadCoreAsync();
+    public IReadOnlyList<SqlDataSource> DataSources => sources ?? throw new InvalidOperationException("Call LoadAsync before reading the data source catalogue.");
     IEnumerable<IFormResource> IFormResourceProvider.Resources => DataSources;
 
-    private List<SqlDataSource> Load()
+    async Task<IEnumerable<IFormResource>> IFormResourceProvider.GetResourcesAsync() { await LoadAsync(); return DataSources; }
+
+    private async Task LoadCoreAsync()
     {
         var found = new List<SqlDataSource>();
+        sources = found;
         using var reference = contexts.EnsureUmbracoContext();
-        if (reference.UmbracoContext.Content is not { } cache || !navigation.TryGetRootKeysOfType(DataSourceSchema.RootAlias, out var roots)) return found;
-        var names = new MemberGroupNames(groups);
-        foreach (var root in roots.Where(root => cache.GetById(false, root) is not null))
+        if (reference.UmbracoContext.Content is not { } cache || !navigation.TryGetRootKeysOfType(DataSourceSchema.RootAlias, out var roots)) return;
+        var names = new MemberGroupNames((await groups.GetAllAsync()).ToArray());
+        foreach (var root in roots)
         {
+            if (await cache.GetByIdAsync(root, false) is null) continue;
             if (!navigation.TryGetDescendantsKeysOfType(root, DataSourceSchema.SqlAlias, out var keys)) continue;
-            foreach (var node in keys.Select(key => cache.GetById(false, key)).OfType<Umbraco.Cms.Core.Models.PublishedContent.IPublishedContent>())
+            foreach (var key in keys)
             {
+                if (await cache.GetByIdAsync(key, false) is not { } node) continue;
                 var definition = runtime.Definition(node.Key, node.UpdateDate, () => {
                     var errors = new List<string>();
                     var read = DataSourceDefinition.Read(node.Key, node.Name, alias => node.GetProperty(alias)?.GetValue(), names.Resolve, errors);
@@ -50,18 +57,15 @@ public sealed class DataSourceCatalog(IUmbracoContextFactory contexts, IDocument
                 found.Add(new SqlDataSource(definition, runtime, users, policies, providers, handlers));
             }
         }
-        return found;
     }
 }
 
 /// <summary>Turns a member group picker value, which Umbraco stores as group ids, into group names; null when a picked group is gone.</summary>
-internal sealed class MemberGroupNames(IMemberGroupService groups)
+internal sealed class MemberGroupNames(IReadOnlyList<IMemberGroup> all)
 {
-    private IReadOnlyList<IMemberGroup>? all;
 
     public IReadOnlyList<string>? Resolve(string picked)
     {
-        all ??= groups.GetAllAsync().GetAwaiter().GetResult().ToArray();
         var names = new List<string>();
         foreach (var item in picked.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
@@ -80,23 +84,25 @@ internal sealed class MemberGroupNames(IMemberGroupService groups)
 /// other published data sources, and the backing class it names must be registered.
 /// </summary>
 public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMemberGroupService groups, DataSourceCatalog catalog,
-    IEnumerable<IFormResource> code, DataSourceHandlers? handlers = null) : INotificationHandler<ContentPublishingNotification>
+    IEnumerable<IFormResource> code, DataSourceHandlers? handlers = null) : INotificationAsyncHandler<ContentPublishingNotification>
 {
-    public void Handle(ContentPublishingNotification notification)
+    public async Task HandleAsync(ContentPublishingNotification notification, CancellationToken cancellationToken)
     {
         foreach (var content in notification.PublishedEntities.Where(c => c.ContentType.Alias == DataSourceSchema.SqlAlias))
         {
-            var errors = Validate(content.Key, content.Name ?? "", alias => content.GetValue(alias));
+            var errors = await ValidateAsync(content.Key, content.Name ?? "", alias => content.GetValue(alias));
             if (errors.Count > 0)
                 notification.CancelOperation(new EventMessage("Data source", (content.Name ?? "Data source") + ": " + string.Join(" ", errors), EventMessageType.Error));
         }
     }
 
     /// <param name="value">Returns the value of a property of the node being published.</param>
-    public IReadOnlyList<string> Validate(Guid key, string name, Func<string, object?> value)
+    public async Task<IReadOnlyList<string>> ValidateAsync(Guid key, string name, Func<string, object?> value)
     {
         var errors = new List<string>();
-        var definition = DataSourceDefinition.Read(key, name, value, new MemberGroupNames(groups).Resolve, errors);
+        var names = new MemberGroupNames((await groups.GetAllAsync()).ToArray());
+        var definition = DataSourceDefinition.Read(key, name, value, names.Resolve, errors);
+        await catalog.LoadAsync();
         if (definition is null) return errors;
         if (code.Any(resource => resource.Alias == definition.Alias))
             errors.Add($"The alias {definition.Alias} belongs to a form resource registered in code; choose another.");
@@ -135,7 +141,7 @@ public static class DataSourceExtensions
         builder.Services.TryAddScoped<DataSourceHandlers>();
         builder.Services.AddScoped<DataSourceCatalog>();
         builder.Services.AddScoped<IFormResourceProvider>(services => services.GetRequiredService<DataSourceCatalog>());
-        builder.AddNotificationHandler<ContentPublishingNotification, DataSourcePublishValidator>();
+        builder.AddNotificationAsyncHandler<ContentPublishingNotification, DataSourcePublishValidator>();
         builder.UrlSegmentProviders().Insert<DataSourceUrlSegmentProvider>();
         builder.AddPublishedDataDefinitions();
         return builder;

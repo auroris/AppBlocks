@@ -130,7 +130,9 @@ public sealed class StandaloneSiteTests
             using var submitted = await gateway.SubmitAsync(destination.Id, new("<html>Test document</html>"));
             Assert.Equal("test-job", Assert.IsType<DocumentPrintResult>(submitted).JobId);
             Assert.Equal(1, printSubmissions);
-            Assert.Contains("Documents", await admin.GetStringAsync("/umbraco/management/api/v1/appblocks/dashboard-pages"));
+            var manifest = await admin.GetStringAsync("/App_Plugins/AppBlocks.Documents/umbraco-package.json");
+            Assert.Contains("workspaceView", manifest);
+            Assert.Contains("AppBlocks.Workspace", manifest);
             Assert.Contains("Pressroom URL", await admin.GetStringAsync("/App_Plugins/AppBlocks.Documents/settings.js"));
             Assert.Contains("@page", await admin.GetStringAsync("/App_Plugins/AppBlocks.Documents/print.css"));
 

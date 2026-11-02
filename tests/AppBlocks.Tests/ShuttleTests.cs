@@ -75,7 +75,9 @@ public sealed class ShuttleTests
             var form = BlockPages.FormBlock(blocks, resource.Alias, [items, orders], []);
             formKey = Guid.Parse(form["contentKey"]!.GetValue<string>());
             BlockPages.Layout(blocks).Add(form);
-            Assert.Empty(ActivatorUtilities.CreateInstance<AppBlocksValidator>(scope.ServiceProvider).ValidateEmbedded(blocks.ToJsonString()));
+            var validator = ActivatorUtilities.CreateInstance<AppBlocksValidator>(scope.ServiceProvider);
+            await validator.LoadAsync();
+            Assert.Empty(validator.ValidateEmbedded(blocks.ToJsonString()));
             var page = contents.Create("Shuttle", parent, AppBlockSchema.PageAlias);
             page.SetValue(AppBlockSchema.BodyAlias, blocks.ToJsonString());
             Assert.True(contents.Save(page).Success);

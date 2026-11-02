@@ -79,7 +79,7 @@ public sealed class DatabaseSetupSiteTests
             {
                 Assert.Equal(HttpStatusCode.OK, note.StatusCode);
                 Assert.True(note.Headers.CacheControl?.NoStore);
-                Assert.Contains("/umbraco/section/settings/workspace/appblocks?tab=setup", (await note.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("setupUrl").GetString());
+                Assert.Contains("/umbraco/section/settings/workspace/appblocks/view/setup", (await note.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("setupUrl").GetString());
             }
 
             // The form keeps working through the same account, and the block beside it says only that storage is not set up.
@@ -90,7 +90,7 @@ public sealed class DatabaseSetupSiteTests
             Assert.Equal(JsonValueKind.Null, notice.GetProperty("storage").GetProperty("setupUrl").ValueKind);
             AssertPlain(notice.GetProperty("storage").GetProperty("message").GetString()!, database);
             var forAdmin = await Json(await admin.GetAsync(SetupSite.FilesUrl("1")));
-            Assert.Contains("/umbraco/section/settings/workspace/appblocks?tab=setup", forAdmin.GetProperty("storage").GetProperty("setupUrl").GetString());
+            Assert.Contains("/umbraco/section/settings/workspace/appblocks/view/setup", forAdmin.GetProperty("storage").GetProperty("setupUrl").GetString());
             using (var upload = await Upload(editor, token))
             {
                 Assert.Equal(HttpStatusCode.ServiceUnavailable, upload.StatusCode);

@@ -19,7 +19,7 @@ export default class ReportStateEditor extends AppEditor {
         this.loading = true;
         const selection = this.dataSource;
         try {
-            const { name } = await request(this.auth, "report-preview", { dataSource: selection });
+            const { name } = await request("report-preview", { dataSource: selection });
             if (selection !== this.dataSource) return;
             await import(`${pathBase}/api/reports/ui/ir.js`);
             const element = document.createElement("interactive-report");

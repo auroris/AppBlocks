@@ -15,7 +15,9 @@ public sealed class PublishedDataCatalog(IUmbracoContextFactory contexts, IDocum
     public const string ListAlias = "listOfValues";
     private Dictionary<string, ListOfValuesDefinition>? lists;
     private readonly Dictionary<string, DataSourceRuntime.PlanEntry> plans = new(StringComparer.Ordinal);
-    public IReadOnlyDictionary<string, ListOfValuesDefinition> Lists { get { Ensure(); return lists!; } }
+    public IReadOnlyDictionary<string, ListOfValuesDefinition> Lists => lists ?? throw new InvalidOperationException("Call LoadAsync before reading lists of values.");
+    private Task? loading;
+    public Task LoadAsync() => loading ??= LoadCoreAsync();
     public ListOfValuesDefinition? FindList(string? selection) => string.IsNullOrWhiteSpace(selection) ? null
         : Lists.GetValueOrDefault(selection) ?? Lists.Values.FirstOrDefault(list => PickedKey(selection) == list.Key);
     internal static Guid? PickedKey(string value) => Guid.TryParse(value.Replace("umb://document/", "", StringComparison.OrdinalIgnoreCase), out var key) ? key : null;
@@ -76,17 +78,19 @@ public sealed class PublishedDataCatalog(IUmbracoContextFactory contexts, IDocum
     }
 
 
-    private void Ensure()
+    private async Task LoadCoreAsync()
     {
-        if (lists is not null) return;
+        await sources.LoadAsync();
         lists = new(StringComparer.OrdinalIgnoreCase);
         using var reference = contexts.EnsureUmbracoContext();
         if (reference.UmbracoContext.Content is not { } cache || !navigation.TryGetRootKeysOfType(DataSourceSchema.RootAlias, out var roots)) return;
-        foreach (var root in roots.Where(key => cache.GetById(false, key) is not null))
+        foreach (var root in roots)
         {
+            if (await cache.GetByIdAsync(root, false) is null) continue;
             if (!navigation.TryGetDescendantsKeysOfType(root, ListAlias, out var keys)) continue;
-            foreach (var node in keys.Select(key => cache.GetById(false, key)).OfType<IPublishedContent>())
+            foreach (var key in keys)
             {
+                if (await cache.GetByIdAsync(key, false) is not { } node) continue;
                 Func<string, object?> value = property => node.GetProperty(property)?.GetValue();
                 if (runtime.Definition(node.Key, node.UpdateDate, () => Logged(node, errors => ReadList(node.Key, node.Name, value, errors)),
                     SourceVersion(ListSource(node.Key, node.Name, value))) is { } list && !lists.TryAdd(list.Alias, list)) warnings.Hidden(node, list.Alias);

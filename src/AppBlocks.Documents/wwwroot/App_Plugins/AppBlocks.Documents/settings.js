@@ -2,7 +2,7 @@ import { UmbLitElement } from "@umbraco-cms/backoffice/lit-element";
 import { html, css } from "@umbraco-cms/backoffice/external/lit";
 import { UMB_AUTH_CONTEXT } from "@umbraco-cms/backoffice/auth";
 
-const pathBase = new URL(import.meta.url).pathname.split("/App_Plugins/")[0];
+import { managementRequest } from "../AppBlocks/api.js";
 
 export default class DocumentsSettings extends UmbLitElement {
     static properties = {
@@ -30,18 +30,7 @@ export default class DocumentsSettings extends UmbLitElement {
         this.consumeContext(UMB_AUTH_CONTEXT, auth => { if (auth) { this.auth = auth; this.load(); } });
     }
     async request(path, method = "GET", body) {
-        const token = await this.auth.getLatestToken();
-        const response = await fetch(`${pathBase}/umbraco/management/api/v1/appblocks/documents/${path}`, {
-            method, credentials: "same-origin",
-            headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
-            body: body === undefined ? undefined : JSON.stringify(body),
-        });
-        if (!response.ok) {
-            if (response.status === 403) throw new Error("Only an Umbraco administrator can manage document settings.");
-            const problem = await response.json().catch(() => null);
-            throw new Error(problem?.detail ?? `The request could not be completed (${response.status}).`);
-        }
-        return response.json();
+        return managementRequest(`appblocks/documents/${path}`, { method, body });
     }
     async load() {
         try { this.settings = await this.request("settings"); this.error = undefined; }

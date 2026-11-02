@@ -11,10 +11,10 @@ public sealed class AppBlockContent(IUmbracoContextFactory contexts, IHttpContex
 
     public static string? RequestCulture(HttpContext? context) => context?.Request.Query[CultureParameter] is { Count: 1 } value && !string.IsNullOrWhiteSpace(value[0]) ? value[0] : null;
 
-    public IPublishedContent? Page(Guid key)
+    public async Task<IPublishedContent?> PageAsync(Guid key)
     {
         using var reference = contexts.EnsureUmbracoContext();
-        var page = reference.UmbracoContext.Content?.GetByIdAsync(key, false).GetAwaiter().GetResult();
+        var page = reference.UmbracoContext.Content is { } cache ? await cache.GetByIdAsync(key, false) : null;
         return page is not null && AppBlockSchema.HasBlocks(page.ContentType) ? page : null;
     }
 
@@ -43,6 +43,8 @@ public sealed class AppBlockContent(IUmbracoContextFactory contexts, IHttpContex
                 foreach (var item in grid) yield return item;
             else if (property.EditorAlias == "Umbraco.BlockList" && element.Value<BlockListModel>(property.Alias, culture: culture) is { } list)
                 foreach (var item in list) yield return AsGridItem(item);
+            else if (property.EditorAlias == "Umbraco.SingleBlock" && element.Value<BlockListItem>(property.Alias, culture: culture) is { } single)
+                yield return AsGridItem(single);
         }
     }
 
@@ -60,9 +62,9 @@ public sealed class AppBlockContent(IUmbracoContextFactory contexts, IHttpContex
         var parts = name.Split('-');
         return parts.Length == 3 && parts[0] == "page" && Guid.TryParseExact(parts[1], "N", out page) && Guid.TryParseExact(parts[2], "N", out block);
     }
-    public (IPublishedContent Page, BlockGridItem Block, string? Culture)? Report(string name)
+    public async Task<(IPublishedContent Page, BlockGridItem Block, string? Culture)?> ReportAsync(string name)
     {
-        if (!ParseReportName(name, out var pageKey, out var blockKey) || Page(pageKey) is not { } page) return null;
+        if (!ParseReportName(name, out var pageKey, out var blockKey) || await PageAsync(pageKey) is not { } page) return null;
         var culture = RequestCulture(http.HttpContext);
         var block = Flatten(Blocks(page, culture), culture).FirstOrDefault(b => b.ContentKey == blockKey && b.Content.ContentType.Alias == "appReport");
         return block is null ? null : (page, block, culture);

@@ -9,5 +9,6 @@ public sealed class DocumentsMigrationPlan() : AppBlocksPackagePlan("AppBlocks.D
     {
         // The first state: definitions were tracked from here, with nothing to change yet.
         To("2026-11-02-tracked");
+        To<InstallPackageDefinitions>("2026-11-02-package-install");
     }
 }

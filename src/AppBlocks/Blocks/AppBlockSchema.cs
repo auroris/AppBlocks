@@ -11,7 +11,7 @@ public static class AppBlockSchema
     public const string PageAlias = "appBlockPage";
     public const string BodyAlias = "applicationBlocks";
     public const string FormsContainerAlias = "appFormsContainer";
-    public static bool IsBlockEditor(string? alias) => alias is "Umbraco.BlockGrid" or "Umbraco.BlockList";
+    public static bool IsBlockEditor(string? alias) => alias is "Umbraco.BlockGrid" or "Umbraco.BlockList" or "Umbraco.SingleBlock";
 
     /// <summary>The shared block property is a capability of a page, including composed/custom document types.</summary>
     public static bool HasBlocks(IPublishedContentType type) => type.PropertyTypes.Any(p => IsBlockEditor(p.EditorAlias));

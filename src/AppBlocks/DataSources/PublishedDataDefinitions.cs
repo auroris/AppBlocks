@@ -3,10 +3,11 @@ using Umbraco.Cms.Core.Notifications;
 
 namespace AppBlocks.DataSources;
 
-public sealed class PublishedDataValidator(PublishedDataCatalog catalog) : INotificationHandler<ContentPublishingNotification>
+public sealed class PublishedDataValidator(PublishedDataCatalog catalog) : INotificationAsyncHandler<ContentPublishingNotification>
 {
-    public void Handle(ContentPublishingNotification notification)
+    public async Task HandleAsync(ContentPublishingNotification notification, CancellationToken cancellationToken)
     {
+        await catalog.LoadAsync();
         var aliases = new HashSet<(string Type, string Alias)>();
         foreach (var node in notification.PublishedEntities.Where(n => n.ContentType.Alias is PublishedDataCatalog.ListAlias))
         {
@@ -27,7 +28,7 @@ public static class PublishedDataDefinitions
         var services = builder.Services;
         services.AddScoped<PublishedDataCatalog>(); services.AddSingleton<PublishedDefinitionWarnings>();
         services.AddScoped<DataSourceQueries>(); services.AddScoped<ListOfValuesService>();
-        builder.AddNotificationHandler<ContentPublishingNotification, PublishedDataValidator>();
+        builder.AddNotificationAsyncHandler<ContentPublishingNotification, PublishedDataValidator>();
         return builder;
     }
 }

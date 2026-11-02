@@ -84,7 +84,7 @@ public static class InteractiveReportsExtensions
         services.Add(new ServiceDescriptor(typeof(OriginalContextParameters), sp => new OriginalContextParameters(
             (IContextParameterResolver)Create(sp, original)), original.Lifetime));
         services.Replace(new ServiceDescriptor(typeof(IContextParameterResolver), typeof(DataSourceContextParameters), original.Lifetime));
-        builder.AddNotificationHandler<ContentPublishingNotification, PublishedReportValidator>();
+        builder.AddNotificationAsyncHandler<ContentPublishingNotification, PublishedReportValidator>();
         services.Configure<UmbracoPipelineOptions>(options => options.AddFilter(new UmbracoPipelineFilter("AppBlocks.InteractiveReports")
         {
             PostPipeline = app => app.UseInteractiveReportsSite(),

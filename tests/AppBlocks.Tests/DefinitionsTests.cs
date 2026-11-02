@@ -218,8 +218,9 @@ public sealed class DefinitionsTests
         Assert.Equal(ContentTypeOperationStatus.Success, await bareTypes.DeleteAsync(bareTypes.Get(DataSourceSchema.SqlAlias)!.Key, Constants.Security.SuperUserKey));
         await BeforeTheStepAsync(bareServices);
         await RunPlanAsync(bareServices);
-        Assert.Null(bareTypes.Get(DataSourceSchema.SqlAlias));
-        Assert.Null(await bareServices.GetRequiredService<IDataTypeService>().GetAsync(pickerKey));
+        // The later installation step restores missing definitions in the same package plan.
+        Assert.NotNull(bareTypes.Get(DataSourceSchema.SqlAlias));
+        Assert.NotNull(await bareServices.GetRequiredService<IDataTypeService>().GetAsync(pickerKey));
     }
 
     /// <summary>Takes the backing class away again, as a site that has not run its step has it, and sets the plan back before the step.</summary>
@@ -248,7 +249,7 @@ public sealed class DefinitionsTests
         Assert.Equal(plan.FinalState, services.GetRequiredService<IKeyValueService>().GetValue(Constants.Conventions.Migrations.KeyValuePrefix + plan.Name));
     }
 
-    /// <summary>The started notification installs after the site is up; the SQL data source type is in the last of it.</summary>
+    /// <summary>The package migration must have installed definitions before the site is used.</summary>
     private static async Task WaitForInstallAsync(IContentTypeService types)
     {
         for (var i = 0; i < 100 && types.Get(DataSourceSchema.SqlAlias) is null; i++) await Task.Delay(100);

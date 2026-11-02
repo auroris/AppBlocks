@@ -2,7 +2,7 @@ import { UmbLitElement } from "@umbraco-cms/backoffice/lit-element";
 import { html, css } from "@umbraco-cms/backoffice/external/lit";
 import { UMB_AUTH_CONTEXT } from "@umbraco-cms/backoffice/auth";
 import "@umbraco-cms/backoffice/components";
-import { pathBase, request } from "../AppBlocks/api.js";
+import { pathBase, request, managementRequest } from "../AppBlocks/api.js";
 
 const reportsBase = `${pathBase}/umbraco/reports`;
 const viewControls = "search columns rename columnSettings filter sort aggregate controlBreak highlight compute groupBy pivot chart pagination";
@@ -40,10 +40,10 @@ export default class ReportAdministration extends UmbLitElement {
     async load() {
         this.loading = true; this.error = undefined;
         try {
-            this.allowed = (await request(this.auth, "report-administration/access")).allowed;
+            this.allowed = (await request("report-administration/access")).allowed;
             if (!this.allowed) return;
             const results = await Promise.allSettled([
-                request(this.auth, "report-administration/sources"), request(this.auth, "report-administration/reports"),
+                request("report-administration/sources"), request("report-administration/reports"),
             ]);
             this.sources = results[0].status === "fulfilled" ? results[0].value : [];
             this.reports = results[1].status === "fulfilled" ? results[1].value : [];
@@ -52,19 +52,11 @@ export default class ReportAdministration extends UmbLitElement {
         finally { this.loading = false; }
     }
     async refreshReports() {
-        this.reports = await request(this.auth, "report-administration/reports");
+        this.reports = await request("report-administration/reports");
         this.page = 0;
     }
     async changeReport(report, method, suffix, body) {
-        const token = await this.auth.getLatestToken();
-        const response = await fetch(`${pathBase}/umbraco/management/api/v1/appblocks/report-administration/reports/${encodeURIComponent(report.id)}${suffix}`, {
-            method, credentials: "same-origin", headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
-            body: body ? JSON.stringify(body) : undefined,
-        });
-        if (!response.ok) {
-            const problem = await response.json().catch(() => null);
-            throw new Error(problem?.detail ?? (response.status === 403 ? "You no longer have permission to manage this report." : `The report could not be changed (${response.status}).`));
-        }
+        return managementRequest(`appblocks/report-administration/reports/${encodeURIComponent(report.id)}${suffix}`, { method, body });
     }
     async deleteReport(report) {
         if (this.busy || !confirm(`Delete “${report.title}”? This permanently removes the saved report.`)) return;

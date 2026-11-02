@@ -41,7 +41,7 @@ else if (Plugins.FirstOrDefault(plugin => plugin.Alias == alias) is { } plugin)
 }
 else if (alias == "appForm")
 {
-    var definition = FormDefinition.Resolve(Model.Page, item.ContentKey, Resources, Definitions, apiQuery.Length > 0 ? culture : null);
+    var definition = await FormDefinition.ResolveAsync(Model.Page, item.ContentKey, Resources, Definitions, apiQuery.Length > 0 ? culture : null);
     if (definition is null)
     {
         <p role="alert">This form has an invalid resource or field configuration.</p>

@@ -29,10 +29,12 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
     private readonly Dictionary<string, Guid> reportOwners = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DataSourceRuntime.PlanEntry> plans = new(StringComparer.Ordinal);
 
-    public IReadOnlyDictionary<string, ReportDefinition> Reports { get { Ensure(); return reports!; } }
-    public IReadOnlyDictionary<string, PublishedReport> ReportNodes { get { Ensure(); return nodes!; } }
-    public bool IsUnavailableReport(string alias) { Ensure(); return unavailableReports.Contains(alias); }
-    public Guid? ReportOwner(string alias) { Ensure(); return reportOwners.TryGetValue(alias.Trim(), out var key) ? key : null; }
+    public IReadOnlyDictionary<string, ReportDefinition> Reports => reports ?? throw new InvalidOperationException("Call LoadAsync before reading reports.");
+    private Task? loading;
+    public Task LoadAsync() => loading ??= LoadCoreAsync();
+    public IReadOnlyDictionary<string, PublishedReport> ReportNodes => nodes ?? throw new InvalidOperationException("Call LoadAsync before reading reports.");
+    public bool IsUnavailableReport(string alias) { _ = Reports; return unavailableReports.Contains(alias); }
+    public Guid? ReportOwner(string alias) { _ = Reports; return reportOwners.TryGetValue(alias.Trim(), out var key) ? key : null; }
     internal static Guid? PickedKey(string value) => Guid.TryParse(value.Replace("umb://document/", "", StringComparison.OrdinalIgnoreCase), out var key) ? key : null;
 
     public DataSourceDefinition? ResolveSource(string selection) => sources.DataSources.FirstOrDefault(source =>
@@ -168,19 +170,21 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
         return definition;
     }
 
-    private void Ensure()
+    private async Task LoadCoreAsync()
     {
-        if (reports is not null) return;
+        await sources.LoadAsync();
         reports = new(configured.CurrentValue.Reports, StringComparer.OrdinalIgnoreCase);
         nodes = new(StringComparer.OrdinalIgnoreCase);
         using var reference = contexts.EnsureUmbracoContext();
         if (reference.UmbracoContext.Content is not { } cache || !navigation.TryGetRootKeysOfType(DataSourceSchema.RootAlias, out var roots)) return;
-        foreach (var root in roots.Where(key => cache.GetById(false, key) is not null))
-            foreach (var type in new[] { ReportAlias })
+        foreach (var root in roots)
             {
+                if (await cache.GetByIdAsync(root, false) is null) continue;
+                var type = ReportAlias;
                 if (!navigation.TryGetDescendantsKeysOfType(root, type, out var keys)) continue;
-                foreach (var node in keys.Select(key => cache.GetById(false, key)).OfType<IPublishedContent>())
+                foreach (var key in keys)
                 {
+                    if (await cache.GetByIdAsync(key, false) is not { } node) continue;
                     Func<string, object?> value = property => node.GetProperty(property)?.GetValue();
                     var alias = Text(value, "alias");
                     if (!reportOwners.TryAdd(alias, node.Key)) { warnings.Hidden(node, alias); continue; }

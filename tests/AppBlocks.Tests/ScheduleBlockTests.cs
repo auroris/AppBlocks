@@ -43,11 +43,12 @@ public sealed class ScheduleBlockTests
     }
 
     [Fact]
-    public void Publishing_accepts_the_sample_schedule_at_the_page_level_and_in_website_content()
+    public async Task Publishing_accepts_the_sample_schedule_at_the_page_level_and_in_website_content()
     {
         using var provider = Services();
         using var scope = provider.CreateScope();
         var validator = scope.ServiceProvider.GetRequiredService<AppBlocksValidator>();
+        await validator.LoadAsync();
         var page = BlockPages.Schedule().ToJsonString();
         Assert.Empty(validator.Validate(page));
         Assert.Empty(validator.ValidateWebsite(page));

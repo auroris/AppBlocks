@@ -1,3 +1,4 @@
+import { backofficeRoute } from "./backoffice-harness.mjs";
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
 import { createRequire } from 'node:module';
@@ -24,10 +25,11 @@ async function mount({ allowed = true, rejectSave = false, sourcesUnavailable = 
     ];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', async route => {
+        if (await backofficeRoute(route, assets, "admin-token")) return;
         const url = new URL(route.request().url()), path = url.pathname;
         const js = body => route.fulfill({ contentType: 'text/javascript', body });
         const json = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
-        if (path === '/sub/admin') return route.fulfill({ contentType: 'text/html', body: `<script type="importmap">{"imports":{
+        if (path === '/sub/admin') return route.fulfill({ contentType: 'text/html', body: `<script type="importmap">{"imports":{ "@umbraco-cms/backoffice/http-client":"/http-client.js", "@umbraco-cms/backoffice/repository":"/repository.js",
             "@umbraco-cms/backoffice/lit-element":"/umb.js", "@umbraco-cms/backoffice/auth":"/umb.js", "@umbraco-cms/backoffice/components":"/components.js",
             "@umbraco-cms/backoffice/external/lit":"/vendor/lit/index.js"
         }}</script><script type="module" src="/sub/App_Plugins/AppBlocks.InteractiveReports/administration.js"></script><appblocks-report-administration></appblocks-report-administration>` });

@@ -1,3 +1,4 @@
+import { backofficeRoute } from "./backoffice-harness.mjs";
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
 import { createRequire } from 'node:module';
@@ -29,13 +30,14 @@ async function mount({ guide = markdown, failOnce = false } = {}) {
         });
     });
     await page.route('**/*', async route => {
+        if (await backofficeRoute(route, assets, "guide-token")) return;
         const path = new URL(route.request().url()).pathname;
         const js = body => route.fulfill({contentType:'text/javascript', body});
-        if (path === '/sub/dashboard') return route.fulfill({contentType:'text/html', body:`<script type="importmap">{"imports":{
+        if (path === '/sub/dashboard') return route.fulfill({contentType:'text/html', body:`<script type="importmap">{"imports":{ "@umbraco-cms/backoffice/http-client":"/http-client.js", "@umbraco-cms/backoffice/repository":"/repository.js",
             "@umbraco-cms/backoffice/lit-element":"/umb.js", "@umbraco-cms/backoffice/auth":"/umb.js", "@umbraco-cms/backoffice/components":"/components.js",
             "@umbraco-cms/backoffice/external/lit":"/vendor/lit/index.js", "@umbraco-cms/backoffice/external/marked":"/vendor/marked/index.js",
             "@umbraco-cms/backoffice/external/dompurify":"/vendor/dompurify/index.js"
-        }}</script><script type="module" src="/sub/App_Plugins/AppBlocks/dashboard.js"></script><appblocks-dashboard></appblocks-dashboard>`});
+        }}</script><script type="module" src="/workspace-harness.js"></script><appblocks-dashboard></appblocks-dashboard>`});
         if (path.startsWith('/vendor/')) return js(await readFile(resolve(assets, 'external', path.slice('/vendor/'.length)), 'utf8'));
         if (path === '/umb.js') return js(`import {LitElement} from '/vendor/lit/index.js';
             export class UmbLitElement extends LitElement { consumeContext(token, callback) { queueMicrotask(() => callback({getLatestToken: async () => 'guide-token'})); } }
@@ -91,11 +93,11 @@ test('business rules opens inside AppBlocks with every section, exact code, navi
 test('getting started and form samples link to the inline help', async () => {
     const {page, errors} = await mount();
     await page.getByRole('tab', {name:'Getting started', exact:true}).click();
-    await page.getByRole('button', {name:'Read business rules', exact:true}).click();
+    await page.getByRole('link', {name:'Read business rules', exact:true}).click();
     await page.getByRole('heading', {name:'Business rules for AppBlocks forms', exact:true}).waitFor();
     await page.getByRole('tab', {name:'Forms', exact:true}).click();
     await page.getByRole('button', {name:'View sample C#', exact:true}).click();
-    await page.getByRole('button', {name:'Read business rules', exact:true}).click();
+    await page.getByRole('link', {name:'Read business rules', exact:true}).click();
     await page.getByRole('heading', {name:'Business rules for AppBlocks forms', exact:true}).waitFor();
     assert.deepEqual(errors, []);
     await page.close();

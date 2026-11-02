@@ -22,7 +22,7 @@ export default class TablePicker extends UmbLitElement {
     async load() {
         const connection=this.connection(); const version=(this.requestVersion??0)+1; this.requestVersion=version;
         this.loading=true; this.error=undefined; this.loadedConnection=connection; this.tables=[];
-        try { const tables=await request(this.auth, `tables?connection=${encodeURIComponent(connection)}`); if(version===this.requestVersion) this.tables=tables; }
+        try { const tables=await request(`tables?connection=${encodeURIComponent(connection)}`); if(version===this.requestVersion) this.tables=tables; }
         catch(error) { if(version===this.requestVersion) this.error=error.message; }
         finally { if(version===this.requestVersion) this.loading=false; }
     }

@@ -28,7 +28,7 @@ Register `IDocumentPresentationProvider` to provide a theme name and optional pr
 
 `IAppDocumentLinks` lives in the base AppBlocks assembly, in the `AppBlocks.DocumentOutput` namespace. Resolve it optionally with `GetService<IAppDocumentLinks>()`. If absent, omit document actions. If present, `Url(documentKey, request.PathBase)` supplies the endpoint. Append the record parameters and use `target="_blank" rel="noopener"` on links, or `window.open(url, "_blank", "noopener")` synchronously inside a user action. The endpoint rechecks authorization; knowing a document URL grants no access.
 
-Interactive Reports' UI, authorization and report-state handling belong to that companion. Documents owns all Pressroom HTTP interactions, configuration and credentials. Documents never references Interactive Reports. The settings screen contributes a Documents view through `AppBlocksDashboardPage`; the base dashboard discovers installed companions.
+Interactive Reports' UI, authorization and report-state handling belong to that companion. Documents owns all Pressroom HTTP interactions, configuration and credentials. Documents never references Interactive Reports. The settings screen contributes a native `workspaceView` extension in its `umbraco-package.json`, conditioned on `AppBlocks.Workspace`. Umbraco owns its navigation and loading.
 
 ### Shared output service
 

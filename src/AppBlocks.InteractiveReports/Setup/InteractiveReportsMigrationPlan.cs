@@ -9,5 +9,6 @@ public sealed class InteractiveReportsMigrationPlan() : AppBlocksPackagePlan("Ap
     {
         // The first state: definitions were tracked from here, with nothing to change yet.
         To("2026-11-02-tracked");
+        To<InstallPackageDefinitions>("2026-11-02-package-install");
     }
 }

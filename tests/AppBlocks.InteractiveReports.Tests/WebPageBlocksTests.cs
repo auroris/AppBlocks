@@ -14,11 +14,12 @@ namespace AppBlocks.InteractiveReports.Tests;
 public sealed class WebPageBlocksTests
 {
     [Fact]
-    public void Website_content_can_stand_alone_and_mix_independent_forms_with_nested_reports()
+    public async Task Website_content_can_stand_alone_and_mix_independent_forms_with_nested_reports()
     {
         using var provider = Services();
         using var scope = provider.CreateScope();
         var validator = scope.ServiceProvider.GetRequiredService<AppBlocksValidator>();
+        await validator.LoadAsync();
         Assert.Empty(validator.ValidateWebsite(null));
         Assert.Empty(validator.ValidateWebsite(BlockPages.Empty().ToJsonString()));
         Assert.Empty(validator.ValidateWebsite(BlockPages.Static("Public content").ToJsonString()));
@@ -33,11 +34,12 @@ public sealed class WebPageBlocksTests
     }
 
     [Fact]
-    public void Fields_require_a_form_and_forms_still_validate_their_resource_and_nesting()
+    public async Task Fields_require_a_form_and_forms_still_validate_their_resource_and_nesting()
     {
         using var provider = Services();
         using var scope = provider.CreateScope();
         var validator = scope.ServiceProvider.GetRequiredService<AppBlocksValidator>();
+        await validator.LoadAsync();
         var standalone = BlockPages.Empty();
         BlockPages.Layout(standalone).Add(BlockPages.Add(standalone, "appText", ("field", "customer")));
         Assert.Contains(validator.ValidateWebsite(standalone.ToJsonString()), error => error.Contains("inside a form"));

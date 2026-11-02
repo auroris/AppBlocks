@@ -30,8 +30,6 @@ public static class AppBlocksDocumentsExtensions
         // No redirects (which could forward credentials), and no automatic retries of physical printing.
         builder.Services.AddHttpClient(DocumentOutputService.ClientName)
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
-        builder.Services.AddSingleton(new AppBlocks.Management.AppBlocksDashboardPage("documents", "Documents",
-            "/App_Plugins/AppBlocks.Documents/settings.js", "appblocks-documents-settings"));
         builder.Services.TryAddScoped<IDocumentPresentationProvider, DefaultDocumentPresentationProvider>();
         builder.Services.TryAddSingleton<IAppDocumentLinks, DocumentLinks>();
         builder.Services.AddSingleton(new AppBlocksSchema(typeof(AppBlocksDocumentsExtensions).Assembly));

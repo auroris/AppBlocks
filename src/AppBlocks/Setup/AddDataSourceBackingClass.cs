@@ -5,6 +5,9 @@ using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Core.Strings;
 using Umbraco.Cms.Infrastructure.Migrations;
 using AppBlocks.DataSources;
+using Microsoft.Extensions.Options;
+using Umbraco.Cms.Core.Configuration.Models;
+using Umbraco.Cms.Core.Scoping;
 
 namespace AppBlocks.Setup;
 
@@ -15,13 +18,24 @@ namespace AppBlocks.Setup;
 /// definitions, or when the type already has the property.
 /// </summary>
 public sealed class AddDataSourceBackingClass(IMigrationContext context, IContentTypeService contentTypes, IDataTypeService dataTypes,
-    IDataTypeContainerService dataFolders, PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer, IShortStringHelper strings)
+    IDataTypeContainerService dataFolders, PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer, IShortStringHelper strings,
+    IOptions<PackageMigrationSettings> settings, IKeyValueService keyValues, ICoreScopeProvider scopes)
     : AsyncMigrationBase(context)
 {
     internal const string Property = "handler";
 
     protected override async Task MigrateAsync()
     {
+        using var scope = scopes.CreateCoreScope();
+        // The migration records its state even when no schema change is needed; lock before the first read on SQLite.
+        scope.EagerWriteLock(Constants.Locks.KeyValues);
+        await UpdateAsync();
+        scope.Complete();
+    }
+
+    private async Task UpdateAsync()
+    {
+        if (!settings.Value.RunSchemaAndContentMigrations || keyValues.GetValue(SchemaInstaller.UninstalledKey) == "true") return;
         var schema = new AppBlocksSchema(typeof(AddDataSourceBackingClass).Assembly);
         var definition = schema.Definitions("ContentTypes").Single(d => d.Attribute("Alias")!.Value == DataSourceSchema.SqlAlias);
         // The package's type, by key: a site's own type that took the alias is not the package's to change.

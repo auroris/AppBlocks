@@ -31,6 +31,7 @@ public sealed class TabularAccess(BlockOwnerAccess owners, FormResourceRegistry 
 
     public async Task<TabularScope> ResolveAsync(Guid pageKey, Guid blockKey, CancellationToken ct)
     {
+        await resources.LoadAsync();
         var owner = await owners.ResolveAsync(pageKey, blockKey, AppBlockSchema.TabularAlias, Words, element => {
             var settings = TabularBlock.Read(element);
             return (settings.OwnerResource, settings.OwnerKey);
@@ -46,6 +47,7 @@ public sealed class TabularAccess(BlockOwnerAccess owners, FormResourceRegistry 
     /// </summary>
     public async Task<TabularScope> ResolveNewAsync(Guid pageKey, Guid blockKey, CancellationToken ct)
     {
+        await resources.LoadAsync();
         var owner = await owners.ResolveAsync(pageKey, blockKey, AppBlockSchema.TabularAlias, Words, element => {
             var settings = TabularBlock.Read(element);
             return (settings.OwnerResource, settings.OwnerKey);

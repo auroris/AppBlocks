@@ -6,8 +6,8 @@ namespace AppBlocks.Setup;
 /// The Umbraco package migration plan of AppBlocks or a companion: the ordered steps that carry a site's existing definitions
 /// and content from one version of the package to the next. Umbraco runs the steps a site has not reached on startup, before
 /// the application has started, and records the last one in its key-value store under the plan's name. A fresh site, and one
-/// from before any step existed, runs every step, so each step does nothing when what it changes is not there: the
-/// <see cref="SchemaInstaller"/> installs the current definitions right after.
+/// from before any step existed, runs every step. <see cref="InstallPackageDefinitions"/> installs the current missing
+/// definitions inside that lifecycle; individual upgrade steps must also tolerate missing definitions and disabled schema migrations.
 /// </summary>
 /// <param name="packageId">The package's id, also the plan's name: the manifest's <c>id</c>, so the backoffice pairs them.</param>
 /// <param name="packageName">The package's name as its manifest gives it.</param>

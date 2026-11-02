@@ -55,7 +55,7 @@ public static class DatabaseSetupGuide
     public const string UnknownSchema = "<default schema>";
 
     /// <summary>Where the setup screen lives, under the site's path base. Its tab opens from the query string.</summary>
-    public const string ScreenPath = "/umbraco/section/settings/workspace/appblocks?tab=setup";
+    public const string ScreenPath = "/umbraco/section/settings/workspace/appblocks/view/setup";
 
     /// <summary>The feature's state and summary from what the inspection found.</summary>
     public static (string State, string Summary) Standing(DatabaseInspection inspection, IEnumerable<string> required, bool autoCreate = true)

@@ -1,47 +1,65 @@
+using System.Globalization;
 using System.Text.Json;
+using Umbraco.Cms.Core.Models.Blocks;
+using Umbraco.Cms.Core.Serialization;
 using Umbraco.Cms.Core.Services;
+using Umbraco.Cms.Infrastructure.Serialization;
 
 namespace AppBlocks.Blocks;
 
-/// <summary>Finds native block values, including block properties inside a site's own element types.</summary>
+/// <summary>Native block values, including block properties inside a site's own element types.</summary>
 internal static class BlockValueSets
 {
-    public static IReadOnlyList<JsonElement> Read(string json, IContentTypeService? types = null)
+    // Also used by standalone sample generation, where no Umbraco service scope exists.
+    private static readonly IJsonSerializer Serializer = new SystemTextJsonSerializer(new DefaultJsonSerializerEncoderFactory());
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    public static BlockValue Parse(string json)
     {
         using var document = JsonDocument.Parse(json);
-        var result = new List<JsonElement>();
+        var layout = document.RootElement.GetProperty("layout");
+        if (layout.TryGetProperty("Umbraco.BlockGrid", out _)) return new BlockGridEditorDataConverter(Serializer).Deserialize(json).BlockValue;
+        if (layout.TryGetProperty("Umbraco.BlockList", out _)) return new BlockListEditorDataConverter(Serializer).Deserialize(json).BlockValue;
+        if (layout.TryGetProperty("Umbraco.SingleBlock", out _)) return new SingleBlockEditorDataConverter(Serializer).Deserialize(json).BlockValue;
+        throw new JsonException("Unsupported block editor layout.");
+    }
+
+    public static IEnumerable<IBlockLayoutItem> Layout(BlockValue value) => value.Layout.TryGetValue(value.PropertyEditorAlias, out var layout) ? layout : [];
+    public static IEnumerable<IBlockLayoutItem> Children(IBlockLayoutItem item) => item is BlockGridLayoutItem grid
+        ? grid.Areas.SelectMany(area => area.Items) : [];
+    public static string Text(BlockItemData block, string alias) => ValueText(block.Values.FirstOrDefault(v => v.Alias == alias)?.Value);
+    private static string ValueText(object? input) => input switch
+    {
+        null or JsonElement { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined } => "",
+        JsonElement value => value.ToString(),
+        var value => Convert.ToString(value, CultureInfo.InvariantCulture) ?? ""
+    };
+    // Keep the public plugin validation contract while AppBlocks itself works with typed values.
+    public static JsonElement Element(BlockItemData block) => JsonSerializer.SerializeToElement(block, Json);
+
+    public static IReadOnlyList<BlockValue> Read(string json, IContentTypeService? types = null)
+    {
+        var result = new List<BlockValue>();
         var editors = new Dictionary<Guid, Dictionary<string, string>>();
-        Visit(document.RootElement, 0);
+        Visit(Parse(json), 0);
         return result;
 
-        void Visit(JsonElement root, int depth)
+        void Visit(BlockValue value, int depth)
         {
             if (depth > 32) throw new InvalidOperationException("Block nesting is too deep.");
-            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("contentData", out var data)
-                || !root.TryGetProperty("layout", out var layout)
-                || (!layout.TryGetProperty("Umbraco.BlockGrid", out _) && !layout.TryGetProperty("Umbraco.BlockList", out _))) return;
-            result.Add(root.Clone());
-            foreach (var block in data.EnumerateArray())
+            result.Add(value);
+            foreach (var block in value.ContentData.Concat(value.SettingsData))
             {
-                var type = block.GetProperty("contentTypeKey").GetGuid();
-                if (!editors.TryGetValue(type, out var properties))
-                    editors[type] = properties = types?.Get(type)?.CompositionPropertyTypes
+                if (!editors.TryGetValue(block.ContentTypeKey, out var properties))
+                    editors[block.ContentTypeKey] = properties = types?.Get(block.ContentTypeKey)?.CompositionPropertyTypes
                         .ToDictionary(p => p.Alias, p => p.PropertyEditorAlias) ?? [];
-                if (!block.TryGetProperty("values", out var values)) continue;
-                foreach (var value in values.EnumerateArray())
+                foreach (var property in block.Values)
                 {
-                    var alias = value.GetProperty("alias").GetString() ?? "";
-                    if (type == AppBlockSchema.Key("appForm") && alias == "formInterface") continue;
-                    if (!(type == AppBlockSchema.Key(AppBlockSchema.FormsContainerAlias) && alias == "forms")
-                        && !AppBlockSchema.IsBlockEditor(properties.GetValueOrDefault(alias))) continue;
-                    if (!value.TryGetProperty("value", out var nested) || nested.ValueKind == JsonValueKind.Null) continue;
-                    if (nested.ValueKind == JsonValueKind.String)
-                    {
-                        if (string.IsNullOrWhiteSpace(nested.GetString())) continue;
-                        using var parsed = JsonDocument.Parse(nested.GetString()!);
-                        Visit(parsed.RootElement, depth + 1);
-                    }
-                    else Visit(nested, depth + 1);
+                    if (block.ContentTypeKey == AppBlockSchema.Key("appForm") && property.Alias == "formInterface") continue;
+                    if (!(block.ContentTypeKey == AppBlockSchema.Key(AppBlockSchema.FormsContainerAlias) && property.Alias == "forms")
+                        && !AppBlockSchema.IsBlockEditor(properties.GetValueOrDefault(property.Alias))) continue;
+                    var nested = ValueText(property.Value);
+                    if (!string.IsNullOrWhiteSpace(nested)) Visit(Parse(nested), depth + 1);
                 }
             }
         }

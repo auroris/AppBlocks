@@ -11,6 +11,7 @@ public sealed class NativeBlocksTests
     [Theory]
     [InlineData("Umbraco.BlockList")]
     [InlineData("Umbraco.BlockGrid")]
+    [InlineData("Umbraco.SingleBlock")]
     public void Discovery_finds_forms_inside_a_native_container_and_ignores_text_that_looks_like_blocks(string editor)
     {
         var form = Guid.NewGuid(); var field = Guid.NewGuid(); var container = Guid.NewGuid();
