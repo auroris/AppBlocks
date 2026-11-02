@@ -16,6 +16,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
         error: { state: true }, message: { state: true }, busy: { state: true }, loading: { state: true },
         editing: { state: true }, sample: { state: true }, selectedForm: { state: true }, search: { state: true },
         setup: { state: true }, setupLoading: { state: true }, script: { state: true }, antiSpam: { state: true }, antiSpamEditing: { state: true },
+        definitions: { state: true }, definitionsLoading: { state: true }, notes: { state: true },
     };
     static styles = css`
         :host { display:block; height:100%; min-height:0; color:var(--uui-color-text); container-type:inline-size; }
@@ -54,7 +55,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
         @container(max-width:760px) { .header small, uui-tab umb-icon { display:none; } uui-tab-group { max-width:65cqw; overflow-x:auto; } .summary { grid-template-columns:1fr; } }
     `;
     constructor() {
-        super(); this.companionPages = []; this.tab = new URLSearchParams(location.search).get("tab") === "setup" ? "setup" : "forms"; this.setup = []; this.antiSpam = []; this.forms = []; this.connections = []; this.issues = []; this.search = ""; this.loading = true;
+        super(); this.companionPages = []; this.tab = ["setup", "definitions"].includes(new URLSearchParams(location.search).get("tab")) ? new URLSearchParams(location.search).get("tab") : "forms"; this.setup = []; this.antiSpam = []; this.forms = []; this.connections = []; this.issues = []; this.search = ""; this.loading = true;
         this.consumeContext(UMB_AUTH_CONTEXT, auth => { if (auth) { this.auth = auth; this.load(); } });
     }
     async load() {
@@ -66,6 +67,23 @@ export default class AppBlocksDashboard extends UmbLitElement {
         this.error = results.filter(r => r.status === "rejected").map(r => r.reason.message).join(" ") || undefined;
         this.loading = false;
         if (this.tab === "setup") await this.loadSetup();
+        if (this.tab === "definitions") await this.loadDefinitions();
+    }
+    async loadDefinitions() {
+        this.definitionsLoading = true;
+        try { this.definitions = await request(this.auth, "definitions"); }
+        catch (error) { this.error = error.message; }
+        finally { this.definitionsLoading = false; }
+    }
+    async changeDefinitions(action, question, done) {
+        if (!confirm(question)) return;
+        this.busy = true; this.error = undefined; this.message = undefined; this.notes = [];
+        try {
+            const change = await request(this.auth, `definitions/${action}`, {});
+            this.message = done(change); this.notes = change.notes;
+            await this.loadDefinitions();
+        } catch (error) { this.error = error.message; }
+        finally { this.busy = false; }
     }
     // Only when the tab is open: looking is read-only, but it does connect to each feature's database.
     async loadSetup() {
@@ -112,6 +130,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
     selectTab(tab) {
         this.tab = tab; this.error = undefined; this.message = undefined;
         if (tab === "setup") this.loadSetup();
+        if (tab === "definitions") this.loadDefinitions();
         if (tab === "anti-spam") this.loadAntiSpam();
     }
     async showSample(form) {
@@ -174,6 +193,18 @@ export default class AppBlocksDashboard extends UmbLitElement {
             ${feature.tables.length ? html`<div class="table"><table><thead><tr><th>Table</th><th>State</th></tr></thead><tbody>${feature.tables.map(table => html`<tr><td><strong>${table.name}</strong>${table.required ? "" : html`<small>Used only by the saved report administration page.</small>`}</td><td>${tableStates[table.state] ?? table.state}</td></tr>`)}</tbody></table></div>` : ""}
             <p>${feature.lost}</p>${remedies}</uui-box>`;
     }
+    renderDefinitions() {
+        const status = this.definitions;
+        if (!status) return html`<p role="status">${this.definitionsLoading ? "Checking the definitions…" : ""}</p>`;
+        return html`<uui-box class="panel"><div class="toolbar"><div><h2>Package definitions</h2><p>The element types, document types and data types each AppBlocks package installs in Umbraco, and the package migration plan that updates them when a new version needs to.</p></div></div>
+            ${status.uninstalled ? html`<div class="error" role="alert">The definitions were uninstalled from this site. Nothing installs on startup until they are reinstalled.</div>` : ""}
+            <div class="table"><table><thead><tr><th>Package</th><th>Version</th><th>Definitions</th><th>Migrations</th></tr></thead><tbody>${status.packages.map(p => html`<tr data-package=${p.id}><td><strong>${p.name}</strong></td><td>${p.version}</td><td>${p.installed === p.declared ? html`<span class="badge ready">All ${p.declared} installed</span>` : html`<span class="badge action">${p.installed} of ${p.declared} installed</span>`}</td><td>${p.pending ? html`<span class="badge action">Pending</span>` : html`<span class="badge ready">Up to date</span>`}<small>${p.state ? `At ${p.state}` : "Not run yet"}</small></td></tr>`)}</tbody></table></div>
+            ${this.notes?.length ? html`<ul>${this.notes.map(note => html`<li>${note}</li>`)}</ul>` : ""}
+            <h3>Reinstall</h3><p>Resets every definition above to the installed package's version, in place: names, properties, allowed blocks, data type settings and folders. Pages, data sources and the site's own types keep their values; a property the package no longer has loses its values. Use it after updating the package when no migration covers the change, or to undo edits made to these definitions in the backoffice.</p>
+            <div class="actions"><button class="primary" ?disabled=${this.busy} @click=${() => this.changeDefinitions("reinstall", "Reset every AppBlocks definition to the package's version? Edits made to them in the backoffice are lost.", change => `Reinstalled the definitions: ${change.created} created, ${change.updated} reset.`)}>Reinstall definitions</button></div>
+            <h3>Uninstall</h3><p>Removes every definition above from Umbraco. It refuses while content of these types exists or a type of the site's own uses one of these data types, and names what to remove first. Blocks already on pages stay in the pages, hidden, until the definitions are installed again. Nothing installs on later starts until Reinstall, so the package can be removed from the site afterwards.</p>
+            <div class="actions"><button ?disabled=${this.busy} @click=${() => this.changeDefinitions("uninstall", "Remove every AppBlocks definition from Umbraco?", change => `Uninstalled the definitions: ${change.deleted} removed.`)}>Uninstall definitions</button></div></uui-box>`;
+    }
     renderAntiSpam() {
         const editing = this.antiSpam.find(service => service.alias === this.antiSpamEditing);
         if (editing) return html`<uui-box class="panel"><h2>${editing.name} keys</h2><form class="form" data-anti-spam-keys @submit=${event => { event.preventDefault(); this.saveAntiSpam(editing, Object.fromEntries(new FormData(event.target).entries())); }}>
@@ -192,7 +223,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
         return html`<umb-body-layout>
             <div slot="header" class="header"><umb-icon name="icon-box" aria-hidden="true"></umb-icon><div><h1>AppBlocks</h1><small>Forms and reports</small></div></div>
             <uui-tab-group slot="navigation" aria-label="AppBlocks views">
-                ${[["forms","Forms","icon-document"],["connections","Connections","icon-server"],["setup","Database setup","icon-settings"],["anti-spam","Anti-spam","icon-shield"],["help","Getting started","icon-help"],["business-rules","Business rules","icon-book-alt"]].map(([key,label,icon]) => html`<uui-tab label=${label} ?active=${this.tab === key} @click=${() => this.selectTab(key)}><umb-icon slot="icon" name=${icon} aria-hidden="true"></umb-icon>${label}</uui-tab>`)}
+                ${[["forms","Forms","icon-document"],["connections","Connections","icon-server"],["setup","Database setup","icon-settings"],["definitions","Definitions","icon-layers"],["anti-spam","Anti-spam","icon-shield"],["help","Getting started","icon-help"],["business-rules","Business rules","icon-book-alt"]].map(([key,label,icon]) => html`<uui-tab label=${label} ?active=${this.tab === key} @click=${() => this.selectTab(key)}><umb-icon slot="icon" name=${icon} aria-hidden="true"></umb-icon>${label}</uui-tab>`)}
                 ${this.companionPages.map(page => html`<uui-tab label=${page.label} ?active=${this.tab === page.alias} @click=${() => this.showCompanion(page)}><umb-icon slot="icon" name="icon-document" aria-hidden="true"></umb-icon>${page.label}</uui-tab>`)}
             </uui-tab-group>
             ${this.tab !== "business-rules" ? html`<div class="intro"><p>Forms and reports, connected to your data.</p><uui-button look="secondary" label="Refresh" ?disabled=${this.loading} @click=${this.load}><umb-icon name="icon-refresh" aria-hidden="true"></umb-icon> Refresh</uui-button></div>
@@ -203,7 +234,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
             </div>
             ` : ""}
             <div aria-live="polite">${this.error ? html`<div class="error" role="alert">${this.error}</div>` : ""}${this.message ? html`<div class="notice">${this.message}</div>` : ""}</div>
-            ${this.loading ? html`<p role="status">Loading AppBlocks…</p>` : this.tab === "forms" ? this.renderForms() : this.tab === "connections" ? this.renderConnections() : this.tab === "setup" ? this.renderSetup() : this.tab === "anti-spam" ? this.renderAntiSpam() : this.tab === "help" ? this.renderHelp() : this.tab === "business-rules" ? html`<appblocks-business-rules></appblocks-business-rules>` : this.companionView}
+            ${this.loading ? html`<p role="status">Loading AppBlocks…</p>` : this.tab === "forms" ? this.renderForms() : this.tab === "connections" ? this.renderConnections() : this.tab === "setup" ? this.renderSetup() : this.tab === "definitions" ? this.renderDefinitions() : this.tab === "anti-spam" ? this.renderAntiSpam() : this.tab === "help" ? this.renderHelp() : this.tab === "business-rules" ? html`<appblocks-business-rules></appblocks-business-rules>` : this.companionView}
         </umb-body-layout>`;
     }
 }

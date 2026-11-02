@@ -48,6 +48,7 @@ public static class AppBlocksExtensions
         // Also resolvable on its own, so a site's import tool can install the definitions before it imports what uses them.
         services.AddTransient<Setup.SchemaInstaller>();
         builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, Setup.SchemaInstaller>();
+        builder.PackageMigrationPlans().Add<Setup.AppBlocksMigrationPlan>();
         services.TryAddScoped<ApplicationAccessPolicy>();
         services.AddControllersWithViews().AddApplicationPart(typeof(AppBlocksExtensions).Assembly);
         services.AddScoped<AppBlockContent>();

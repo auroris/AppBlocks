@@ -1,6 +1,34 @@
 {
+  "id": "AppBlocks.InteractiveReports",
   "name": "AppBlocks Interactive Reports",
+  "version": "0.1.0-alpha.1",
   "extensions": [
+    {
+      "type": "condition", "alias": "AppBlocks.InteractiveReports.Administrator", "name": "Interactive Reports administrator access",
+      "api": "/App_Plugins/AppBlocks.InteractiveReports/administrator-condition.js"
+    },
+    {
+      "type": "menu", "alias": "AppBlocks.InteractiveReports.Menu", "name": "Interactive Reports menu"
+    },
+    {
+      "type": "sectionSidebarApp", "kind": "menu", "alias": "AppBlocks.InteractiveReports.Sidebar", "name": "Interactive Reports sidebar",
+      "weight": 130,
+      "meta": { "label": "Interactive Reports", "menu": "AppBlocks.InteractiveReports.Menu" },
+      "conditions": [
+        { "alias": "Umb.Condition.SectionAlias", "match": "Umb.Section.Settings" },
+        { "alias": "AppBlocks.InteractiveReports.Administrator" }
+      ]
+    },
+    {
+      "type": "menuItem", "alias": "AppBlocks.InteractiveReports.Administration", "name": "Interactive Reports Administration menu item",
+      "meta": { "label": "Administration", "icon": "icon-table", "entityType": "appblocks-report-administration", "menus": ["AppBlocks.InteractiveReports.Menu"] },
+      "conditions": [{ "alias": "AppBlocks.InteractiveReports.Administrator" }]
+    },
+    {
+      "type": "workspace", "kind": "default", "alias": "AppBlocks.InteractiveReports.Workspace", "name": "Interactive Reports Administration workspace",
+      "element": "/App_Plugins/AppBlocks.InteractiveReports/administration.js",
+      "meta": { "entityType": "appblocks-report-administration", "headline": "Interactive Reports Administration" }
+    },
     {
       "type": "propertyEditorUi",
       "alias": "AppBlocks.ReportSource",

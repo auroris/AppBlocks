@@ -5,6 +5,8 @@ using Umbraco.Cms.Core.Services;
 using AppBlocks.Authentication;
 using AppBlocks.Blocks;
 using AppBlocks.InteractiveReports.DataSources;
+using AppBlocks.InteractiveReports.Setup;
+using Umbraco.Cms.Core;
 
 namespace AppBlocks.InteractiveReports.Reports;
 
@@ -31,7 +33,9 @@ public sealed class DefaultReportAccessPolicy(IUserService users, IOptions<AppBl
         var user = Guid.TryParse(id, out var key) ? await users.GetAsync(key)
             : int.TryParse(id, out var legacy) ? users.GetUserById(legacy) : null;
         return user is { IsApproved: true, IsLockedOut: false }
-            && user.Groups.Any(group => settings.Value.ReportAdministratorGroups.Contains(group.Alias, StringComparer.OrdinalIgnoreCase));
+            && user.Groups.Any(group => group.Alias.Equals(Constants.Security.AdminGroupAlias, StringComparison.OrdinalIgnoreCase)
+                || group.Alias.Equals(ReportAdministratorGroup.Alias, StringComparison.OrdinalIgnoreCase)
+                || settings.Value.ReportAdministratorGroups.Contains(group.Alias, StringComparer.OrdinalIgnoreCase));
     }
 
     public async ValueTask<bool> AuthorizeAsync(InteractiveReportAuthorizationRequest request, CancellationToken cancellationToken)

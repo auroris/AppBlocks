@@ -37,6 +37,7 @@ using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Cms.Core.PropertyEditors;
 using Umbraco.Cms.Core.Serialization;
 using Umbraco.Cms.Core.Services;
+using Umbraco.Cms.Core.Security;
 using Umbraco.Cms.Core.Strings;
 using Umbraco.Cms.Core.Sync;
 using Umbraco.Cms.Core.Web;
@@ -95,7 +96,6 @@ internal sealed class PublicSite : IAsyncDisposable
             ["ConnectionStrings:umbracoDbDSN"] = $"Data Source={Path.Combine(root, "umbraco.db")};Pooling=False",
             ["ConnectionStrings:umbracoDbDSN_ProviderName"] = "Microsoft.Data.Sqlite",
             ["AppBlocks:DataRoot"] = root,
-            ["AppBlocks:ReportAdministratorGroups:0"] = "admin",
             ["Umbraco:CMS:Global:Id"] = Guid.NewGuid().ToString(), ["Umbraco:CMS:Global:UseHttps"] = "false",
             ["Umbraco:CMS:ModelsBuilder:ModelsMode"] = "Nothing",
             ["Umbraco:CMS:TypeFinder:AdditionalAssemblyExclusionEntries:0"] = "xunit.",
@@ -359,11 +359,11 @@ internal sealed class PublicSite : IAsyncDisposable
         await work(scope.ServiceProvider);
     }
 
-    public async Task<HttpClient> Administrator()
+    public async Task<HttpClient> Administrator(string email = AdminEmail)
     {
         var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = Address };
         const string security = "/umbraco/management/api/v1/security/back-office";
-        using var login = await client.PostAsJsonAsync(security + "/login", new { username = AdminEmail, password });
+        using var login = await client.PostAsJsonAsync(security + "/login", new { username = email, password });
         Assert.True(login.IsSuccessStatusCode, "Test sign-in failed: " + login.StatusCode);
         var verifier = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
         var redirect = new Uri(Address, "/umbraco/oauth_complete").ToString();
@@ -381,6 +381,13 @@ internal sealed class PublicSite : IAsyncDisposable
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", response.RootElement.GetProperty("access_token").GetString());
         return client;
     }
+
+    public async Task SetUserPassword(Guid key) => await WithServices(async services => {
+        var manager = services.GetRequiredService<IBackOfficeUserManager>();
+        var identity = (await manager.FindByIdAsync(key.ToString()))!;
+        Assert.True((await manager.ChangePasswordWithResetAsync(identity.Id,
+            await manager.GeneratePasswordResetTokenAsync(identity), password)).Succeeded);
+    });
 }
 
 /// <summary>What the contact class received, so a test can see it reached the class and what with.</summary>

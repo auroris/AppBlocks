@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Security.Claims;
 using AppBlocks.InteractiveReports.Reports;
+using AppBlocks.InteractiveReports.Setup;
 using InteractiveReport.AspNetCore;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Options;
@@ -12,10 +13,14 @@ namespace AppBlocks.InteractiveReports.Tests;
 
 public sealed class ReportAccessPolicyTests
 {
-    [Fact]
-    public async Task Backoffice_administrator_gets_report_privileges_only_when_the_application_grants_them()
+    [Theory]
+    [InlineData("admin", true)]
+    [InlineData(ReportAdministratorGroup.Alias, true)]
+    [InlineData("INTERACTIVEREPORTSADMINISTRATOR", true)]
+    [InlineData("editor", false)]
+    public async Task Native_administrator_groups_are_always_allowed_and_configured_groups_are_additional(string alias, bool builtIn)
     {
-        var group = Stub<IReadOnlyUserGroup>((method, _) => method.Name == "get_Alias" ? "admin" : throw new NotImplementedException());
+        var group = Stub<IReadOnlyUserGroup>((method, _) => method.Name == "get_Alias" ? alias : throw new NotImplementedException());
         var user = Stub<IUser>((method, _) => method.Name switch {
             "get_IsApproved" => true, "get_IsLockedOut" => false, "get_Groups" => new[] { group },
             _ => throw new NotImplementedException(method.Name),
@@ -25,8 +30,8 @@ public sealed class ReportAccessPolicyTests
         var policy = new DefaultReportAccessPolicy(users, Options.Create(options), null!);
         var id = Guid.NewGuid().ToString();
         var backOfficeUser = new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, id)], Constants.Security.BackOfficeAuthenticationType));
-        Assert.False(await policy.IsAdministratorAsync(backOfficeUser));
-        options.ReportAdministratorGroups = ["admin"];
+        Assert.Equal(builtIn, await policy.IsAdministratorAsync(backOfficeUser));
+        options.ReportAdministratorGroups = [alias];
         Assert.True(await policy.IsAdministratorAsync(backOfficeUser));
         var member = new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, id), new(ClaimTypes.Role, "admin")], IdentityConstants.ApplicationScheme));
         Assert.False(await policy.IsAdministratorAsync(member));
@@ -34,7 +39,22 @@ public sealed class ReportAccessPolicyTests
             .Concat(backOfficeUser.Identities));
         Assert.True(await policy.IsAdministratorAsync(combined));
         options.ReportAdministratorGroups = [];
-        Assert.False(await policy.IsAdministratorAsync(backOfficeUser));
+        Assert.Equal(builtIn, await policy.IsAdministratorAsync(backOfficeUser));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task Disabled_or_locked_out_accounts_do_not_get_report_administration(bool approved, bool lockedOut)
+    {
+        var user = Stub<IUser>((method, _) => method.Name switch {
+            "get_IsApproved" => approved, "get_IsLockedOut" => lockedOut,
+            _ => throw new NotImplementedException(method.Name),
+        });
+        var users = Stub<IUserService>((method, _) => Task.FromResult<IUser?>(user));
+        var policy = new DefaultReportAccessPolicy(users, Options.Create(new AppBlocksOptions()), null!);
+        var principal = new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString())], Constants.Security.BackOfficeAuthenticationType));
+        Assert.False(await policy.IsAdministratorAsync(principal));
     }
 
     [Theory]

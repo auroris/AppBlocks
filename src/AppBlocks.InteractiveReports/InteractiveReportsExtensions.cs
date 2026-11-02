@@ -44,6 +44,8 @@ public static class InteractiveReportsExtensions
         services.TryAddScoped<IReportAccessPolicy, DefaultReportAccessPolicy>();
         services.AddControllersWithViews().AddApplicationPart(typeof(InteractiveReportsExtensions).Assembly);
         services.AddSingleton(new AppBlocksSchema(typeof(InteractiveReportsExtensions).Assembly));
+        builder.PackageMigrationPlans().Add<Setup.InteractiveReportsMigrationPlan>();
+        builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, Setup.ReportAdministratorGroup>();
         services.AddScoped<IAppBlockPlugin, InteractiveReportBlock>();
         services.AddScoped<IAppBlocksCatalogueContributor, ReportCatalogueContributor>();
         services.AddSingleton<ReportPrintPreviews>();

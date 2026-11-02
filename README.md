@@ -19,7 +19,7 @@
 
 AppBlocks gives Umbraco editors blocks that work with real application data. The site keeps its page types, templates, layout and sign-in. AppBlocks adds no page type or template of its own.
 
-- **Sets itself up.** Install the package and start the site. Its definitions install through Umbraco's own services, with no import step or configuration.
+- **Sets itself up.** Install the package and start the site. Its definitions install through Umbraco's own services, with no import step or configuration, and a new version updates them through Umbraco's package migrations. **Settings → AppBlocks → Definitions** can reset them to the package or remove them.
 - **Forms backed by your C#.** Add a Forms container to a page and bind it to a registered class. Your class owns persistence, validation and business rules, and the field pickers follow its fields. Attachments, editable tables and schedules are included.
 - **Anti-spam without code.** Place a block in a public form to protect it with Turnstile, reCAPTCHA, hCaptcha or a honeypot, checked on the server before your class runs.
 - **Interactive reports.** The optional **AppBlocks.InteractiveReports** package adds a block powered by [Interactive Reports](https://github.com/auroris/Interactive-Reports). Pick a table or write a SELECT, and readers can search, filter, sort, chart, save and download.

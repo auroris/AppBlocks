@@ -63,6 +63,10 @@ public sealed class AppReportDefinitionStore(
     {
         var definition = await FindDefinition(name, ct);
         if (definition is null) return null;
+        // The administration listing queries the saved-view table directly, before any ordinary report
+        // has needed the store. Give an empty site's store the same opportunity to initialize it.
+        if (name.Equals("__saved-reports", StringComparison.OrdinalIgnoreCase) && savedViews is not null)
+            await savedViews.ReadyAsync(ct);
         if (CallerIsAnonymous && AppBlockContent.ParseReportName(name, out _, out _)
             || savedViews is not null && !name.StartsWith("__", StringComparison.Ordinal) && !await savedViews.ReadyAsync(ct))
             definition.Features = ReportFeatures.Resolve(definition).Where(feature => feature != ReportFeatures.SavedReports).ToList();
