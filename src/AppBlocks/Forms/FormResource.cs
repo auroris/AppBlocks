@@ -106,30 +106,42 @@ public interface IFormResourceProvider
 /// <summary>
 /// Resources available to record owners and tabular forms, by alias. C# resources come first and keep their alias when a provider
 /// offers the same one: code is the authority, and publishing a data source with a taken alias is refused.
+/// Classes compiled into the site come before classes compiled from the C# folder (<see cref="Code.CompiledTypes"/>), which keep only an alias still free.
 /// Provider resources are read on first use, so a request that only needs a C# resource never reads content.
 /// </summary>
-public sealed class FormResourceRegistry(IEnumerable<IFormResource> resources, IEnumerable<IFormResourceProvider> providers)
+public sealed class FormResourceRegistry(IEnumerable<IFormResource> resources, IEnumerable<IFormResourceProvider> providers, Code.CompiledTypes? compiled = null)
 {
-    private readonly Dictionary<string, IFormResource> code = resources.ToDictionary(r => r.Alias, StringComparer.Ordinal);
+    private Dictionary<string, IFormResource>? indexed;
+    // Compiled classes are made on first use, not in the constructor, so one that takes this registry is given this instance.
+    private Dictionary<string, IFormResource> Indexed => indexed ??= Index(resources, compiled);
+
+    private static Dictionary<string, IFormResource> Index(IEnumerable<IFormResource> resources, Code.CompiledTypes? compiled)
+    {
+        var index = resources.ToDictionary(r => r.Alias, StringComparer.Ordinal);
+        foreach (var resource in compiled?.Create<IFormResource>() ?? [])
+            if (!string.IsNullOrWhiteSpace(resource.Alias)) index.TryAdd(resource.Alias, resource);
+        return index;
+    }
+
     private IReadOnlyDictionary<string, IFormResource>? all;
 
     private Task? loading;
     public Task LoadAsync() => loading ??= LoadCoreAsync();
     public IReadOnlyDictionary<string, IFormResource> Resources => all ?? (providers.Any()
-        ? throw new InvalidOperationException("Call LoadAsync before reading provider resources.") : code);
-    public IReadOnlyDictionary<string, IFormResource> RegisteredResources => code;
-    public IFormResource? Find(string alias) => code.GetValueOrDefault(alias) ?? Resources.GetValueOrDefault(alias);
+        ? throw new InvalidOperationException("Call LoadAsync before reading provider resources.") : Indexed);
+    public IReadOnlyDictionary<string, IFormResource> RegisteredResources => Indexed;
+    public IFormResource? Find(string alias) => Indexed.GetValueOrDefault(alias) ?? Resources.GetValueOrDefault(alias);
 
     public async Task<IFormResource?> FindAsync(string alias)
     {
-        if (code.TryGetValue(alias, out var resource)) return resource;
+        if (Indexed.TryGetValue(alias, out var resource)) return resource;
         await LoadAsync();
         return Resources.GetValueOrDefault(alias);
     }
 
     private async Task LoadCoreAsync()
     {
-        var merged = new Dictionary<string, IFormResource>(code, StringComparer.Ordinal);
+        var merged = new Dictionary<string, IFormResource>(Indexed, StringComparer.Ordinal);
         foreach (var provider in providers)
             foreach (var resource in await provider.GetResourcesAsync()) merged.TryAdd(resource.Alias, resource);
         all = merged;

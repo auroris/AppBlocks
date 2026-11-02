@@ -39,6 +39,9 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     /// <summary>Why the data source cannot run, such as an unreachable database, a column that is gone or a missing backing class; null when it can.</summary>
     public string? Problem => HandlerProblem ?? Entry.Problem;
 
+    /// <summary>Each field with the column behind it and its kind, as a backing class sees them; empty while the plan is unavailable.</summary>
+    internal IReadOnlyList<Samples.CodeRecipeField> FieldColumns => Entry.Plan?.Columns.Select(c => new Samples.CodeRecipeField(c.Field, c.Column, c.Kind)).ToArray() ?? [];
+
     /// <summary>What the back-office catalogue shows: the columns behind the fields and what the data source allows.</summary>
     public object Describe() => new {
         key = definition.Key, name = definition.Name, connection = definition.Connection, source = definition.Source,

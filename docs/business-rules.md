@@ -1,6 +1,6 @@
 # Business rules for AppBlocks forms
 
-Generated form samples contain the fields and example database reads and writes for one form. These recipes cover behaviour shared by many forms. They are examples to adapt in your application; AppBlocks does not execute code from the backoffice.
+Generated form samples contain the fields and example database reads and writes for one form. These recipes cover behaviour shared by many forms. They are examples to adapt in your application; AppBlocks never executes a sample or a recipe. On a development site with `Umbraco.Cms.DevelopmentMode.Backoffice`, [the C# section](csharp-editor.md) compiles the classes saved in it, and its wizard writes a form class or backing class for a table with these checks in place.
 
 The generated repository uses SQLite and a separate `SampleForm` table to keep the example easy to run. It does not assume your production database is SQLite. Dates and times in the example use ISO strings. Replace the example table and migrations when integrating it with your application's storage.
 

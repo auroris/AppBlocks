@@ -84,7 +84,7 @@ internal sealed class MemberGroupNames(IReadOnlyList<IMemberGroup> all)
 /// other published data sources, and the backing class it names must be registered.
 /// </summary>
 public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMemberGroupService groups, DataSourceCatalog catalog,
-    IEnumerable<IFormResource> code, DataSourceHandlers? handlers = null) : INotificationAsyncHandler<ContentPublishingNotification>
+    IEnumerable<IFormResource> code, DataSourceHandlers? handlers = null, Code.CompiledTypes? compiled = null) : INotificationAsyncHandler<ContentPublishingNotification>
 {
     public async Task HandleAsync(ContentPublishingNotification notification, CancellationToken cancellationToken)
     {
@@ -104,7 +104,7 @@ public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMembe
         var definition = DataSourceDefinition.Read(key, name, value, names.Resolve, errors);
         await catalog.LoadAsync();
         if (definition is null) return errors;
-        if (code.Any(resource => resource.Alias == definition.Alias))
+        if (code.Concat(compiled?.Create<IFormResource>() ?? []).Any(resource => resource.Alias == definition.Alias))
             errors.Add($"The alias {definition.Alias} belongs to a form resource registered in code; choose another.");
         if (catalog.DataSources.FirstOrDefault(source => source.Alias == definition.Alias && source.Definition.Key != key) is { } other)
             errors.Add($"The alias {definition.Alias} is already used by the data source {other.Definition.Name}.");

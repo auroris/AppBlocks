@@ -49,6 +49,66 @@
       }
     },
     {
+      "type": "condition",
+      "alias": "AppBlocks.CodeEditor",
+      "name": "AppBlocks C# editor access",
+      "api": "/App_Plugins/AppBlocks/code-condition.js"
+    },
+    {
+      "type": "menu",
+      "alias": "AppBlocks.Code.Menu",
+      "name": "AppBlocks C# menu"
+    },
+    {
+      "type": "sectionSidebarApp",
+      "kind": "menu",
+      "alias": "AppBlocks.Code.Sidebar",
+      "name": "AppBlocks C# sidebar",
+      "weight": 120,
+      "meta": {
+        "label": "C#",
+        "menu": "AppBlocks.Code.Menu"
+      },
+      "conditions": [
+        {
+          "alias": "Umb.Condition.SectionAlias",
+          "match": "Umb.Section.Settings"
+        },
+        {
+          "alias": "AppBlocks.CodeEditor"
+        }
+      ]
+    },
+    {
+      "type": "menuItem",
+      "alias": "AppBlocks.Code.MenuItem",
+      "name": "AppBlocks C# menu item",
+      "meta": {
+        "label": "C# folder",
+        "icon": "icon-code",
+        "entityType": "appblocks-code",
+        "menus": [
+          "AppBlocks.Code.Menu"
+        ]
+      },
+      "conditions": [
+        {
+          "alias": "AppBlocks.CodeEditor"
+        }
+      ]
+    },
+    {
+      "type": "workspace",
+      "kind": "default",
+      "alias": "AppBlocks.Code.Workspace",
+      "name": "AppBlocks C# workspace",
+      "element": "/App_Plugins/AppBlocks/code.js",
+      "meta": {
+        "entityType": "appblocks-code",
+        "headline": "C#"
+      }
+    },
+    {
       "type": "propertyEditorUi",
       "alias": "AppBlocks.ConnectionPicker",
       "name": "AppBlocks connection",

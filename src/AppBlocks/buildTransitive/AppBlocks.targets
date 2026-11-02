@@ -1,0 +1,10 @@
+<Project>
+  <!-- The C# folder AppBlocks compiles at run time when the site has a compiler (docs/csharp-editor.md). Its files never compile into the
+       site project as well, so a class there is only ever one type. Keep AppBlocksCodeDirectory equal to the AppBlocks:CodeDirectory setting. -->
+  <PropertyGroup>
+    <AppBlocksCodeDirectory Condition="'$(AppBlocksCodeDirectory)' == ''">AppBlocks/Code</AppBlocksCodeDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="$(AppBlocksCodeDirectory)/**" />
+  </ItemGroup>
+</Project>

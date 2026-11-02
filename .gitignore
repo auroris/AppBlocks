@@ -13,3 +13,4 @@ artifacts-*.log
 **/appsettings.*.local.json
 *.log
 /.claude
+samples/AppBlocks.Demo/AppBlocks/Code/

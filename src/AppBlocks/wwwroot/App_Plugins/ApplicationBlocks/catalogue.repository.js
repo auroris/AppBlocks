@@ -4,6 +4,8 @@ import { managementRequest } from "../AppBlocks/api.js";
 // Share concurrent picker loads without retaining a signed-out user's catalogue. Expiry lets editors see newly published sources.
 const catalogues = new WeakMap();
 const observedSessions = new WeakSet();
+/** Drops the shared catalogue, so the next picker sees the classes the C# section has just compiled. */
+export function forgetCatalogue(auth) { if (auth) catalogues.delete(auth); }
 export class AppBlocksCatalogueRepository extends UmbRepositoryBase {
     requestCatalogue(auth) {
         if (auth.isAuthorized && !observedSessions.has(auth)) {

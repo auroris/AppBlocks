@@ -17,19 +17,24 @@ public interface IBindVariableProvider
     ValueTask<IReadOnlyDictionary<string, object?>?> ResolveAsync(FormExecutionContext context, CancellationToken ct);
 }
 
-/// <summary>Asks every registered provider once per operation and merges their answers; nothing is asked when no provider is registered.</summary>
-public sealed class BindVariableProviders(IEnumerable<IBindVariableProvider>? providers = null)
+/// <summary>
+/// Asks every registered provider once per operation and merges their answers; nothing is asked when no provider is registered. Providers
+/// compiled from the C# folder are asked first, so a registered provider wins a name they share.
+/// </summary>
+public sealed class BindVariableProviders(IEnumerable<IBindVariableProvider>? providers = null, Code.CompiledTypes? compiled = null)
 {
-    private readonly IBindVariableProvider[] providers = providers?.ToArray() ?? [];
+    private IBindVariableProvider[]? all;
+    // Compiled providers are made on first use, not in the constructor, so one that takes this class is given this instance.
+    private IBindVariableProvider[] Providers => all ??= [.. compiled?.Create<IBindVariableProvider>() ?? [], .. providers ?? []];
     public static readonly IReadOnlyDictionary<string, object?> None = new Dictionary<string, object?>();
 
-    public bool Any => providers.Length > 0;
+    public bool Any => Providers.Length > 0;
 
     public async ValueTask<IReadOnlyDictionary<string, object?>> ResolveAsync(FormExecutionContext context, CancellationToken ct)
     {
-        if (providers.Length == 0) return None;
+        if (Providers.Length == 0) return None;
         var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var provider in providers)
+        foreach (var provider in Providers)
             foreach (var (name, value) in await provider.ResolveAsync(context, ct) ?? None)
                 if (SqlTemplate.IsIdentifier(name)) values[name] = value;
         return values;

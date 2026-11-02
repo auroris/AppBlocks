@@ -272,13 +272,26 @@ public sealed class DataSourceSql : IAsyncDisposable
     }
 }
 
-/// <summary>The backing classes registered in code, by alias, which a data source names in its <c>handler</c> property.</summary>
-public sealed class DataSourceHandlers(IEnumerable<IDataSourceHandler>? handlers = null)
+/// <summary>
+/// The backing classes registered in code, by alias, which a data source names in its <c>handler</c> property. Classes compiled from the C#
+/// folder follow, each made for the request from the generation serving, and keep only a valid alias still free: the site's own classes win.
+/// </summary>
+public sealed class DataSourceHandlers(IEnumerable<IDataSourceHandler>? handlers = null, Code.CompiledTypes? compiled = null)
 {
-    private readonly Dictionary<string, IDataSourceHandler> all = Index(handlers ?? []);
+    private readonly Dictionary<string, IDataSourceHandler> site = Index(handlers ?? []);
+    private Dictionary<string, IDataSourceHandler>? all;
 
-    public IReadOnlyDictionary<string, IDataSourceHandler> All => all;
-    public IDataSourceHandler? Find(string alias) => all.GetValueOrDefault(alias);
+    // Compiled classes are made on first use, not in the constructor, so one that takes this registry is given this instance.
+    public IReadOnlyDictionary<string, IDataSourceHandler> All => all ??= WithCompiled(site, compiled);
+    public IDataSourceHandler? Find(string alias) => All.GetValueOrDefault(alias);
+
+    private static Dictionary<string, IDataSourceHandler> WithCompiled(Dictionary<string, IDataSourceHandler> site, Code.CompiledTypes? compiled)
+    {
+        var index = new Dictionary<string, IDataSourceHandler>(site, StringComparer.Ordinal);
+        foreach (var handler in compiled?.Create<IDataSourceHandler>() ?? [])
+            if (DataSourceDefinition.IsAlias(handler.Alias)) index.TryAdd(handler.Alias, handler);
+        return index;
+    }
 
     private static Dictionary<string, IDataSourceHandler> Index(IEnumerable<IDataSourceHandler> handlers)
     {

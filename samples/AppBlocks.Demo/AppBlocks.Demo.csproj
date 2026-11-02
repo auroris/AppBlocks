@@ -3,6 +3,9 @@
   <ItemGroup>
     <Content Update="appsettings.*.local.json" CopyToPublishDirectory="Never" />
     <PackageReference Include="Umbraco.Cms" Version="$(AppBlocksUmbracoVersion)" />
+    <!-- Brings the C# compiler, which turns on the AppBlocks C# section's editing; remove it to see the section read-only. -->
+    <PackageReference Include="Umbraco.Cms.DevelopmentMode.Backoffice" Version="$(AppBlocksUmbracoVersion)" />
     <ProjectReference Include="../../src/AppBlocks.InteractiveReports/AppBlocks.InteractiveReports.csproj" />
   </ItemGroup>
+  <Import Project="../../src/AppBlocks/buildTransitive/AppBlocks.targets" />
 </Project>
