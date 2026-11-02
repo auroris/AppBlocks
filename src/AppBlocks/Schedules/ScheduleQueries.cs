@@ -52,11 +52,16 @@ public sealed record ScheduleData(DataSourceQueryResult? Rows, DataSourceQueryRe
 }
 
 /// <summary>
-/// Reads a schedule's rows and bars for the signed-in person, through <see cref="DataSourceQueries"/> like a list of
+/// Reads a schedule's rows and bars for the current visitor, through <see cref="DataSourceQueries"/> like a list of
 /// values or a paper report. A source that cannot be read becomes a message, never a failed page.
 /// </summary>
 public sealed class ScheduleQueries(ScheduleSources sources, DataSourceQueries queries, ILogger<ScheduleQueries> logger)
 {
+    /// <summary>Both sources must allow anonymous reads; policies are still checked when they are queried.</summary>
+    public bool AllowsAnonymousRead(ScheduleSettings settings) => sources.Resolve(settings.RowsSource) is { } rows
+        && sources.Resolve(settings.BarsSource) is { } bars
+        && queries.AllowsAnonymousRead(rows.Definition) && queries.AllowsAnonymousRead(bars.Definition);
+
     /// <summary>Rows beyond this are a problem the editor must narrow, not a slower page.</summary>
     public const int MaxRows = 2000;
     public const int MaxBars = 5000;

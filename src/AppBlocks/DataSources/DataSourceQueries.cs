@@ -10,6 +10,10 @@ public sealed record DataSourceQueryResult(IReadOnlyList<DataSourceQueryColumn> 
 /// <summary>The shared read path for lists and paper reports. All callers keep the source's own access rules.</summary>
 public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUserResolver users, IEnumerable<IDataSourcePolicy> policies, BindVariableProviders? providers = null)
 {
+    /// <summary>Whether this definition supports anonymous reads, before page access and custom policies are checked.</summary>
+    public bool AllowsAnonymousRead(DataSourceDefinition definition) => CanRead(definition, DataSourceUser.Anonymous)
+        && runtime.Plan(definition).Plan is { BindsUser: false };
+
     public async Task<DataSourceQueryResult> QueryAsync(DataSourceDefinition definition, FormExecutionContext context,
         int maximumRows = 1000, CancellationToken ct = default)
     {
@@ -44,8 +48,9 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
 
     internal async Task<DataSourceUser> AuthorizeAsync(DataSourceDefinition definition, FormExecutionContext context, DbConnection? connection, CancellationToken ct)
     {
-        var user = await users.ResolveAsync(context, ct);
-        if (user is null || !CanRead(definition, user)) throw new UnauthorizedAccessException();
+        var user = await ResolveReaderAsync(users, context, ct);
+        if (user is null || !CanRead(definition, user)
+            || user.IsAnonymous && !AllowsAnonymousRead(definition)) throw new UnauthorizedAccessException();
         foreach (var policy in policies)
             if (!await policy.IsAllowedAsync(new DataSourceRequest(definition.Alias, DataSourceAction.Query, user, context, null, null, null, connection), ct))
                 throw new UnauthorizedAccessException();
@@ -53,20 +58,24 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
     }
 
     /// <summary>
-    /// The check a public report block's request makes for a visitor with no account. Read groups can name no one here, and
-    /// every policy is still asked, with <see cref="DataSourceUser.Anonymous"/>. A source that binds anything about the
-    /// caller cannot be read at all: <c>:USER_KEY</c> has no value to give it, and SQL such as <c>:USER_NAME IS NULL</c> would otherwise read as everyone's rows.
+    /// Resolve the account, or an anonymous visitor. An authenticated identity that failed resolution must not become
+    /// anonymous: it may represent a disabled account. Page endpoints also enforce Umbraco Public Access.
     /// </summary>
-    internal async Task AuthorizeAnonymousAsync(DataSourceDefinition definition, FormExecutionContext context, CancellationToken ct)
+    internal static async Task<DataSourceUser?> ResolveReaderAsync(IDataSourceUserResolver users, FormExecutionContext context, CancellationToken ct)
     {
-        if (definition.ReadGroups.Count > 0 || runtime.Plan(definition).Plan is not { BindsUser: false }) throw new UnauthorizedAccessException();
-        foreach (var policy in policies)
-            if (!await policy.IsAllowedAsync(new DataSourceRequest(definition.Alias, DataSourceAction.Query, DataSourceUser.Anonymous, context, null, null, null, null), ct))
-                throw new UnauthorizedAccessException();
+        var user = await users.ResolveAsync(context, ct);
+        if (user is not null && !user.IsAnonymous) return user;
+        return context.Member.Identities.Any(identity => identity.IsAuthenticated) ? null : DataSourceUser.Anonymous;
     }
 
-    public static bool CanRead(DataSourceDefinition definition, DataSourceUser user) => definition.ReadGroups.Count == 0
-        || definition.ReadGroups.Concat(definition.WriteGroups).Any(user.IsInMemberGroup);
+    /// <summary>The source's access setting. Callers must also enforce page access, identity binds and policies.</summary>
+    public static bool CanRead(DataSourceDefinition definition, DataSourceUser user) => definition.EffectiveAccess switch {
+        DataSourceAccess.Public => true,
+        DataSourceAccess.NotPublic => !user.IsAnonymous,
+        DataSourceAccess.SpecificGroups => !user.IsAnonymous && definition.ReadGroups.Count > 0
+            && definition.ReadGroups.Concat(definition.WriteGroups).Any(user.IsInMemberGroup),
+        _ => false,
+    };
 
     internal static object? Bind(BindVariable variable, DataSourceUser user, IReadOnlyDictionary<string, string>? parameters, DateTime now, SqlDialect dialect, IReadOnlyDictionary<string, object?>? app = null)
         => variable.Kind switch {

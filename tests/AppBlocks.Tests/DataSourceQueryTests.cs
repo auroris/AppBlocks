@@ -58,6 +58,29 @@ public sealed class DataSourceQueryTests : IDisposable
     }
 
     [Fact]
+    public async Task Public_queries_share_access_rules_restrictions_and_anonymous_policy_context()
+    {
+        var source = Definition with { Access = DataSourceAccess.Public, RowRestriction = "ID <> 2" };
+        var context = Context with { Member = new ClaimsPrincipal(new ClaimsIdentity()) };
+        var queries = new DataSourceQueries(runtime, new Users(null), []);
+        Assert.True(queries.AllowsAnonymousRead(source));
+        Assert.Equal(2, (await queries.QueryAsync(source, context)).Rows.Count);
+        Assert.Equal(2, (await queries.QueryAsync(source with { Access = null, ReadGroups = [] }, context)).Rows.Count);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(source with { Access = null }, context));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(source with { Access = DataSourceAccess.NotPublic }, context));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(source with { Access = DataSourceAccess.SpecificGroups }, context));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(source with { RowRestriction = ":USER_NAME IS NULL" }, context));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(source with { Source = "SELECT * FROM CHOICES WHERE :USER_KEY IS NULL" }, context));
+        // A principal that asserted an account but could not resolve it cannot fall back to public access.
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(source, Context));
+        var policy = new DenyQuery();
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => new DataSourceQueries(runtime, new Users(null), [policy]).QueryAsync(source, context));
+        Assert.Equal(DataSourceAction.Query, policy.Seen);
+        Assert.True(policy.User!.IsAnonymous);
+        Assert.Equal((ConnectionState.Open, false), policy.Connection);
+    }
+
+    [Fact]
     public async Task Query_parameters_are_bound_and_oversized_lists_do_not_silently_truncate()
     {
         var queries = new DataSourceQueries(runtime, new Users(User), []);
@@ -102,11 +125,13 @@ public sealed class DataSourceQueryTests : IDisposable
     }
     private sealed class DenyQuery : IDataSourcePolicy
     {
+        public DataSourceUser? User { get; private set; }
         public DataSourceAction? Seen { get; private set; }
         public (ConnectionState? State, bool Transaction) Connection { get; private set; }
         public ValueTask<bool> IsAllowedAsync(DataSourceRequest request, CancellationToken ct)
         {
             Seen = request.Action;
+            User = request.User;
             Connection = (request.Connection?.State, request.Transaction is not null);
             return ValueTask.FromResult(false);
         }

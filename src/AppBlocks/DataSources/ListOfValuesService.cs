@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AppBlocks.Forms;
+using AppBlocks.Blocks;
 
 namespace AppBlocks.DataSources;
 
@@ -20,7 +21,7 @@ public sealed class ListOfValuesService(PublishedDataCatalog catalog, DataSource
     {
         var errors = new Dictionary<string, string[]>();
         if (input.ValueKind != JsonValueKind.Object) return errors;
-        foreach (var block in form.Fields.Where(block => block.Content.ContentType.Alias == "appSelect"))
+        foreach (var block in form.Fields.Where(block => block.Content.ContentType.Alias is "appSelect" or AppBlockSchema.ShuttleAlias))
         {
             var selection = block.Content.Value<string>("listOfValues");
             var field = block.Content.Value<string>("field")!;
@@ -29,7 +30,15 @@ public sealed class ListOfValuesService(PublishedDataCatalog catalog, DataSource
             try
             {
                 var choices = await ChoicesAsync(selection, context, ct);
-                if (!choices.Any(choice => choice.Value == value.ToString())) errors[field] = ["Select an available choice."];
+                if (block.Content.ContentType.Alias == AppBlockSchema.ShuttleAlias)
+                {
+                    // Retired items already on this record may be reordered or removed, but cannot be added to another record.
+                    ShuttleValue.TryParse(stored?.GetValueOrDefault(field)?.ToString(), out var previousItems);
+                    if (value.ValueKind != JsonValueKind.String || !ShuttleValue.TryParse(value.GetString(), out var selected)
+                        || selected.Any(item => !choices.Any(choice => choice.Value == item) && !previousItems.Contains(item, StringComparer.Ordinal)))
+                        errors[field] = ["Select available choices."];
+                }
+                else if (!choices.Any(choice => choice.Value == value.ToString())) errors[field] = ["Select an available choice."];
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {

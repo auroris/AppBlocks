@@ -51,7 +51,7 @@ public sealed partial class SqlDataSource
     private async Task<DataSourceRowsResult> ListRowsAsync(DataSourceScope scope, FormExecutionContext context, int maximumRows, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
     {
         if (Entry.Plan is not { } plan) return DataSourceRowsResult.From(Unavailable());
-        if (await users.ResolveAsync(context, ct) is not { } user || !CanRead(user)) return new(403);
+        if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !CanRead(user)) return new(403);
         if (Link(plan, scope, out var link, out var value) is { } problem) return DataSourceRowsResult.From(problem);
         var binder = new Binder(plan, user, context, runtime.Now(), null, app);
         return await RunAsync(plan, write: false, async (connection, _) => {

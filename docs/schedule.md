@@ -1,6 +1,6 @@
 # The Schedule block
 
-A Schedule block draws resources against time: the rows of one data source down the side, the bars of another across a window of days or hours. It is a Gantt chart whose content comes entirely from two queries, so the block itself has few settings. Anything that varies per row or per bar is a column of a source, colours come from the site's theme or from the data, and a bar's behaviour is a link or a description. The block is in the base package and renders through the data source engine, so it shows a sign-in notice to anyone the engine does not know.
+A Schedule block draws resources against time: the rows of one data source down the side, the bars of another across a window of days or hours. It is a Gantt chart whose content comes entirely from two queries, so the block itself has few settings. Anything that varies per row or per bar is a column of a source, colours come from the site's theme or from the data, and a bar's behaviour is a link or a description. The block is in the base package and renders through the data source engine. Sources default to Public and follow page access; a source that requires an account shows anonymous visitors a sign-in notice.
 
 ## Settings
 
@@ -74,4 +74,4 @@ Every bar renders `data-key` and `data-kind`, and a vertical row's bars carry `a
 
 ## Access
 
-The sources are read through the data source engine for the signed-in person, so a source's read groups, row restriction and policies decide what each reader sees. An anonymous visitor sees a sign-in notice, as the [site integration guide](site-integration.md) describes, even on a page without Public Access. A source whose data cannot be read shows a short message in place of the table and never fails the page.
+The sources are read through the data source engine, so each source's Access setting, read groups, row restriction and policies decide what each reader sees. On a page without Public Access an anonymous visitor can see a schedule when both sources are Public and neither query nor row restriction uses `:USER_*` binds. Otherwise they see a sign-in notice, as the [site integration guide](site-integration.md) describes. A source whose data cannot be read shows a short message in place of the table and never fails the page.

@@ -27,7 +27,7 @@ public sealed class AnonymousAccessSiteTests
     {
         await using var site = await PublicSite.StartAsync();
         await A_contact_form_works_for_a_visitor_with_no_account(site);
-        await A_class_that_refuses_shows_the_notice_and_the_engine_always_refuses(site);
+        await A_class_that_refuses_and_a_private_data_source_show_the_notice(site);
         await Public_access_decides_on_a_protected_page_even_when_only_inherited(site);
         await A_report_block_runs_anonymously_without_saved_views(site);
         await A_report_binding_the_user_fails_closed(site);
@@ -37,6 +37,7 @@ public sealed class AnonymousAccessSiteTests
         await An_account_that_presented_itself_and_failed_is_refused_not_taken_for_anonymous(site);
         await Both_sessions_reach_forms_and_reports_as_distinct_accounts(site);
         await A_report_block_saved_without_a_page_size_uses_the_reports_default(site);
+        await Public_data_sources_deliver_reads_through_forms_tabular_and_schedules(site);
     }
 
     /// <summary>
@@ -165,7 +166,7 @@ public sealed class AnonymousAccessSiteTests
             Assert.Equal(HttpStatusCode.NotFound, update.StatusCode);
     }
 
-    private static async Task A_class_that_refuses_shows_the_notice_and_the_engine_always_refuses(PublicSite site)
+    private static async Task A_class_that_refuses_and_a_private_data_source_show_the_notice(PublicSite site)
     {
         using var visitor = site.Anonymous();
         // The page says so at once, so there is no broken form to see first, even with no script at all.
@@ -403,6 +404,74 @@ public sealed class AnonymousAccessSiteTests
         var adminHtml = await admin.GetStringAsync("/data/");
         Assert.Contains("data-app-tabular", adminHtml);
         Assert.Contains("data-app-schedule", adminHtml);
+    }
+
+    private static async Task Public_data_sources_deliver_reads_through_forms_tabular_and_schedules(PublicSite site)
+    {
+        using var visitor = site.Anonymous();
+        site.Switch.PublicEngine = true;
+        try
+        {
+            var engine = PublicSite.FormUrl(PublicSite.EnginePage, PublicSite.EngineForm);
+            var html = await visitor.GetStringAsync("/engine/?id=1");
+            Assert.Contains("data-app-form", html);
+            Assert.DoesNotContain(Notice, html);
+            var loaded = await Load(visitor, engine + "?id=1");
+            Assert.Contains("First public row", loaded.GetRawText());
+            Assert.False(loaded.GetProperty("record").GetProperty("capabilities").GetProperty("update").GetBoolean());
+            using var write = await Send(visitor, HttpMethod.Post, engine, loaded.GetProperty("antiforgeryToken").GetString(), new {
+                definitionVersion = loaded.GetProperty("definitionVersion").GetString(), values = new { title = "Nope" }, submissionKey = Guid.NewGuid(),
+            });
+            Assert.Equal(HttpStatusCode.Forbidden, write.StatusCode);
+
+            var rowsUrl = $"/api/tabular/{PublicSite.DataPage}/{PublicSite.Rows}";
+            Assert.Contains("data-app-tabular", await visitor.GetStringAsync("/data/"));
+            var rows = await visitor.GetFromJsonAsync<JsonElement>(rowsUrl);
+            Assert.False(rows.GetProperty("canAdd").GetBoolean());
+            Assert.False(rows.GetProperty("canUpdate").GetBoolean());
+            Assert.False(rows.GetProperty("canDelete").GetBoolean());
+            using var batch = await Send(visitor, HttpMethod.Post, rowsUrl, rows.GetProperty("antiforgeryToken").GetString(), new {
+                submissionKey = Guid.NewGuid(), changes = new[] { new { operation = "create", values = new { title = "Nope" } } },
+            });
+            Assert.Equal(HttpStatusCode.Forbidden, batch.StatusCode);
+
+            // Real published definitions: a second request sees a changed access setting without restarting.
+            await site.WithServices(services => {
+                var content = services.GetRequiredService<IContentService>();
+                var types = services.GetRequiredService<IContentTypeService>();
+                Assert.Contains(types.Get("sqlDataSource")!.PropertyTypes, property => property.Alias == "access");
+                var sources = content.GetPagedOfType(types.Get("sqlDataSource")!.Id, 0, 100, out _, null!);
+                foreach (var source in sources.Where(source => source.GetValue<string>("alias")?.StartsWith("public.schedule.") == true)) {
+                    source.SetValue("access", "");
+                    Assert.True(content.Save(source).Success);
+                    Assert.True(content.Publish(source, ["*"]).Success);
+                }
+                return Task.CompletedTask;
+            });
+            var schedule = await visitor.GetStringAsync("/data/");
+            Assert.Contains("data-app-schedule", schedule);
+            Assert.DoesNotContain("Sign in to see the schedule.", schedule);
+
+            site.Switch.DataPolicyRefuses = true;
+            Assert.Equal(HttpStatusCode.Forbidden, (await visitor.GetAsync(engine + "?id=1")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await visitor.GetAsync(rowsUrl)).StatusCode);
+            Assert.Contains("You do not have access to this schedule's data.", WebUtility.HtmlDecode(await visitor.GetStringAsync("/data/")));
+
+            // A Public source still sits behind the calling page's Public Access, including direct API requests.
+            site.Switch.DataPolicyRefuses = false;
+            await site.WithServices(services => {
+                var content = services.GetRequiredService<IContentService>();
+                var page = content.GetById(PublicSite.EnginePage)!;
+                var login = content.GetById(PublicSite.MembersPage)!;
+                services.GetRequiredService<IPublicAccessService>().Save(new PublicAccessEntry(page, login, login, []));
+                return Task.CompletedTask;
+            });
+            Assert.Equal(HttpStatusCode.Forbidden, (await visitor.GetAsync(engine + "?id=1")).StatusCode);
+            Assert.DoesNotContain("data-app-form", await visitor.GetStringAsync("/engine/?id=1"));
+            using var admin = await site.Administrator();
+            Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync(engine + "?id=1")).StatusCode);
+        }
+        finally { site.Switch.PublicEngine = false; site.Switch.DataPolicyRefuses = false; }
     }
 
     private static async Task An_account_that_presented_itself_and_failed_is_refused_not_taken_for_anonymous(PublicSite site)

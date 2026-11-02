@@ -12,8 +12,7 @@
     block waits for the form's record (the app-form:loaded and app-form:saved events) and asks with the record's key;
     on its own it asks at once with the page's address. The controls carry form="" so the enclosing form never submits
     them, and buttons are type="button" for the same reason. The runtime's inputs carry data-column, never data-field,
-    so the enclosing form does not collect them. Its rows only ever come through the data source engine, whose rules
-    assume a known user, so someone not signed in gets the notice even on an open page.
+    so the enclosing form does not collect them. Anonymous readers need a public data source and access to the owner.
 *@
 @{
     var item = Model.Block;
@@ -33,7 +32,7 @@
         ? block.Columns(source.Fields)
         : block.Fields.Select(name => new FormField(name, name, "text")).ToArray();
 }
-@if (Model.MemberId is null)
+@if (!Model.Admitted || Model.Anonymous && Resources.Find(block.DataSource) is not SqlDataSource { AllowsAnonymousRead: true })
 {
     <p class="app-block-signin" role="status">Sign in to see the rows.</p>
 }

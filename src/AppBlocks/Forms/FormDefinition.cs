@@ -34,7 +34,7 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
         var bindings = fields.Select(f => f.Content.Value<string>("field") ?? "").ToArray();
         if (bindings.Distinct(StringComparer.Ordinal).Count() != bindings.Length || bindings.Any(binding => !resource.Fields.Any(f => f.Key == binding))) return null;
         if (fields.Any(f => !AppBlocksValidator.Compatible(f.Content.ContentType.Alias, resource.Fields.First(r => r.Key == f.Content.Value<string>("field")), !string.IsNullOrWhiteSpace(f.Content.Value<string>("listOfValues"))))) return null;
-        var selected = fields.Where(f => f.Content.ContentType.Alias == "appSelect").Select(f => f.Content.Value<string>("listOfValues")).Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        var selected = fields.Where(f => f.Content.ContentType.Alias is "appSelect" or AppBlockSchema.ShuttleAlias).Select(f => f.Content.Value<string>("listOfValues")).Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
         var lists = selected.Select(s => definitions?.FindList(s)).ToArray();
         if (lists.Any(list => list is null)) return null;
         return new(page, block, interfaces[0].Content, resource, fields) { Culture = culture, AntiSpam = children.Where(b => b.Content.ContentType.Alias == AppBlockSchema.AntiSpamAlias).ToArray(), ListsRevision = string.Concat(lists.Select(list => ":" + list!.Key + ":" + list.DataSource.ComputeFingerprint() + ":" + list.DisplayColumn + ":" + list.ValueColumn + ":" + list.MaximumRows)) };
@@ -53,6 +53,16 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
                 errors[property.Name] = ["This field cannot be changed through this form."]; continue;
             }
             var value = property.Value;
+            if (block.Content.ContentType.Alias == AppBlockSchema.ColorAlias && value.ValueKind != JsonValueKind.Null
+                && (value.ValueKind != JsonValueKind.String || value.GetString() is { Length: > 0 } color
+                    && (color.Length != 7 || color[0] != '#' || !color.Skip(1).All(char.IsAsciiHexDigit)))) {
+                errors[field.Key] = ["Enter a color in #RRGGBB format, such as #2a5d8f."]; continue;
+            }
+            var shuttle = block.Content.ContentType.Alias == AppBlockSchema.ShuttleAlias;
+            IReadOnlyList<string> selected = [];
+            if (shuttle && value.ValueKind == JsonValueKind.String && !ShuttleValue.TryParse(value.GetString(), out selected)) {
+                errors[field.Key] = ["Use a single line of CSV with unique, non-empty values."]; continue;
+            }
             var empty = value.ValueKind == JsonValueKind.Null || value.ValueKind == JsonValueKind.String && string.IsNullOrWhiteSpace(value.GetString());
             if (empty) {
                 if (field.Required || block.Content.Value<bool>("required")) errors[field.Key] = ["A value is required."];
@@ -70,7 +80,10 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
             if (value.ValueKind == JsonValueKind.String && field.MaxLength is { } max && value.GetString()!.Length > max) errors[field.Key] = [$"Use at most {max} characters."];
             if (field.Kind == "number" && Number(value, out var numeric)
                 && (field.Minimum is { } min && numeric < min || field.Maximum is { } upper && numeric > upper)) errors[field.Key] = ["The number is outside the allowed range."];
-            if (field.Choices is not null && (value.ValueKind != JsonValueKind.String || !field.Choices.Any(choice => choice.Value == value.GetString()))) errors[field.Key] = ["Select an available choice."];
+            if (shuttle) {
+                if (field.Choices is not null && selected.Any(item => !field.Choices.Any(choice => choice.Value == item))) errors[field.Key] = ["Select available choices."];
+            }
+            else if (field.Choices is not null && (value.ValueKind != JsonValueKind.String || !field.Choices.Any(choice => choice.Value == value.GetString()))) errors[field.Key] = ["Select an available choice."];
         }
         if (creating) {
             foreach (var field in Resource.Fields.Where(f => !f.HasServerDefault && !f.ReadOnly))

@@ -38,6 +38,9 @@ public sealed record AuditColumns(string? CreatedBy = null, string? CreatedAt = 
 /// <summary>Statements an editor writes to replace the generated insert, update or delete; each runs whole, with bound parameters.</summary>
 public sealed record CustomStatements(string? Insert = null, string? Update = null, string? Delete = null);
 
+/// <summary>Who may read a data source. Public access grants reads only; writes always require an account.</summary>
+public enum DataSourceAccess { NotPublic, Public, SpecificGroups }
+
 /// <summary>
 /// A published <c>sqlDataSource</c> node, read once into plain values. Structured properties are line-based
 /// text or JSON so an editor needs no special UI; this reader reports every mistake it finds so publishing can
@@ -65,9 +68,13 @@ public sealed record DataSourceDefinition
     public string? VersionColumn { get; init; }
     public IReadOnlyList<InsertDefault> InsertDefaults { get; init; } = [];
     public AuditColumns AuditColumns { get; init; } = new();
-    /// <summary>Member group names that may read; empty leaves reading to the page's own access.</summary>
+    /// <summary>Who may read. Unset follows page access (Public), while preserving configured ReadGroups.</summary>
+    public DataSourceAccess? Access { get; init; }
+    [JsonIgnore]
+    public DataSourceAccess EffectiveAccess => Access ?? (ReadGroups.Count > 0 ? DataSourceAccess.SpecificGroups : DataSourceAccess.Public);
+    /// <summary>Member group names that may read in SpecificGroups mode. Write groups may also read.</summary>
     public IReadOnlyList<string> ReadGroups { get; init; } = [];
-    /// <summary>Member group names that may write; empty leaves writing to whoever may read.</summary>
+    /// <summary>Member group names that may write; empty allows signed-in readers. Anonymous visitors can never write.</summary>
     public IReadOnlyList<string> WriteGroups { get; init; } = [];
     public CustomStatements CustomStatements { get; init; } = new();
 
@@ -121,10 +128,13 @@ public sealed record DataSourceDefinition
             VersionColumn = versionColumns.FirstOrDefault(),
             InsertDefaults = ReadInsertDefaults(Text("insertDefaults"), errors),
             AuditColumns = ReadAuditColumns(Text("auditColumns"), errors),
+            Access = ReadAccess(Text("access"), errors),
             ReadGroups = Groups(Text("readGroups"), "read groups"),
             WriteGroups = Groups(Text("writeGroups"), "write groups"),
             CustomStatements = ReadCustomStatements(Text("customStatements"), errors),
         };
+        if (definition.EffectiveAccess == DataSourceAccess.SpecificGroups && definition.ReadGroups.Count == 0)
+            errors.Add("Select at least one read group for Specific groups access.");
         if (definition.AllowsWrites && definition.KeyColumns.Count == 0)
             errors.Add("Enter the key columns: writes find their row by key.");
         return errors.Count == start ? definition : null;
@@ -135,6 +145,18 @@ public sealed record DataSourceDefinition
             if (memberGroups(picked) is { } names) return names;
             errors.Add($"One of the {label} no longer exists. Pick the groups again.");
             return [];
+        }
+    }
+
+    private static DataSourceAccess? ReadAccess(string text, ICollection<string> errors)
+    {
+        switch (text.ToLowerInvariant())
+        {
+            case "": return null;
+            case "not public": return DataSourceAccess.NotPublic;
+            case "public": return DataSourceAccess.Public;
+            case "specific groups": return DataSourceAccess.SpecificGroups;
+            default: errors.Add("Access must be Public, Not public or Specific groups."); return null;
         }
     }
 

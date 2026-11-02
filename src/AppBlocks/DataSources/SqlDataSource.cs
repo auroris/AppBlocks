@@ -22,6 +22,8 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     private DataSourceRuntime.PlanEntry Entry => entry ??= runtime.Plan(definition);
 
     public DataSourceDefinition Definition => definition;
+    /// <summary>Whether anonymous reads can reach the policies, subject to the calling page and owning record's access.</summary>
+    public bool AllowsAnonymousRead => CanRead(DataSourceUser.Anonymous);
     /// <summary>What :APP. binds, asked once per operation and once per batch of rows, so every row of a save sees the same answer; nothing without a provider, as in a test.</summary>
     private async Task<IReadOnlyDictionary<string, object?>?> AppAsync(FormExecutionContext context, CancellationToken ct) => providers is null ? null : await providers.ResolveAsync(context, ct);
     public string Alias => definition.Alias;
@@ -42,7 +44,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public async Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct)
     {
         if (Entry.Plan is not { } plan) return Unavailable();
-        if (await users.ResolveAsync(context, ct) is not { } user || !CanRead(user)) return FormResult.Denied();
+        if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !CanRead(user)) return FormResult.Denied();
         var binder = new Binder(plan, user, context, runtime.Now(), null, await AppAsync(context, ct));
         var values = plan.Columns.ToDictionary(c => c.Field, c => (object?)null, StringComparer.Ordinal);
         foreach (var value in plan.Defaults) values[value.Column.Field] = FieldValues.ToJson(binder.Default(value, out _));
@@ -53,7 +55,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public async Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct)
     {
         if (Entry.Plan is not { } plan) return Unavailable();
-        if (await users.ResolveAsync(context, ct) is not { } user || !CanRead(user)) return FormResult.Denied();
+        if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !CanRead(user)) return FormResult.Denied();
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
         var binder = new Binder(plan, user, context, runtime.Now(), null, await AppAsync(context, ct));
         return await RunAsync(plan, write: false, async (connection, _) => {
@@ -264,12 +266,12 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
 
     private bool InAny(DataSourceUser user, IReadOnlyList<string> groups) => groups.Any(user.IsInMemberGroup);
 
-    /// <summary>Readers: anyone with page access when no read groups are set, else Members in the configured Member Groups.</summary>
-    private bool CanRead(DataSourceUser user) => definition.ReadGroups.Count == 0
-        || InAny(user, definition.ReadGroups) || InAny(user, definition.WriteGroups);
+    /// <summary>Shared access rules; a query that binds an identity still needs an account even when marked Public.</summary>
+    private bool CanRead(DataSourceUser user) => DataSourceQueries.CanRead(definition, user)
+        && (!user.IsAnonymous || Entry.Plan is { BindsUser: false });
 
-    /// <summary>Writers: readers when no write groups are set, else Members in the configured write Member Groups.</summary>
-    private bool CanWrite(DataSourceUser user) => CanRead(user) && (definition.WriteGroups.Count == 0 || InAny(user, definition.WriteGroups));
+    /// <summary>Writers: signed-in readers when no write groups are set, else Members in the configured write Member Groups.</summary>
+    private bool CanWrite(DataSourceUser user) => !user.IsAnonymous && CanRead(user) && (definition.WriteGroups.Count == 0 || InAny(user, definition.WriteGroups));
 
     /// <summary>A record's files follow its groups: the write groups add, replace and remove them, whatever the allow flags say about the row itself.</summary>
     async ValueTask<bool> Attachments.IAttachmentOwner.MayWriteAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct)

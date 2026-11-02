@@ -129,6 +129,109 @@ public sealed class DataSourceTests : IDisposable
         new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, user.Key)], IdentityConstants.ApplicationScheme)),
         Guid.NewGuid(), Guid.NewGuid(), "1", Guid.NewGuid().ToString(), parameters);
 
+    private static FormExecutionContext AnonymousContext => Context(Owner) with { Member = new ClaimsPrincipal(new ClaimsIdentity()) };
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Public")]
+    public async Task Public_sources_allow_anonymous_reads_but_never_row_or_attachment_writes(string? access)
+    {
+        var seen = new List<DataSourceRequest>();
+        var source = Working(Tasks(("access", access), ("rowRestriction", "PRIORITY = 2")), new Policy(request => { seen.Add(request); return true; }));
+        var context = AnonymousContext;
+        var initial = await source.InitializeAsync(context, default);
+        Assert.Equal(200, initial.Status);
+        Assert.False(initial.Record!.Capabilities.Create);
+        var loaded = await source.LoadAsync("1", context, default);
+        Assert.Equal(200, loaded.Status);
+        Assert.Equal("Paint the hangar", loaded.Record!.Values["title"]);
+        Assert.False(loaded.Record.Capabilities.Update);
+        Assert.False(loaded.Record.Capabilities.Delete);
+        Assert.Equal(404, (await source.LoadAsync("2", context, default)).Status);
+        var rows = await source.ListRowsAsync(new("projectId", "1"), context, 100, default);
+        Assert.Equal(200, rows.Status);
+        Assert.Single(rows.Rows!);
+        Assert.False(rows.NewRow!.Capabilities.Create);
+        Assert.All(seen, request => Assert.True(request.User.IsAnonymous));
+        Assert.Contains(seen, request => request.Action == DataSourceAction.Query);
+        Assert.Equal(403, (await source.CreateAsync(Json(new { title = "Anonymous" }), context, default)).Status);
+        Assert.Equal(403, (await source.UpdateAsync("1", Json(new { title = "Anonymous" }), loaded.Record.Version!, context, default)).Status);
+        Assert.Equal(403, (await source.DeleteAsync("1", loaded.Record.Version!, context, default)).Status);
+        Assert.Equal(403, (await source.SaveRowsAsync(new("projectId", "1"), [new("delete", "1", loaded.Record.Version, Json(new { }))], context, 100, default)).Status);
+        Assert.False(await source.MayWriteAsync(context.Member, default));
+        Assert.False(await ((AppBlocks.Attachments.IAttachmentOwner)source).MayWriteAttachmentsAsync(loaded.Record, context, default));
+        Assert.Equal(3, Count());
+    }
+
+    [Theory]
+    [InlineData("Not public")]
+    [InlineData("Specific groups")]
+    public async Task Nonpublic_sources_refuse_anonymous_reads(string? access)
+    {
+        var source = Working(Tasks(("access", access), ("readGroups", access == "Specific groups" ? "Planners" : "")));
+        Assert.False(source.AllowsAnonymousRead);
+        Assert.Equal(403, (await source.InitializeAsync(AnonymousContext, default)).Status);
+        Assert.Equal(403, (await source.LoadAsync("1", AnonymousContext, default)).Status);
+        Assert.Equal(403, (await source.ListRowsAsync(new("projectId", "1"), AnonymousContext, 100, default)).Status);
+    }
+
+    [Fact]
+    public async Task Public_reads_still_check_policies_identity_binds_and_unresolved_accounts()
+    {
+        var denied = Working(Tasks(("access", "Public")), new Policy(request => !request.User.IsAnonymous));
+        Assert.Equal(403, (await denied.InitializeAsync(AnonymousContext, default)).Status);
+        Assert.Equal(403, (await denied.LoadAsync("1", AnonymousContext, default)).Status);
+        Assert.Equal(403, (await denied.ListRowsAsync(new("projectId", "1"), AnonymousContext, 100, default)).Status);
+        foreach (var settings in new[] {
+            Tasks(("access", "Public"), ("rowRestriction", "OWNER_SID = :USER_SID OR :USER_SID IS NULL")),
+            Tasks(("access", "Public"), ("source", "SELECT * FROM TASKS WHERE OWNER_SID = :USER_SID OR :USER_SID IS NULL")),
+        }) {
+            var restricted = Working(settings);
+            Assert.False(restricted.AllowsAnonymousRead);
+            Assert.Equal(403, (await restricted.InitializeAsync(AnonymousContext, default)).Status);
+            Assert.Equal(403, (await restricted.LoadAsync("1", AnonymousContext, default)).Status);
+            Assert.Equal(200, (await restricted.LoadAsync("1", Context(Owner), default)).Status);
+        }
+        var source = Working(Tasks(("access", "Public")));
+        var unresolved = Context(Owner with { Key = "missing-account" });
+        Assert.Equal(403, (await source.InitializeAsync(unresolved, default)).Status);
+        Assert.Equal(403, (await source.LoadAsync("1", unresolved, default)).Status);
+    }
+
+    [Fact]
+    public async Task Access_modes_preserve_legacy_groups_and_explicit_choices_invalidate_the_contract()
+    {
+        var legacy = Definition(Tasks(("readGroups", "Planners")));
+        Assert.Equal(DataSourceAccess.SpecificGroups, legacy.EffectiveAccess);
+        Assert.Equal(DataSourceAccess.Public, Definition(Tasks()).EffectiveAccess);
+        Assert.False(DataSourceQueries.CanRead(legacy, Other));
+        Assert.True(DataSourceQueries.CanRead(legacy with { WriteGroups = ["Crew"] }, Other));
+        var restricted = Working(Tasks(("access", "Specific groups"), ("readGroups", "Planners")));
+        Assert.Equal(200, (await restricted.LoadAsync("1", Context(Owner), default)).Status);
+        Assert.Equal(403, (await restricted.LoadAsync("1", Context(Other), default)).Status);
+        Assert.Equal(403, (await restricted.LoadAsync("1", Context(Editor), default)).Status);
+        var authenticated = legacy with { Access = DataSourceAccess.NotPublic };
+        Assert.True(DataSourceQueries.CanRead(authenticated, Other));
+        Assert.True(DataSourceQueries.CanRead(authenticated, Administrator));
+        var publicSource = legacy with { Access = DataSourceAccess.Public };
+        Assert.True(DataSourceQueries.CanRead(publicSource, DataSourceUser.Anonymous));
+        Assert.NotEqual(legacy.ComputeFingerprint(), publicSource.ComputeFingerprint());
+        Assert.NotEqual(new SqlDataSource(legacy, runtime, new TestUsers(), []).ContractVersion,
+            new SqlDataSource(publicSource, runtime, new TestUsers(), []).ContractVersion);
+        Assert.False(DataSourceQueries.CanRead(legacy with { Access = (DataSourceAccess)99 }, Owner));
+    }
+
+    [Theory]
+    [InlineData("Specific groups", "")]
+    [InlineData("unexpected", "Planners")]
+    public void Publishing_rejects_unknown_access_or_specific_groups_without_a_read_group(string access, string groups)
+    {
+        var values = Tasks(("access", access), ("readGroups", groups));
+        var errors = new List<string>();
+        Assert.Null(DataSourceDefinition.Read(Guid.NewGuid(), "Tasks", alias => values.GetValueOrDefault(alias), picked => picked.Split(','), errors));
+        Assert.NotEmpty(errors);
+    }
+
     private sealed class TestUsers : IDataSourceUserResolver
     {
         public Task<DataSourceUser?> ResolveAsync(ClaimsPrincipal principal, CancellationToken ct) => Task.FromResult(
@@ -308,7 +411,10 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal("New task, for :USER_NAME", values["title"]); // A literal is text, never SQL or a variable.
         Assert.Null(values["projectId"]);
         Assert.True(result.Record.Capabilities is { Create: true, Update: false, Delete: false });
-        Assert.Equal(403, (await source.InitializeAsync(Context(Owner) with { Member = new ClaimsPrincipal() }, default)).Status);
+        var anonymous = await source.InitializeAsync(AnonymousContext, default);
+        Assert.Equal(200, anonymous.Status);
+        Assert.Null(anonymous.Record!.Values["ownerSid"]);
+        Assert.False(anonymous.Record.Capabilities.Create);
         Assert.False((await Working(Tasks(("allowInsert", "0"))).InitializeAsync(Context(Owner), default)).Record!.Capabilities.Create);
     }
 

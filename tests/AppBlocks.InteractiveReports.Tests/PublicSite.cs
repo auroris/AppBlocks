@@ -135,6 +135,7 @@ internal sealed class PublicSite : IAsyncDisposable
         // The data source engine itself, as a form's class and as a tabular block's rows.
         builder.Services.AddScoped<IFormResource>(services => new SqlDataSource(new DataSourceDefinition {
             Key = Key("engine-source"), Name = "Rows", Alias = "public.engine", Connection = ConnectionCatalog.ApplicationConnection, Source = "PUBLIC_ROWS",
+            Access = services.GetRequiredService<Switches>().PublicEngine ? null : DataSourceAccess.NotPublic,
             KeyColumns = ["id"], AllowInsert = true, AllowUpdate = true, AllowDelete = true,
         }, services.GetRequiredService<DataSourceRuntime>(), services.GetRequiredService<IDataSourceUserResolver>(), services.GetServices<IDataSourcePolicy>()));
         builder.Services.AddSingleton<IDataSourcePolicy, SwitchedPolicy>();
@@ -227,6 +228,7 @@ internal sealed class PublicSite : IAsyncDisposable
             var source = contents.Create(alias, sources.Id, "sqlDataSource");
             source.SetValue("alias", alias); source.SetValue("connection", ConnectionCatalog.ApplicationConnection);
             source.SetValue("source", table); source.SetValue("keyColumns", "key");
+            source.SetValue("access", "Not public");
             Assert.True(contents.Save(source).Success);
             var published = contents.Publish(source, ["*"]);
             Assert.True(published.Success, alias + ": " + string.Join("; ", published.EventMessages?.GetAll().Select(m => m.Message) ?? []));
@@ -404,7 +406,7 @@ internal sealed class RecordedForms
 internal sealed class Switches
 {
     public DataSourceUser? LastDataAccount;
-    public volatile bool ReportPolicyRefuses, DataPolicyRefuses;
+    public volatile bool ReportPolicyRefuses, DataPolicyRefuses, PublicEngine;
 }
 
 /// <summary>A create-only public form: no record to load, a captcha token checked from the form's other controls.</summary>

@@ -34,7 +34,7 @@ public sealed class TabularAccess(BlockOwnerAccess owners, FormResourceRegistry 
         var owner = await owners.ResolveAsync(pageKey, blockKey, AppBlockSchema.TabularAlias, Words, element => {
             var settings = TabularBlock.Read(element);
             return (settings.OwnerResource, settings.OwnerKey);
-        }, Definition, ct);
+        }, Definition, ct, allowAnonymous: true);
         if (owner.Status != 200) return TabularScope.Refused(owner.Status, owner.Problem!);
         var block = TabularBlock.Read(owner.Item!.Content);
         if (block.DataSource.Length == 0 || block.LinkField.Length == 0) return TabularScope.Refused(422, "This Tabular form block names no data source or no link field.");

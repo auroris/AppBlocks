@@ -161,20 +161,31 @@ else if (Model.Form is not null && AppBlockSchema.FieldAliases.Contains(alias))
         if (AppBlockField.IsHidden(block))
         {
             @* Bound and submitted like any other field, but not shown; Items.cshtml gives it no grid cell. *@
-            <input type="hidden" id="@id" name="@key" data-field="@key" data-kind="@field.Kind" data-readonly="@readOnly.ToString().ToLowerInvariant()"
+            <input type="hidden" id="@id" name="@key" data-field="@key" data-kind="@(alias == AppBlockSchema.ShuttleAlias ? "shuttle" : field.Kind)" data-readonly="@readOnly.ToString().ToLowerInvariant()"
                 data-label="@label" @defaultAttribute />
         }
         else
         {
             <div class="app-form-field">
-                <label for="@id">@(label)@if (required) { <span aria-hidden="true"> *</span> }</label>
+                <label id="@id-label" for="@(alias == AppBlockSchema.ShuttleAlias ? id + "-available" : id)">@(label)@if (required) { <span aria-hidden="true"> *</span> }</label>
                 @if (alias == "appTextArea")
                 {
                     <textarea id="@id" name="@key" data-field="@key" data-kind="@field.Kind" data-readonly="@readOnly.ToString().ToLowerInvariant()"
                         rows="4" required="@required" readonly="@readOnly" maxlength="@field.MaxLength" placeholder="@placeholder" @defaultAttribute
                         aria-describedby="@id-help @id-error"></textarea>
                 }
-                else if (alias == "appSelect")
+                else if (alias == AppBlockSchema.ColorAlias)
+                {
+                    <div class="app-color" data-app-color>
+                        <input type="color" data-color-picker disabled="@readOnly" aria-label="Choose a color for @label" aria-describedby="@id-help @id-error" />
+                        <input type="text" id="@id" name="@key" data-field="@key" data-kind="text" data-readonly="@readOnly.ToString().ToLowerInvariant()"
+                            required="@required" readonly="@readOnly" maxlength="@field.MaxLength" pattern="#[0-9a-fA-F]{6}"
+                            title="Enter a color in #RRGGBB format, such as #2a5d8f." placeholder="@(placeholder ?? "#RRGGBB")" spellcheck="false" autocomplete="off"
+                            @defaultAttribute aria-describedby="@id-help @id-error" />
+                        <button type="button" data-color-clear disabled="@readOnly" aria-label="Clear color for @label">Clear</button>
+                    </div>
+                }
+                else if (alias is "appSelect" or AppBlockSchema.ShuttleAlias)
                 {
                     IReadOnlyList<FormChoice> choices = field.Choices ?? [];
                     string? listProblem = null;
@@ -186,12 +197,45 @@ else if (Model.Form is not null && AppBlockSchema.FieldAliases.Contains(alias))
                         }
                         catch (Exception error) when (error is not OperationCanceledException) { choices = []; listProblem = "The choices for this field are not available. Try reloading the page."; }
                     }
+                    @if (alias == AppBlockSchema.ShuttleAlias)
+                    {
+                        <div class="app-shuttle" data-app-shuttle data-required="@required.ToString().ToLowerInvariant()" role="group" aria-labelledby="@id-label">
+                            <input type="hidden" id="@id" name="@key" data-field="@key" data-kind="shuttle" data-readonly="@readOnly.ToString().ToLowerInvariant()" data-label="@label" @defaultAttribute />
+                            <div class="app-shuttle-list">
+                                <label for="@id-available">Available</label>
+                                <select id="@id-available" data-shuttle-available multiple size="8" disabled="@readOnly" aria-describedby="@id-help @id-error">
+                                    @foreach (var choice in choices.Where(choice => ShuttleValue.IsItemValue(choice.Value)).DistinctBy(choice => choice.Value, StringComparer.Ordinal))
+                                    { <option value="@choice.Value">@choice.Label</option> }
+                                </select>
+                            </div>
+                            <div class="app-shuttle-actions" aria-label="Move items">
+                                <button type="button" data-shuttle-action="add" disabled="@readOnly">Add →</button>
+                                <button type="button" data-shuttle-action="add-all" disabled="@readOnly">Add all →</button>
+                                <button type="button" data-shuttle-action="remove" disabled="@readOnly">← Remove</button>
+                                <button type="button" data-shuttle-action="remove-all" disabled="@readOnly">← Remove all</button>
+                            </div>
+                            <div class="app-shuttle-list">
+                                <label for="@id-selected">Selected (in order)</label>
+                                <select id="@id-selected" data-shuttle-selected multiple size="8" disabled="@readOnly" aria-required="@required.ToString().ToLowerInvariant()" aria-describedby="@id-help @id-error"></select>
+                            </div>
+                            <div class="app-shuttle-actions" aria-label="Reorder selected items">
+                                <button type="button" data-shuttle-action="top" disabled="@readOnly">Top</button>
+                                <button type="button" data-shuttle-action="up" disabled="@readOnly">Up</button>
+                                <button type="button" data-shuttle-action="down" disabled="@readOnly">Down</button>
+                                <button type="button" data-shuttle-action="bottom" disabled="@readOnly">Bottom</button>
+                            </div>
+                            <span class="app-shuttle-status" role="status" aria-live="polite"></span>
+                        </div>
+                    }
+                    else
+                    {
                     @* A select has no placeholder attribute; its empty choice carries the text instead. *@
                     <select id="@id" name="@key" data-field="@key" data-kind="@field.Kind" data-readonly="@readOnly.ToString().ToLowerInvariant()" required="@required" disabled="@readOnly"
                         @defaultAttribute aria-describedby="@id-help @id-error">
                         <option value="">@(placeholder ?? "Select a value")</option>
                         @foreach (var choice in choices) { <option value="@choice.Value">@choice.Label</option> }
                     </select>
+                    }
                     @if (listProblem is not null) { <p role="alert">@listProblem</p> }
                 }
                 else

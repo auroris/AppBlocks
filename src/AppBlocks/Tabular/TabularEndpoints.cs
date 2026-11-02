@@ -45,7 +45,8 @@ public static class TabularEndpoints
     {
         var scope = await access.ResolveAsync(pageKey, blockKey, ct);
         if (scope.Status != 200) return Refusal(scope);
-        if (scope.Block!.ReadOnly) return Audited(http, "save", scope, Results.Problem("This tabular form is read only.", statusCode: 403), 403);
+        if (scope.Block!.ReadOnly || !await scope.Source!.MayWriteAsync(scope.User!, ct))
+            return Audited(http, "save", scope, Results.Problem("This tabular form is read only.", statusCode: 403), 403);
         try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
         catch (AntiforgeryValidationException) { return Results.BadRequest(); }
         TabularSubmission? submission;

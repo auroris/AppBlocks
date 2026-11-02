@@ -16,7 +16,9 @@ public static class AppBlockSchema
     /// <summary>The shared block property is a capability of a page, including composed/custom document types.</summary>
     public static bool HasBlocks(IPublishedContentType type) => type.PropertyTypes.Any(p => IsBlockEditor(p.EditorAlias));
     public static bool HasBlocks(IContentBase page) => page.Properties.Any(p => IsBlockEditor(p.PropertyType.PropertyEditorAlias));
-    public static readonly string[] FieldAliases = ["appText", "appTextArea", "appNumber", "appDate", "appTime", "appDateTime", "appCheckbox", "appSelect", "appDisplay"];
+    public const string ShuttleAlias = "appShuttle";
+    public const string ColorAlias = "appColor";
+    public static readonly string[] FieldAliases = ["appText", "appTextArea", ColorAlias, "appNumber", "appDate", "appTime", "appDateTime", "appCheckbox", "appSelect", ShuttleAlias, "appDisplay"];
 
     /// <summary>
     /// The column layouts. The grid data type never lets one into another's areas, so a page's columns

@@ -54,7 +54,9 @@ Sites using Umbraco's conventional `blockgrid/Components` or `blocklist/Componen
 | [Connections](docs/connections.md) | The default database, extra connections, upload storage and Oracle modes |
 | [Database setup](docs/database-setup.md) | The tables AppBlocks creates, and what to do when the database account may not |
 | [Anti-spam](docs/anti-spam.md) | The Anti-spam block, its keys, privacy and rate limits |
+| [Shuttle field](docs/shuttle.md) | Two lists, ordered selections, and single-line CSV values |
 | [Schedule block](docs/schedule.md) | Rows, bars, markers across the top, colours, descriptions and the window |
+| [Color picker](docs/color-picker.md) | Hex color fields, defaults, clearing and validation |
 | [Worked example: a multi-tenant activity schedule](docs/activity-schedule-example.md) | The page tree, tables, data sources, blocks and C# of one application, end to end |
 | [Interactive Reports companion](src/AppBlocks.InteractiveReports/README.md) | Report blocks, saved views and report access |
 | [Documents companion](src/AppBlocks.Documents/README.md) | HTML and PDF documents, and printing through Pressroom |

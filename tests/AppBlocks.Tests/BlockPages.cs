@@ -128,7 +128,7 @@ internal static class BlockPages
         return page;
     }
 
-    private static JsonNode FormBlock(JsonNode page, string resource, JsonNode[] content, JsonNode[] actions)
+    public static JsonNode FormBlock(JsonNode page, string resource, JsonNode[] content, JsonNode[] actions)
     {
         var form = Wrap(page, "appForm", content, actions);
         var block = page["contentData"]!.AsArray()[^1]!;

@@ -32,8 +32,8 @@ public sealed record DataSourceUser(string Key, string? Sid, string? Name, strin
     private DataSourceBackOfficeAccount? AdditionalBackOfficeAccount { get; init; }
 
     /// <summary>
-    /// Nobody: what a policy sees for an anonymous visitor to a public report block, the one read that reaches policies
-    /// without an account. It has no key, name, email or groups, and is neither a Member nor a backoffice User.
+    /// Nobody: what a policy sees for an anonymous visitor reading a public data source.
+    /// It has no key, name, email or groups, and is neither a Member nor a backoffice User.
     /// </summary>
     public static DataSourceUser Anonymous { get; } = new("", null, null, null, [], false);
 

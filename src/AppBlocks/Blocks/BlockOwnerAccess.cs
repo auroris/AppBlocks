@@ -43,7 +43,7 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
     /// <param name="definition">The revision string the owner's record is loaded under; such blocks never compare it with a form's.</param>
     /// <param name="allowAnonymous">
     /// Whether an anonymous visitor to an open page reaches the owner's resource, which then decides as it does for anyone.
-    /// Off, as for a block that has only the data source engine behind it, they are refused here.
+    /// When false, visitors without an account are refused here.
     /// </param>
     public async Task<BlockOwnerScope> ResolveAsync(Guid pageKey, Guid blockKey, string blockAlias, BlockOwnerWords words,
         Func<IPublishedElement, (string? Resource, string? Key)> owner, string definition, CancellationToken ct, bool allowAnonymous = false)

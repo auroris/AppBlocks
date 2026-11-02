@@ -144,7 +144,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
                 var field = resource.Fields.FirstOrDefault(f => f.Key == binding);
                 if (field is null) errors.Add($"'{binding}' is not a field of {resource.Alias}.");
                 else if (!Compatible(alias, field, Text(child, "listOfValues").Length > 0)) errors.Add($"The block for '{binding}' does not match its {field.Kind} type.");
-                if (definitions is not null && alias == "appSelect" && Text(child, "listOfValues") is { Length: > 0 } selected && definitions.FindList(selected) is null)
+                if (definitions is not null && alias is "appSelect" or AppBlockSchema.ShuttleAlias && Text(child, "listOfValues") is { Length: > 0 } selected && definitions.FindList(selected) is null)
                     errors.Add($"Select a published list of values for '{binding}'.");
             }
             else if (alias is not ("appForm" or "appFieldset" or "appActions") && !AppBlockSchema.LayoutAliases.Contains(alias) && !AppBlockSchema.ContentAliases.Contains(alias)) errors.Add("The form contains an unsupported block.");
@@ -282,8 +282,9 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
     }
 
     public static bool Compatible(string alias, FormField field, bool hasListOfValues = false) => alias == "appDisplay" || alias switch {
-        "appText" or "appTextArea" => field.Kind == "text",
+        "appText" or "appTextArea" or AppBlockSchema.ColorAlias => field.Kind == "text",
         "appSelect" => hasListOfValues ? field.Kind is "text" or "number" : field.Kind == "text" && field.Choices is { Count: > 0 },
+        AppBlockSchema.ShuttleAlias => field.Kind == "text" && (hasListOfValues || field.Choices is { Count: > 0 }),
         "appNumber" => field.Kind == "number", "appDate" => field.Kind == "date", "appTime" => field.Kind == "time",
         "appDateTime" => field.Kind == "datetime", "appCheckbox" => field.Kind == "checkbox", _ => false,
     };

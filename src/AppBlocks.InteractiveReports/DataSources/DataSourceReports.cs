@@ -100,9 +100,7 @@ public sealed class DataSourceReportAccess(PublishedReportCatalog catalog, DataS
         var context = new FormExecutionContext(request.User, page, block, source.ComputeFingerprint(), Parameters: parameters);
         try
         {
-            // The report-level gate only lets someone with no account this far for a block on an open page.
-            if (request.User.Identity?.IsAuthenticated != true && AppBlockContent.ParseReportName(request.ReportName, out _, out _)) await queries.AuthorizeAnonymousAsync(source, context, ct);
-            else await queries.AuthorizeAsync(source, context, ct);
+            await queries.AuthorizeAsync(source, context, ct);
             return RowRestriction.Unrestricted;
         }
         catch (UnauthorizedAccessException) { return RowRestriction.Deny; }
