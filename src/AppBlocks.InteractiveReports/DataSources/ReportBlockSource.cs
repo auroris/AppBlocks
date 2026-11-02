@@ -36,7 +36,7 @@ internal static class ReportBlockSource
             else errors.Add("Choose Table or SQL query for the report source.");
             return errors.Count == start ? new DataSourceDefinition {
                 Key = key, Name = "Report " + key.ToString("N"), Alias = "appblocks-block-" + key.ToString("N"),
-                // Block-owned sources follow the page's access, like the default for named SQL data sources.
+                // Block-owned sources explicitly use Public to follow the page's access.
                 Connection = connection, Source = source, Access = DataSourceAccess.Public,
             } : null;
         }

@@ -69,7 +69,7 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
     }
 
     /// <summary>The source's access setting. Callers must also enforce page access, identity binds and policies.</summary>
-    public static bool CanRead(DataSourceDefinition definition, DataSourceUser user) => definition.EffectiveAccess switch {
+    public static bool CanRead(DataSourceDefinition definition, DataSourceUser user) => definition.Access switch {
         DataSourceAccess.Public => true,
         DataSourceAccess.NotPublic => !user.IsAnonymous,
         DataSourceAccess.SpecificGroups => !user.IsAnonymous && definition.ReadGroups.Count > 0

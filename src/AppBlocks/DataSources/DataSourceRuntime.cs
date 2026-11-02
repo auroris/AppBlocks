@@ -73,6 +73,9 @@ public sealed class DataSourceRuntime(IApplicationConnectionFactory connections,
 
     private DataSourcePlan? Build(DataSourceDefinition definition, List<string> errors, bool compileStatements)
     {
+        var start = errors.Count;
+        definition.ValidateAccess(errors);
+        if (errors.Count != start) return null;
         if (Dialect(definition.Connection, errors) is not { } dialect) return null;
         try
         {

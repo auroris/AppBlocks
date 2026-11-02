@@ -442,7 +442,7 @@ public sealed class AnonymousAccessSiteTests
                 Assert.Contains(types.Get("sqlDataSource")!.PropertyTypes, property => property.Alias == "access");
                 var sources = content.GetPagedOfType(types.Get("sqlDataSource")!.Id, 0, 100, out _, null!);
                 foreach (var source in sources.Where(source => source.GetValue<string>("alias")?.StartsWith("public.schedule.") == true)) {
-                    source.SetValue("access", "");
+                    source.SetValue("access", "Public");
                     Assert.True(content.Save(source).Success);
                     Assert.True(content.Publish(source, ["*"]).Success);
                 }

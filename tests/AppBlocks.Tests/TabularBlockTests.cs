@@ -201,14 +201,14 @@ public sealed class TabularBlockTests
     }
 
     private static DataSourceDefinition OrdersDataSource() => DataSource("Orders", new() {
-        ["alias"] = "orders", ["connection"] = "OrdersDb", ["source"] = "ORDERS", ["keyColumns"] = "ORDER_ID", ["concurrency"] = "VERSION",
+        ["alias"] = "orders", ["access"] = "Public", ["connection"] = "OrdersDb", ["source"] = "ORDERS", ["keyColumns"] = "ORDER_ID", ["concurrency"] = "VERSION",
         ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1",
     });
 
     private static DataSourceDefinition OrderLinesDataSource(params (string Alias, string Value)[] overrides)
     {
         var values = new Dictionary<string, object?> {
-            ["alias"] = "orders.lines", ["connection"] = "OrdersDb", ["source"] = "ORDER_LINES", ["keyColumns"] = "LINE_ID", ["concurrency"] = "VERSION",
+            ["alias"] = "orders.lines", ["access"] = "Public", ["connection"] = "OrdersDb", ["source"] = "ORDER_LINES", ["keyColumns"] = "LINE_ID", ["concurrency"] = "VERSION",
             ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1",
             ["auditColumns"] = "createdBy = CREATED_BY\ncreatedAt = CREATED_AT\nupdatedBy = UPDATED_BY\nupdatedAt = UPDATED_AT",
             ["insertDefaults"] = "QUANTITY = 1\nUNIT_PRICE = 0",

@@ -13,6 +13,7 @@ public sealed class DemoTasks(DataSourceRuntime runtime, IDataSourceUserResolver
     private readonly SqlDataSource records = new(new DataSourceDefinition {
         Key = DemoSeed.Key("tasks-class"), Name = "Tasks", Alias = "demo.tasks",
         Connection = ConnectionCatalog.ApplicationConnection, Source = "AppBlocksDemoTasks",
+        Access = DataSourceAccess.NotPublic,
         KeyColumns = ["id"], AllowInsert = true, AllowUpdate = true,
     }, runtime, users, policies);
 

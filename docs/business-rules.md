@@ -170,14 +170,14 @@ if (!canEdit)
 
 Avoid granting a Member access by comparing their email address with a backoffice User's email. Sign-in, page access and permission to update a particular record are separate checks.
 
-For the built-in data-source engine, the default is **if you can see the page, you can read its data**. The page and its data API requests enforce the same Umbraco Public Access rules. Choose **Access** on the SQL data source's **Access** tab when the data needs an additional restriction:
+For the built-in data-source engine, choose **Public** for the normal rule: **if you can see the page, you can read its data**. The page and its data API requests enforce the same Umbraco Public Access rules. **Access** on the SQL data source's **Access** tab is required; choose a value for every source:
 
 | Access | Who may read |
 | --- | --- |
-| Public (default) | Anyone admitted by the page, including visitors without an account |
+| Public | Anyone admitted by the page, including visitors without an account |
 | Not public | Any signed-in Umbraco Member or backoffice User admitted by the page |
 | Specific groups | Members in any selected Read group or Write group; at least one Read group is required |
-| Empty | Public, unless existing Read groups are set, in which case Specific groups applies |
+| Empty or unknown | Configuration error: publishing is refused and the source cannot run |
 
 **Read groups** and **Write groups** select Umbraco Member Groups. Public and Not public ignore Read groups. Write groups still limit writes in every mode: when empty, any signed-in reader may write; when set, only readers in a selected Write group may write. Allow insert/update/delete and all other checks still apply. Public never allows anonymous row or attachment changes.
 
@@ -185,9 +185,9 @@ Page Public Access, row restrictions and every `IDataSourcePolicy` still apply t
 
 There is no administrator exception to Specific groups: backoffice User groups do not satisfy Member group requirements. When your rules involve backoffice Users, use Not public and enforce the rules in `IDataSourcePolicy` using `request.User`. Each registered policy must allow the operation. Custom `IFormResource` implementations enforce their own rules on every operation.
 
-In C#, set `DataSourceDefinition.Access` to `DataSourceAccess.Public`, `NotPublic` or `SpecificGroups`. Leaving it null defaults to Public while preserving configured Read groups. Changing the access setting changes the definition fingerprint and form contract version.
+In C#, the required `DataSourceDefinition.Access` property must be `DataSourceAccess.Public`, `NotPublic` or `SpecificGroups`. Null and unknown values fail runtime validation before a connection is opened. Read groups never supply a missing Access value. Changing the access setting changes the definition fingerprint and form contract version.
 
-Fresh installations include the Access editor. Existing sites retain their installed document types: add the `access` property to `sqlDataSource` using the **Application: Data source access** radio-button data type, with the choices **Public**, **Not public**, and **Specific groups**, or apply the updated packaged schema through the site's schema-management process. Unset sources without Read groups now follow page access; choose Not public when the source needs its own sign-in requirement.
+Fresh installations include the required Access editor. Existing sites retain their installed document types: add the mandatory `access` property to `sqlDataSource` using the **Application: Data source access** radio-button data type, with the choices **Public**, **Not public**, and **Specific groups**, or apply the updated packaged schema through the site's schema-management process. Set and publish an explicit Access value on every existing source. Previously published sources with no value are unavailable until corrected, including sources that already have Read groups.
 
 **Row restriction** limits rows without any C#. It is added to every fetch and write, for example `OWNER_KEY = :USER_KEY` or `REGION IN (:USER_GROUPS)`, and a write that would leave the restriction is refused. It may use `:USER_KEY`, `:USER_SID`, `:USER_NAME`, `:USER_EMAIL`, `:USER_GROUPS` and `:NOW`. `:USER_GROUPS` holds the account's group display names, so a Member and a backoffice User are matched against different lists.
 
@@ -607,7 +607,7 @@ Your class runs twice for each anonymous page view, once when the page renders a
 
 AppBlocks does not limit how often anyone calls a public form or report. Add rate limiting in your application if the page will be exposed to the internet. Limiting how often, under Anti-spam, has a recipe for ASP.NET Core's rate limiter on `/api/forms`.
 
-A select field using a published list of values reads it through the data source engine. Its source defaults to Public and follows the form's page access, including an inline list source. Selected SQL data sources can impose additional access restrictions. You can also give the field its choices in your class's `FormField.Choices`.
+A select field using a published list of values reads it through the data source engine. Select Public on its SQL source to follow the form's page access, or impose additional access restrictions. An inline list source explicitly uses Public. You can also give the field its choices in your class's `FormField.Choices`.
 
 ## Anti-spam
 

@@ -67,6 +67,7 @@ public sealed class CleanDocumentSeed(IContentService contents, IContentTypeServ
         var source = contents.GetById(DemoSeed.Key("source")) ?? contents.Create("Clean tasks", sources.Id, "sqlDataSource");
         source.Key = DemoSeed.Key("source");
         source.SetValue("alias", "clean.document.tasks");
+        source.SetValue("access", "Public");
         source.SetValue("connection", "AppBlocksDb");
         source.SetValue("source", "AppBlocksDemoTasks");
         source.SetValue("keyColumns", "id");

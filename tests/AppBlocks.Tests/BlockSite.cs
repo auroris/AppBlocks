@@ -209,6 +209,7 @@ internal sealed class BlockSite : IAsyncDisposable
         var sources = contents.Create("Data sources", -1, DataSourceSchema.RootAlias);
         Publish(sources);
         var lines = contents.Create("Orders lines", sources.Id, DataSourceSchema.SqlAlias);
+        lines.SetValue("access", "Public");
         lines.SetValue("alias", "orders.lines"); lines.SetValue("connection", ConnectionCatalog.ApplicationConnection); lines.SetValue("source", "ORDER_LINES"); lines.SetValue("keyColumns", "LINE_ID");
         lines.SetValue("allowInsert", 1); lines.SetValue("allowUpdate", 1); lines.SetValue("allowDelete", 1); lines.SetValue("concurrency", "VERSION");
         lines.SetValue("auditColumns", "createdBy = CREATED_BY\ncreatedAt = CREATED_AT\nupdatedBy = UPDATED_BY\nupdatedAt = UPDATED_AT");

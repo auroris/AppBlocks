@@ -258,6 +258,7 @@ internal sealed class SetupSite : IAsyncDisposable
     {
         private readonly SqlDataSource records = new(new DataSourceDefinition {
             Key = AppBlockSchema.Key("setup-site:tasks"), Name = "Tasks", Alias = TasksResource,
+            Access = DataSourceAccess.NotPublic,
             Connection = ConnectionCatalog.ApplicationConnection, Source = "BUSINESS_TASKS", KeyColumns = ["id"], AllowInsert = true, AllowUpdate = true,
         }, runtime, users, policies);
 

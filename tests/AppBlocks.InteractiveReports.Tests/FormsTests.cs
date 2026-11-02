@@ -59,7 +59,7 @@ public sealed class FormsTests
     private static DataSourceDefinition OrdersDataSource()
     {
         var values = new Dictionary<string, object?> {
-            ["alias"] = "orders", ["connection"] = "sample", ["source"] = "ORDERS", ["keyColumns"] = "ORDER_ID", ["concurrency"] = "VERSION",
+            ["alias"] = "orders", ["access"] = "Public", ["connection"] = "sample", ["source"] = "ORDERS", ["keyColumns"] = "ORDER_ID", ["concurrency"] = "VERSION",
             ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1",
         };
         var errors = new List<string>();

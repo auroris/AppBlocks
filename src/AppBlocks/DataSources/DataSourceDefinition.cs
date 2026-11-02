@@ -68,10 +68,8 @@ public sealed record DataSourceDefinition
     public string? VersionColumn { get; init; }
     public IReadOnlyList<InsertDefault> InsertDefaults { get; init; } = [];
     public AuditColumns AuditColumns { get; init; } = new();
-    /// <summary>Who may read. Unset follows page access (Public), while preserving configured ReadGroups.</summary>
-    public DataSourceAccess? Access { get; init; }
-    [JsonIgnore]
-    public DataSourceAccess EffectiveAccess => Access ?? (ReadGroups.Count > 0 ? DataSourceAccess.SpecificGroups : DataSourceAccess.Public);
+    /// <summary>Who may read. A missing or unknown value is a configuration error, including when groups are set.</summary>
+    public required DataSourceAccess? Access { get; init; }
     /// <summary>Member group names that may read in SpecificGroups mode. Write groups may also read.</summary>
     public IReadOnlyList<string> ReadGroups { get; init; } = [];
     /// <summary>Member group names that may write; empty allows signed-in readers. Anonymous visitors can never write.</summary>
@@ -128,13 +126,12 @@ public sealed record DataSourceDefinition
             VersionColumn = versionColumns.FirstOrDefault(),
             InsertDefaults = ReadInsertDefaults(Text("insertDefaults"), errors),
             AuditColumns = ReadAuditColumns(Text("auditColumns"), errors),
-            Access = ReadAccess(Text("access"), errors),
+            Access = ReadAccess(Text("access")),
             ReadGroups = Groups(Text("readGroups"), "read groups"),
             WriteGroups = Groups(Text("writeGroups"), "write groups"),
             CustomStatements = ReadCustomStatements(Text("customStatements"), errors),
         };
-        if (definition.EffectiveAccess == DataSourceAccess.SpecificGroups && definition.ReadGroups.Count == 0)
-            errors.Add("Select at least one read group for Specific groups access.");
+        definition.ValidateAccess(errors);
         if (definition.AllowsWrites && definition.KeyColumns.Count == 0)
             errors.Add("Enter the key columns: writes find their row by key.");
         return errors.Count == start ? definition : null;
@@ -148,17 +145,20 @@ public sealed record DataSourceDefinition
         }
     }
 
-    private static DataSourceAccess? ReadAccess(string text, ICollection<string> errors)
+    internal void ValidateAccess(ICollection<string> errors)
     {
-        switch (text.ToLowerInvariant())
-        {
-            case "": return null;
-            case "not public": return DataSourceAccess.NotPublic;
-            case "public": return DataSourceAccess.Public;
-            case "specific groups": return DataSourceAccess.SpecificGroups;
-            default: errors.Add("Access must be Public, Not public or Specific groups."); return null;
-        }
+        if (Access is not (DataSourceAccess.Public or DataSourceAccess.NotPublic or DataSourceAccess.SpecificGroups))
+            errors.Add("Select an access value: Public, Not public or Specific groups.");
+        else if (Access == DataSourceAccess.SpecificGroups && ReadGroups.Count == 0)
+            errors.Add("Select at least one read group for Specific groups access.");
     }
+
+    private static DataSourceAccess? ReadAccess(string text) => text.ToLowerInvariant() switch {
+        "public" => DataSourceAccess.Public,
+        "not public" => DataSourceAccess.NotPublic,
+        "specific groups" => DataSourceAccess.SpecificGroups,
+        _ => null,
+    };
 
     /// <summary>Aliases are URL- and JSON-safe so a Form interface can store them as plain text.</summary>
     public static bool IsAlias(string alias) => alias.Length is > 0 and <= 64 && char.IsAsciiLetter(alias[0])

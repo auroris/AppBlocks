@@ -97,6 +97,7 @@ public sealed class DataSourceTests : IDisposable
     private static Dictionary<string, object?> Tasks(params (string Alias, object? Value)[] settings)
     {
         var values = new Dictionary<string, object?> {
+            ["access"] = "Public",
             ["alias"] = "tasks", ["connection"] = "TasksDb", ["source"] = "TASKS", ["keyColumns"] = "TASK_ID",
             ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1", ["concurrency"] = "VERSION",
             ["mapping"] = """{ "dueDate": { "kind": "date" }, "done": { "kind": "checkbox" }, "createdAt": { "kind": "datetime" }, "updatedAt": { "kind": "datetime" } }""",
@@ -131,13 +132,11 @@ public sealed class DataSourceTests : IDisposable
 
     private static FormExecutionContext AnonymousContext => Context(Owner) with { Member = new ClaimsPrincipal(new ClaimsIdentity()) };
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("Public")]
-    public async Task Public_sources_allow_anonymous_reads_but_never_row_or_attachment_writes(string? access)
+    [Fact]
+    public async Task Public_sources_allow_anonymous_reads_but_never_row_or_attachment_writes()
     {
         var seen = new List<DataSourceRequest>();
-        var source = Working(Tasks(("access", access), ("rowRestriction", "PRIORITY = 2")), new Policy(request => { seen.Add(request); return true; }));
+        var source = Working(Tasks(("access", "Public"), ("rowRestriction", "PRIORITY = 2")), new Policy(request => { seen.Add(request); return true; }));
         var context = AnonymousContext;
         var initial = await source.InitializeAsync(context, default);
         Assert.Equal(200, initial.Status);
@@ -199,37 +198,60 @@ public sealed class DataSourceTests : IDisposable
     }
 
     [Fact]
-    public async Task Access_modes_preserve_legacy_groups_and_explicit_choices_invalidate_the_contract()
+    public async Task Explicit_access_modes_control_groups_and_invalidate_the_contract()
     {
-        var legacy = Definition(Tasks(("readGroups", "Planners")));
-        Assert.Equal(DataSourceAccess.SpecificGroups, legacy.EffectiveAccess);
-        Assert.Equal(DataSourceAccess.Public, Definition(Tasks()).EffectiveAccess);
-        Assert.False(DataSourceQueries.CanRead(legacy, Other));
-        Assert.True(DataSourceQueries.CanRead(legacy with { WriteGroups = ["Crew"] }, Other));
+        var grouped = Definition(Tasks(("access", "Specific groups"), ("readGroups", "Planners")));
+        Assert.Equal(DataSourceAccess.SpecificGroups, grouped.Access);
+        Assert.Equal(DataSourceAccess.Public, Definition(Tasks()).Access);
+        Assert.False(DataSourceQueries.CanRead(grouped, Other));
+        Assert.True(DataSourceQueries.CanRead(grouped with { WriteGroups = ["Crew"] }, Other));
         var restricted = Working(Tasks(("access", "Specific groups"), ("readGroups", "Planners")));
         Assert.Equal(200, (await restricted.LoadAsync("1", Context(Owner), default)).Status);
         Assert.Equal(403, (await restricted.LoadAsync("1", Context(Other), default)).Status);
         Assert.Equal(403, (await restricted.LoadAsync("1", Context(Editor), default)).Status);
-        var authenticated = legacy with { Access = DataSourceAccess.NotPublic };
+        var authenticated = grouped with { Access = DataSourceAccess.NotPublic };
         Assert.True(DataSourceQueries.CanRead(authenticated, Other));
         Assert.True(DataSourceQueries.CanRead(authenticated, Administrator));
-        var publicSource = legacy with { Access = DataSourceAccess.Public };
+        var publicSource = grouped with { Access = DataSourceAccess.Public };
         Assert.True(DataSourceQueries.CanRead(publicSource, DataSourceUser.Anonymous));
-        Assert.NotEqual(legacy.ComputeFingerprint(), publicSource.ComputeFingerprint());
-        Assert.NotEqual(new SqlDataSource(legacy, runtime, new TestUsers(), []).ContractVersion,
+        Assert.NotEqual(grouped.ComputeFingerprint(), publicSource.ComputeFingerprint());
+        Assert.NotEqual(new SqlDataSource(grouped, runtime, new TestUsers(), []).ContractVersion,
             new SqlDataSource(publicSource, runtime, new TestUsers(), []).ContractVersion);
-        Assert.False(DataSourceQueries.CanRead(legacy with { Access = (DataSourceAccess)99 }, Owner));
+        Assert.False(DataSourceQueries.CanRead(grouped with { Access = (DataSourceAccess)99 }, Owner));
     }
 
     [Theory]
+    [InlineData(null, "")]
+    [InlineData("", "")]
+    [InlineData("   ", "")]
+    [InlineData(null, "Planners")]
     [InlineData("Specific groups", "")]
     [InlineData("unexpected", "Planners")]
-    public void Publishing_rejects_unknown_access_or_specific_groups_without_a_read_group(string access, string groups)
+    public void Publishing_rejects_missing_or_unknown_access_and_groups_without_a_read_group(string? access, string groups)
     {
         var values = Tasks(("access", access), ("readGroups", groups));
         var errors = new List<string>();
         Assert.Null(DataSourceDefinition.Read(Guid.NewGuid(), "Tasks", alias => values.GetValueOrDefault(alias), picked => picked.Split(','), errors));
         Assert.NotEmpty(errors);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData((DataSourceAccess)99)]
+    public async Task Invalid_access_is_a_runtime_configuration_error_even_with_read_groups(DataSourceAccess? access)
+    {
+        var definition = Definition(Tasks()) with { Access = access, ReadGroups = ["Planners"] };
+        Assert.False(DataSourceQueries.CanRead(definition, Owner));
+        Assert.False(DataSourceQueries.CanRead(definition, DataSourceUser.Anonymous));
+        // Access validation happens before opening or even resolving a database connection.
+        Assert.Equal("Select an access value: Public, Not public or Specific groups.",
+            Assert.Single(runtime.Validate(definition with { Connection = "NotRegistered" })));
+        var source = new SqlDataSource(definition, runtime, new TestUsers(), []);
+        Assert.Contains("Select an access value", source.Problem);
+        Assert.False(source.AllowsAnonymousRead);
+        Assert.Equal(503, (await source.LoadAsync("1", Context(Owner), default)).Status);
+        Assert.Equal(503, (await source.InitializeAsync(AnonymousContext, default)).Status);
+        await Assert.ThrowsAsync<DataSourceException>(() => new DataSourceQueries(runtime, new TestUsers(), []).QueryAsync(definition, Context(Owner)));
     }
 
     private sealed class TestUsers : IDataSourceUserResolver
@@ -570,7 +592,7 @@ public sealed class DataSourceTests : IDisposable
     {
         Execute("CREATE TABLE PEOPLE (ID INTEGER PRIMARY KEY, NAME TEXT NOT NULL, PARENT_ID INTEGER NULL)");
         Dictionary<string, object?> People(string source, string mapping = "") => new() {
-            ["alias"] = "people", ["connection"] = "TasksDb", ["source"] = source, ["keyColumns"] = "ID", ["allowUpdate"] = "1", ["mapping"] = mapping,
+            ["alias"] = "people", ["access"] = "Public", ["connection"] = "TasksDb", ["source"] = source, ["keyColumns"] = "ID", ["allowUpdate"] = "1", ["mapping"] = mapping,
         };
         // A self-join reports the parent's NAME as the same table column as the row's own NAME.
         var selfJoin = Working(People("SELECT c.ID, c.PARENT_ID, p.NAME AS PARENT_NAME FROM PEOPLE c LEFT JOIN PEOPLE p ON p.ID = c.PARENT_ID"));
@@ -696,7 +718,7 @@ public sealed class DataSourceTests : IDisposable
     [Fact]
     public async Task Groups_and_allow_flags_limit_who_may_do_what()
     {
-        var readers = Working(Tasks(("readGroups", "Planners"), ("writeGroups", "Leads")));
+        var readers = Working(Tasks(("access", "Specific groups"), ("readGroups", "Planners"), ("writeGroups", "Leads")));
         Assert.Equal(200, (await readers.LoadAsync("1", Context(Owner), default)).Status);
         Assert.Equal(403, (await readers.LoadAsync("1", Context(Other), default)).Status);
         var record = (await readers.LoadAsync("1", Context(Owner), default)).Record!;
@@ -827,7 +849,7 @@ public sealed class DataSourceTests : IDisposable
     public async Task Composite_keys_join_their_values_with_a_bar()
     {
         var pairs = Working(new() {
-            ["alias"] = "pairs", ["connection"] = "TasksDb", ["source"] = "PAIRS", ["keyColumns"] = "A, B",
+            ["alias"] = "pairs", ["access"] = "Public", ["connection"] = "TasksDb", ["source"] = "PAIRS", ["keyColumns"] = "A, B",
             ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1",
         });
         var row = (await pairs.LoadAsync("1|y", Context(Owner), default)).Record!;

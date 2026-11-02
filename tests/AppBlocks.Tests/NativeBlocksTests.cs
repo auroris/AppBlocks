@@ -61,6 +61,10 @@ public sealed class NativeBlocksTests
         var source = types.Single(type => (string?)type.Attribute("Alias") == "sqlDataSource")
             .Descendants("GenericProperty").Single(property => property.Element("Alias")!.Value == "source");
         Assert.Equal("64d2fba9-1cb2-490b-9de9-37211a072cf4", source.Element("Definition")!.Value);
+        var access = types.Single(type => (string?)type.Attribute("Alias") == "sqlDataSource")
+            .Descendants("GenericProperty").Single(property => property.Element("Alias")!.Value == "access");
+        Assert.True((bool)access.Element("Mandatory")!);
+        Assert.Contains("Select an access value", access.Element("MandatoryMessage")!.Value);
         using (var stream = files.GetFileInfo("Schema/DataTypes/AppBlocksTable.config").CreateReadStream()) {
             var picker = XElement.Load(stream);
             Assert.Equal("Umbraco.TextArea", picker.Element("Info")!.Element("EditorAlias")!.Value);

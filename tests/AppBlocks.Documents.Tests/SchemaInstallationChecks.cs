@@ -152,6 +152,7 @@ internal static class SchemaInstallationChecks
         Assert.True(contents.Publish(parent, ["*"]).Success);
         var node = contents.Create("Test source", parent.Id, "sqlDataSource");
         node.SetValue("alias", "source.test"); node.SetValue("keyColumns", "id");
+        node.SetValue("access", "Public");
         node.SetValue("source", "SourceOrders");
         Assert.True(contents.Save(node).Success);
         Assert.True(contents.Publish(node, ["*"]).Success);

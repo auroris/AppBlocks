@@ -101,7 +101,7 @@ public sealed class ApplicationDatabaseTests
 
         var errors = new List<string>();
         var values = new Dictionary<string, object?> {
-            ["alias"] = "notes", ["connection"] = "TestDb", ["source"] = "NOTES", ["keyColumns"] = "NOTE_ID", ["concurrency"] = "VERSION",
+            ["alias"] = "notes", ["access"] = "Public", ["connection"] = "TestDb", ["source"] = "NOTES", ["keyColumns"] = "NOTE_ID", ["concurrency"] = "VERSION",
             ["allowInsert"] = "1", ["allowUpdate"] = "1",
         };
         var definition = DataSourceDefinition.Read(Guid.NewGuid(), "Notes", alias => values.GetValueOrDefault(alias), picked => picked.Split(','), errors);

@@ -22,6 +22,7 @@ public sealed class OracleDialectTests
         var runtime = new DataSourceRuntime(factory, NullLogger<DataSourceRuntime>.Instance);
         var definition = new DataSourceDefinition {
             Key = Guid.NewGuid(), Name = "Orders", Alias = "orders", Connection = "Business", Source = "ORDERS",
+            Access = DataSourceAccess.Public,
             KeyColumns = ["ID"], AllowInsert = true,
             KeySequences = legacy ? new Dictionary<string, string> { ["ID"] = "ORDERS_SEQ" } : new Dictionary<string, string>(),
         };

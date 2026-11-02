@@ -1,6 +1,6 @@
 # The Schedule block
 
-A Schedule block draws resources against time: the rows of one data source down the side, the bars of another across a window of days or hours. It is a Gantt chart whose content comes entirely from two queries, so the block itself has few settings. Anything that varies per row or per bar is a column of a source, colours come from the site's theme or from the data, and a bar's behaviour is a link or a description. The block is in the base package and renders through the data source engine. Sources default to Public and follow page access; a source that requires an account shows anonymous visitors a sign-in notice.
+A Schedule block draws resources against time: the rows of one data source down the side, the bars of another across a window of days or hours. It is a Gantt chart whose content comes entirely from two queries, so the block itself has few settings. Anything that varies per row or per bar is a column of a source, colours come from the site's theme or from the data, and a bar's behaviour is a link or a description. The block is in the base package and renders through the data source engine. Set each source's required Access value to Public to follow page access; a source that requires an account shows anonymous visitors a sign-in notice.
 
 ## Settings
 

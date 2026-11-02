@@ -71,7 +71,7 @@ public sealed class OracleLiveTests(ITestOutputHelper output)
             Assert.Contains(tables, item => item.Name.EndsWith("." + table, StringComparison.Ordinal));
             Assert.Contains(tables, item => item.Name.EndsWith("." + view, StringComparison.Ordinal));
             var definition = Definition(new() {
-                ["alias"] = "oracleLive", ["connection"] = "OracleLive", ["source"] = table, ["keyColumns"] = "ID",
+                ["alias"] = "oracleLive", ["access"] = "Public", ["connection"] = "OracleLive", ["source"] = table, ["keyColumns"] = "ID",
                 ["keySequences"] = JsonSerializer.Serialize(new Dictionary<string, string> { ["ID"] = sequence }),
                 ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1", ["concurrency"] = "VERSION",
                 ["rowRestriction"] = "OWNER_NAME = :USER_NAME", ["insertDefaults"] = "OWNER_NAME = :USER_NAME",

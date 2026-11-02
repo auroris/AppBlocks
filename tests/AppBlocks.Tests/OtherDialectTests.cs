@@ -93,7 +93,7 @@ public sealed class OtherDialectTests
     [Fact]
     public void Sequence_configuration_is_validated_and_changes_the_contract_fingerprint()
     {
-        var values = new Dictionary<string, object?> { ["alias"] = "orders", ["connection"] = "db", ["source"] = "ORDERS", ["keyColumns"] = "ID", ["keySequences"] = """{"ID":"APP.ORDER_IDS"}""" };
+        var values = new Dictionary<string, object?> { ["alias"] = "orders", ["access"] = "Public", ["connection"] = "db", ["source"] = "ORDERS", ["keyColumns"] = "ID", ["keySequences"] = """{"ID":"APP.ORDER_IDS"}""" };
         var errors = new List<string>();
         var definition = DataSourceDefinition.Read(Guid.NewGuid(), "Orders", k => values.GetValueOrDefault(k), _ => [], errors)!;
         Assert.Empty(errors);

@@ -158,6 +158,7 @@ public sealed class StandaloneSiteTests
                 Save(sources);
                 var source = contents.Create("Document rows", sources.Id, "sqlDataSource");
                 source.SetValue("alias", "document.rows"); source.SetValue("connection", "UmbracoDb");
+                source.SetValue("access", "Public");
                 source.SetValue("source", "DocumentTestRows"); source.SetValue("keyColumns", "id"); Save(source);
                 var document = contents.Create("Document test", -1, "paperReport");
                 document.TemplateId = template!.Id;

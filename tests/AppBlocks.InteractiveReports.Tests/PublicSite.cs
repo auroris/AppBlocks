@@ -135,7 +135,7 @@ internal sealed class PublicSite : IAsyncDisposable
         // The data source engine itself, as a form's class and as a tabular block's rows.
         builder.Services.AddScoped<IFormResource>(services => new SqlDataSource(new DataSourceDefinition {
             Key = Key("engine-source"), Name = "Rows", Alias = "public.engine", Connection = ConnectionCatalog.ApplicationConnection, Source = "PUBLIC_ROWS",
-            Access = services.GetRequiredService<Switches>().PublicEngine ? null : DataSourceAccess.NotPublic,
+            Access = services.GetRequiredService<Switches>().PublicEngine ? DataSourceAccess.Public : DataSourceAccess.NotPublic,
             KeyColumns = ["id"], AllowInsert = true, AllowUpdate = true, AllowDelete = true,
         }, services.GetRequiredService<DataSourceRuntime>(), services.GetRequiredService<IDataSourceUserResolver>(), services.GetServices<IDataSourcePolicy>()));
         builder.Services.AddSingleton<IDataSourcePolicy, SwitchedPolicy>();

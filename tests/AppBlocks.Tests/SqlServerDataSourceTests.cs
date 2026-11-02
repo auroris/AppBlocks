@@ -136,7 +136,7 @@ public sealed class SqlServerDataSourceTests
 
         var policy = new CountingPolicy();
         var orders = Source(runtime, user, new() {
-            ["alias"] = "orders", ["connection"] = "LocalDb", ["source"] = "dbo.ORDERS", ["keyColumns"] = "ORDER_ID", ["concurrency"] = "VERSION",
+            ["alias"] = "orders", ["access"] = "Public", ["connection"] = "LocalDb", ["source"] = "dbo.ORDERS", ["keyColumns"] = "ORDER_ID", ["concurrency"] = "VERSION",
             ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1", ["rowRestriction"] = "OWNER = :USER_NAME",
             ["insertDefaults"] = "OWNER = :USER_NAME\nORDER_DATE = :NOW", ["auditColumns"] = "updatedBy = UPDATED_BY\nupdatedAt = UPDATED_AT",
         }, policy);
@@ -168,7 +168,7 @@ public sealed class SqlServerDataSourceTests
         Assert.Equal(204, (await orders.DeleteAsync("1", "2", context, default)).Status);
 
         var notes = Source(runtime, user, new() {
-            ["alias"] = "notes", ["connection"] = "LocalDb", ["source"] = "SELECT ID, BODY, RV FROM dbo.NOTES", ["keyColumns"] = "ID", ["concurrency"] = "RV",
+            ["alias"] = "notes", ["access"] = "Public", ["connection"] = "LocalDb", ["source"] = "SELECT ID, BODY, RV FROM dbo.NOTES", ["keyColumns"] = "ID", ["concurrency"] = "RV",
             ["allowInsert"] = "1", ["allowUpdate"] = "1",
         });
         Assert.True(notes.Problem is null, notes.Problem);
@@ -183,7 +183,7 @@ public sealed class SqlServerDataSourceTests
         Assert.Equal(404, (await notes.LoadAsync("not-a-guid", context, default)).Status);
 
         var errors = runtime.Validate(Definition(new() {
-            ["alias"] = "broken", ["connection"] = "LocalDb", ["source"] = "dbo.ORDERS", ["keyColumns"] = "ORDER_ID", ["allowUpdate"] = "1",
+            ["alias"] = "broken", ["access"] = "Public", ["connection"] = "LocalDb", ["source"] = "dbo.ORDERS", ["keyColumns"] = "ORDER_ID", ["allowUpdate"] = "1",
             ["customStatements"] = "-- update\nUPDATE dbo.ORDERS SET NOPE = 1 WHERE ORDER_ID = :FIELD.orderId",
         }));
         Assert.Contains(errors, e => e.Contains("does not compile"));

@@ -44,7 +44,7 @@ public sealed class PublishedDataCatalog(IUmbracoContextFactory contexts, IDocum
     /// <summary>The source a list reads: the data source it selects, or its own connection and SQL.</summary>
     private DataSourceDefinition? ListSource(Guid key, string name, Func<string, object?> value) => Text(value, "dataSource") is { Length: > 0 } selection
         ? ResolveSource(selection)
-        : new DataSourceDefinition { Key = key, Name = name, Alias = Text(value, "alias"), Connection = Text(value, "connection"), Source = Text(value, "sql") };
+        : new DataSourceDefinition { Key = key, Name = name, Alias = Text(value, "alias"), Connection = Text(value, "connection"), Source = Text(value, "sql"), Access = DataSourceAccess.Public };
 
 
     /// <summary>

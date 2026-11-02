@@ -151,7 +151,7 @@ public sealed class ConnectionRuntimeTests
         }
         var runtime = new DataSourceRuntime(connections, NullLogger<DataSourceRuntime>.Instance, managed: catalog);
         var errors = new List<string>();
-        var values = new Dictionary<string, object?> { ["alias"] = "tasks", ["source"] = "Tasks", ["keyColumns"] = "id" };
+        var values = new Dictionary<string, object?> { ["alias"] = "tasks", ["access"] = "Public", ["source"] = "Tasks", ["keyColumns"] = "id" };
         var definition = DataSourceDefinition.Read(Guid.NewGuid(), "Tasks", key => values.GetValueOrDefault(key), _ => [], errors)!;
         Assert.Empty(errors);
         Assert.Equal(ConnectionCatalog.ApplicationConnection, definition.Connection);

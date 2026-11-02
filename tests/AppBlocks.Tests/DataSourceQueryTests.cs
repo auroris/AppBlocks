@@ -31,6 +31,7 @@ public sealed class DataSourceQueryTests : IDisposable
     private static DataSourceDefinition Definition => new() {
         Key = Guid.NewGuid(), Alias = "choices", Name = "Choices", Connection = "QueryDb", Source = "CHOICES",
         RowRestriction = "OWNER = :USER_SID", ReadGroups = ["Pilots"],
+        Access = DataSourceAccess.SpecificGroups,
     };
     private static FormExecutionContext Context => new(new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, "42")], IdentityConstants.ApplicationScheme)), Guid.NewGuid(), Guid.NewGuid(), "1");
 
@@ -65,8 +66,8 @@ public sealed class DataSourceQueryTests : IDisposable
         var queries = new DataSourceQueries(runtime, new Users(null), []);
         Assert.True(queries.AllowsAnonymousRead(source));
         Assert.Equal(2, (await queries.QueryAsync(source, context)).Rows.Count);
-        Assert.Equal(2, (await queries.QueryAsync(source with { Access = null, ReadGroups = [] }, context)).Rows.Count);
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(source with { Access = null }, context));
+        await Assert.ThrowsAsync<DataSourceException>(() => queries.QueryAsync(source with { Access = null, ReadGroups = [] }, context));
+        await Assert.ThrowsAsync<DataSourceException>(() => queries.QueryAsync(source with { Access = null }, context));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(source with { Access = DataSourceAccess.NotPublic }, context));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(source with { Access = DataSourceAccess.SpecificGroups }, context));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(source with { RowRestriction = ":USER_NAME IS NULL" }, context));

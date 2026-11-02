@@ -81,13 +81,14 @@ public sealed class DataSourceAuthoringHttpTests
             contents.Save(sources);
             var node = contents.Create("Draft source", sources.Id, DataSourceSchema.SqlAlias);
             node.SetValue("alias", "saved-draft");
+            node.SetValue("access", "Public");
             node.SetValue("connection", ConnectionCatalog.UmbracoConnection);
             node.SetValue("source", "MISSING_TABLE");
             contents.Save(node);
             const string path = "/umbraco/management/api/v1/data-sources/test";
             var request = new {
                 key = node.Key, parentKey = sources.Key,
-                values = new { alias = "current-draft", connection = ConnectionCatalog.UmbracoConnection, source = "SELECT :PARAM.label AS TITLE" },
+                values = new { alias = "current-draft", access = "Public", connection = ConnectionCatalog.UmbracoConnection, source = "SELECT :PARAM.label AS TITLE" },
                 samples = new Dictionary<string, object?> { ["PARAM.label"] = "' OR 1=1 --" },
             };
             using var anonymous = new HttpClient { BaseAddress = address };
@@ -111,6 +112,14 @@ public sealed class DataSourceAuthoringHttpTests
             var result = await response.Content.ReadFromJsonAsync<JsonElement>();
             Assert.Empty(result.GetProperty("errors").EnumerateArray());
             Assert.Equal("' OR 1=1 --", result.GetProperty("row").GetProperty("TITLE").GetString());
+            using var missingAccess = await client.PostAsJsonAsync(path, new {
+                request.key, request.parentKey,
+                values = new { request.values.alias, request.values.connection, request.values.source }, request.samples,
+            });
+            Assert.Equal(HttpStatusCode.OK, missingAccess.StatusCode);
+            var invalid = await missingAccess.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Contains(invalid.GetProperty("errors").EnumerateArray(), error => error.GetString()!.Contains("Select an access value"));
+            Assert.Equal(JsonValueKind.Null, invalid.GetProperty("row").ValueKind);
             var persisted = contents.GetById(node.Key)!;
             Assert.Equal("MISSING_TABLE", persisted.GetValue<string>("source"));
             Assert.False(persisted.Published);
