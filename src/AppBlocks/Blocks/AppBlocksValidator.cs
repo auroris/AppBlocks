@@ -131,6 +131,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
     {
         if (Text(block, "paperReport") is { Length: > 0 } paper) PaperReport(paper, errors);
         var definition = BlockValueSets.Parse(Text(block, "formInterface"));
+        if (definition is not SingleBlockValue) { errors.Add("Recreate the Form Interface using the Single Block editor."); return; }
         var interfaces = definition.ContentData.ToArray();
         var interfaceLayout = BlockValueSets.Layout(definition).ToArray();
         if (interfaces.Length != 1 || Alias(interfaces[0]) != "appFormInterface" || interfaceLayout.Length != 1

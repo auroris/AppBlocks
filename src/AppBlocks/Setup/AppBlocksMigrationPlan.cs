@@ -15,5 +15,6 @@ public sealed class AppBlocksMigrationPlan() : AppBlocksPackagePlan("AppBlocks",
         // The SQL data source's optional backing class.
         To<AddDataSourceBackingClass>("2026-11-02-data-source-backing-class");
         To<InstallPackageDefinitions>("2026-11-02-package-install");
+        To<UseSingleBlockFormInterface>("2026-11-02-single-block-form-interface");
     }
 }

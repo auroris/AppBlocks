@@ -231,8 +231,8 @@ internal sealed class AntiSpamSite : IAsyncDisposable
     private static Item FormBlock(Guid key, params Item[] fields) => FormBlock(key, false, fields);
     private static Item FormBlock(Guid key, bool viewOnly, params Item[] fields)
     {
-        var binding = Set("Umbraco.BlockList");
-        Add(binding, "Umbraco.BlockList", AppBlockSchema.Key("antispam-site:interface:" + key), AppBlockSchema.Key("appFormInterface"), ("resource", JsonValue.Create(RecordingContact.ResourceAlias)), ("viewOnly", JsonValue.Create(viewOnly)));
+        var binding = Set("Umbraco.SingleBlock");
+        Add(binding, "Umbraco.SingleBlock", AppBlockSchema.Key("antispam-site:interface:" + key), AppBlockSchema.Key("appFormInterface"), ("resource", JsonValue.Create(RecordingContact.ResourceAlias)), ("viewOnly", JsonValue.Create(viewOnly)));
         return new(key, "appForm", [("heading", "Form"), ("formInterface", binding)], fields);
     }
 

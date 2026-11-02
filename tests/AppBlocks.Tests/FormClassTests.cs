@@ -15,12 +15,20 @@ public sealed class FormClassTests
         Assert.Contains("Select a registered C# form class.", validator.ValidateEmbedded(Form("content-node")));
     }
 
+    [Fact]
+    public void Form_validation_explains_when_a_saved_interface_still_uses_Block_List()
+    {
+        var validator = new AppBlocksValidator(new FormResourceRegistry([new Resource("orders")], []));
+        var legacy = Form("orders").Replace("Umbraco.SingleBlock", "Umbraco.BlockList", StringComparison.Ordinal);
+        Assert.Contains("Recreate the Form Interface using the Single Block editor.", validator.ValidateEmbedded(legacy));
+    }
+
     private static string Form(string resource)
     {
         var key = Guid.NewGuid(); var configuration = Guid.NewGuid();
         var formInterface = JsonSerializer.Serialize(new {
             contentData = new[] { new { key = configuration, contentTypeKey = AppBlockSchema.Key("appFormInterface"), values = new[] { new { alias = "resource", value = resource } } } },
-            layout = new Dictionary<string, object> { ["Umbraco.BlockList"] = new[] { new { contentKey = configuration } } },
+            layout = new Dictionary<string, object> { ["Umbraco.SingleBlock"] = new[] { new { contentKey = configuration } } },
         });
         return JsonSerializer.Serialize(new {
             contentData = new[] { new { key, contentTypeKey = AppBlockSchema.Key("appForm"), values = new[] { new { alias = "formInterface", value = formInterface } } } },

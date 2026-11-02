@@ -71,6 +71,11 @@ for (const name of packages) {
       assert.ok(response.ok(), `${name}/${file}: ${response.status()} ${await response.text()}`);
       const definition = await response.json();
       assert.equal(definition.id, key);
+      if (key === 'e40346b8-4576-8645-4dff-f8032990c127') {
+        assert.equal(definition.editorAlias, 'Umbraco.SingleBlock');
+        assert.equal(definition.editorUiAlias, 'Umb.PropertyEditorUi.BlockSingle');
+        passed('Form Interface installs with the native Single Block editor');
+      }
       if (key === '0ec4f87b-ecaf-9c30-dbce-df5a5ade88f4') {
         const expectedChildren = ['6a79805a-4170-811d-64a8-83ee1422bade',
           ...(companions ? ['cf9efe5f-6142-c0a0-360e-bd3b4bc20882'] : []), '8b8fef37-dbd6-38e5-04d6-9c3bb55c3472'];

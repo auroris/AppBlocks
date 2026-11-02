@@ -26,8 +26,8 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
         var matches = forms.Where(b => b.ContentKey == key).ToArray();
         if (matches.Length != 1) return null;
         var block = matches[0];
-        var interfaces = block.Content.Value<BlockListModel>("formInterface");
-        if (interfaces?.Count != 1 || resources.RegisteredResources.GetValueOrDefault(interfaces[0].Content.Value<string>("resource") ?? "") is not { } resource) return null;
+        var configuration = block.Content.Value<BlockListItem>("formInterface")?.Content;
+        if (configuration is null || resources.RegisteredResources.GetValueOrDefault(configuration.Value<string>("resource") ?? "") is not { } resource) return null;
         var children = AppBlockContent.Flatten(block.Areas.SelectMany(a => a)).ToArray();
         if (children.Any(b => b.Content.ContentType.Alias is "appForm" or "appReport")) return null;
         var fields = children.Where(b => AppBlockSchema.FieldAliases.Contains(b.Content.ContentType.Alias)).ToArray();
@@ -38,7 +38,7 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
         if (selected.Length > 0 && definitions is not null) await definitions.LoadAsync();
         var lists = selected.Select(s => definitions?.FindList(s)).ToArray();
         if (lists.Any(list => list is null)) return null;
-        return new(page, block, interfaces[0].Content, resource, fields) { Culture = culture, AntiSpam = children.Where(b => b.Content.ContentType.Alias == AppBlockSchema.AntiSpamAlias).ToArray(), ListsRevision = string.Concat(lists.Select(list => ":" + list!.Key + ":" + list.DataSource.ComputeFingerprint() + ":" + list.DisplayColumn + ":" + list.ValueColumn + ":" + list.MaximumRows)) };
+        return new(page, block, configuration, resource, fields) { Culture = culture, AntiSpam = children.Where(b => b.Content.ContentType.Alias == AppBlockSchema.AntiSpamAlias).ToArray(), ListsRevision = string.Concat(lists.Select(list => ":" + list!.Key + ":" + list.DataSource.ComputeFingerprint() + ":" + list.DisplayColumn + ":" + list.ValueColumn + ":" + list.MaximumRows)) };
     }
 
     public Dictionary<string, string[]> Validate(JsonElement input, bool creating)

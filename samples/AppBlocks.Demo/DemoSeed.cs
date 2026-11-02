@@ -98,8 +98,8 @@ public sealed class DemoSeed(IConfiguration configuration, IServiceProvider serv
         var source = new JsonObject { ["kind"] = "table", ["connection"] = ConnectionCatalog.ApplicationConnection, ["source"] = "AppBlocksDemoTasks" };
         Add(body, editor, Key(prefix + "-report"), AppBlockSchema.Key("appReport"), ("heading", JsonValue.Create("Tasks")), ("dataSource", JsonValue.Create(source.ToJsonString())), ("pageSize", JsonValue.Create(10)));
         var fields = Set("Umbraco.BlockGrid");
-        var iface = Set("Umbraco.BlockList");
-        Add(iface, "Umbraco.BlockList", Key(prefix + "-interface"), AppBlockSchema.Key("appFormInterface"), ("resource", JsonValue.Create("demo.tasks")), ("keyParameter", JsonValue.Create(prefix + "Id")));
+        var iface = Set("Umbraco.SingleBlock");
+        Add(iface, "Umbraco.SingleBlock", Key(prefix + "-interface"), AppBlockSchema.Key("appFormInterface"), ("resource", JsonValue.Create("demo.tasks")), ("keyParameter", JsonValue.Create(prefix + "Id")));
         var form = Add(fields, "Umbraco.BlockGrid", Key(prefix + "-form"), AppBlockSchema.Key("appForm"), ("heading", JsonValue.Create("Edit task")), ("formInterface", iface));
         var field = Add(fields, "Umbraco.BlockGrid", Key(prefix + "-title"), AppBlockSchema.Key("appText"), ("field", JsonValue.Create("title")), ("label", JsonValue.Create("Task title")));
         fields["layout"]!["Umbraco.BlockGrid"]!.AsArray().Remove(field);

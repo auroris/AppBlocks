@@ -199,8 +199,8 @@ internal sealed class SetupSite : IAsyncDisposable
 
     private static JsonObject Interface()
     {
-        var blocks = Set("Umbraco.BlockList");
-        Add(blocks, "Umbraco.BlockList", AppBlockSchema.Key("setup-site:interface"), AppBlockSchema.Key("appFormInterface"), ("resource", JsonValue.Create(TasksResource)), ("keyParameter", JsonValue.Create("taskId")));
+        var blocks = Set("Umbraco.SingleBlock");
+        Add(blocks, "Umbraco.SingleBlock", AppBlockSchema.Key("setup-site:interface"), AppBlockSchema.Key("appFormInterface"), ("resource", JsonValue.Create(TasksResource)), ("keyParameter", JsonValue.Create("taskId")));
         return blocks;
     }
 

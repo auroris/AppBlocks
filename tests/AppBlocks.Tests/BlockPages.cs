@@ -145,7 +145,7 @@ internal static class BlockPages
                 }),
                 ["settingsData"] = new JsonArray(),
                 ["expose"] = new JsonArray(new JsonObject { ["contentKey"] = formInterface, ["culture"] = null, ["segment"] = null }),
-                ["layout"] = new JsonObject { ["Umbraco.BlockList"] = new JsonArray(new JsonObject { ["contentKey"] = formInterface, ["settingsKey"] = null }) },
+                ["layout"] = new JsonObject { ["Umbraco.SingleBlock"] = new JsonArray(new JsonObject { ["contentKey"] = formInterface, ["settingsKey"] = null }) },
             },
         });
         return form;

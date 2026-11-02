@@ -354,7 +354,7 @@ public sealed class SchemaInstaller(IContentTypeService contentTypes, IDataTypeS
     }
 
     /// <summary>A data type definition's editor, and its storage and settings as that editor keeps them.</summary>
-    private static (XElement Info, IDataEditor Editor, ValueStorageType Storage, IDictionary<string, object> Configuration) Editor(XElement definition,
+    internal static (XElement Info, IDataEditor Editor, ValueStorageType Storage, IDictionary<string, object> Configuration) Editor(XElement definition,
         PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer)
     {
         var info = definition.Element("Info")!;

@@ -285,8 +285,8 @@ internal sealed class PublicSite : IAsyncDisposable
         => Block(AppBlockSchema.Key("public-site:field:" + field + ":" + label), "appText", [("field", field), ("label", label), .. values]);
     private static Item FormBlock(Guid key, string resource, params Item[] fields)
     {
-        var binding = Set("Umbraco.BlockList");
-        Add(binding, "Umbraco.BlockList", AppBlockSchema.Key("public-site:interface:" + key), AppBlockSchema.Key("appFormInterface"), ("resource", JsonValue.Create(resource)));
+        var binding = Set("Umbraco.SingleBlock");
+        Add(binding, "Umbraco.SingleBlock", AppBlockSchema.Key("public-site:interface:" + key), AppBlockSchema.Key("appFormInterface"), ("resource", JsonValue.Create(resource)));
         return new(key, "appForm", [("heading", "Form"), ("formInterface", binding)], fields);
     }
 

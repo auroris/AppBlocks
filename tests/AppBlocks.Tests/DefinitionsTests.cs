@@ -8,6 +8,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Packaging;
+using Umbraco.Cms.Core.PropertyEditors;
+using Umbraco.Cms.Core.Serialization;
 using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Core.Services.OperationStatus;
 using Umbraco.Cms.Core.Strings;
@@ -23,6 +25,56 @@ public sealed class DefinitionsTests
 {
     private const string Api = "/umbraco/management/api/v1/appblocks/definitions";
     private static readonly Guid FormsContainerGrid = Guid.Parse("97b36051-4abe-e750-6667-9cb7ee6a9a99");
+
+    [Fact]
+    public async Task Single_Block_upgrade_changes_only_the_packages_interface_and_is_safe_to_repeat()
+    {
+        await using var site = await BlockSite.StartAsync();
+        using var scope = site.CreateScope();
+        var services = scope.ServiceProvider;
+        var dataTypes = services.GetRequiredService<IDataTypeService>();
+        var types = services.GetRequiredService<IContentTypeService>();
+        var editors = services.GetRequiredService<PropertyEditorCollection>();
+        var serializer = services.GetRequiredService<IConfigurationEditorJsonSerializer>();
+        var keyValues = services.GetRequiredService<IKeyValueService>();
+        var current = (await dataTypes.GetAsync(UseSingleBlockFormInterface.DataTypeKey))!;
+        var originalId = current.Id;
+        Assert.Equal("Umbraco.SingleBlock", current.EditorAlias);
+        Assert.Equal("Umb.PropertyEditorUi.BlockSingle", current.EditorUiAlias);
+        Assert.True(types.Get("appForm")!.PropertyTypes.Single(p => p.Alias == "formInterface").Mandatory);
+
+        var listEditor = editors.Single(e => e.Alias == "Umbraco.BlockList");
+        var oldConfiguration = new Dictionary<string, object> {
+            ["blocks"] = new[] { new { contentElementTypeKey = AppBlockSchema.Key("appFormInterface") } },
+            ["validationLimit"] = new { min = 1, max = 1 }
+        };
+        current.Editor = listEditor;
+        current.EditorUiAlias = "Umb.PropertyEditorUi.BlockList";
+        current.ConfigurationData = oldConfiguration;
+        Assert.True((await dataTypes.UpdateAsync(current, Constants.Security.SuperUserKey)).Success);
+        var host = new DataType(listEditor, serializer) {
+            Key = Guid.NewGuid(), Name = "Host-owned single-item list", EditorUiAlias = "Umb.PropertyEditorUi.BlockList",
+            ConfigurationData = oldConfiguration
+        };
+        Assert.True((await dataTypes.CreateAsync(host, Constants.Security.SuperUserKey)).Success);
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            keyValues.SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-02-package-install");
+            await RunPlanAsync(services);
+            var upgraded = (await dataTypes.GetAsync(current.Key))!;
+            Assert.Equal(originalId, upgraded.Id);
+            Assert.Equal("Umbraco.SingleBlock", upgraded.EditorAlias);
+            Assert.Equal("Umb.PropertyEditorUi.BlockSingle", upgraded.EditorUiAlias);
+            var configuration = Assert.IsType<SingleBlockConfiguration>(upgraded.ConfigurationObject);
+            Assert.Equal(AppBlockSchema.Key("appFormInterface"), Assert.Single(configuration.Blocks).ContentElementTypeKey);
+            Assert.False(upgraded.ConfigurationData.ContainsKey("validationLimit"));
+            Assert.Equal("Umbraco.SingleBlock", types.Get("appForm")!.PropertyTypes.Single(p => p.Alias == "formInterface").PropertyEditorAlias);
+            var untouched = (await dataTypes.GetAsync(host.Key))!;
+            Assert.Equal("Umbraco.BlockList", untouched.EditorAlias);
+            Assert.IsType<BlockListConfiguration>(untouched.ConfigurationObject);
+        }
+    }
 
     [Fact]
     public async Task The_plan_state_is_recorded_and_a_reinstall_resets_the_definitions_while_the_site_keeps_its_content()
