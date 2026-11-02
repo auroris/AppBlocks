@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AppBlocks.Api;
 using AppBlocks.Blocks;
 using AppBlocks.DataSources;
 using AppBlocks.Setup;
@@ -273,6 +274,53 @@ public sealed class DefinitionsTests
         // The later installation step restores missing definitions in the same package plan.
         Assert.NotNull(bareTypes.Get(DataSourceSchema.SqlAlias));
         Assert.NotNull(await bareServices.GetRequiredService<IDataTypeService>().GetAsync(pickerKey));
+    }
+
+    [Fact]
+    public async Task An_existing_site_gains_API_endpoints_and_their_root()
+    {
+        await using var site = await BlockSite.BootAsync();
+        using var scope = site.CreateScope();
+        var services = scope.ServiceProvider;
+        var types = services.GetRequiredService<IContentTypeService>();
+        var dataTypes = services.GetRequiredService<IDataTypeService>();
+        await WaitForInstallAsync(types);
+        var fresh = types.Get(ApiEndpointCatalog.Alias)!;
+        var editors = fresh.PropertyTypes.Select(p => p.DataTypeKey).ToHashSet();
+        string[] Allowed() => types.Get(DataSourceSchema.RootAlias)!.AllowedContentTypes!.OrderBy(c => c.SortOrder).Select(c => c.Alias).ToArray();
+        Assert.Equal("apiEndpoint", Allowed()[^1]);
+
+        var container = types.Get(ApiEndpointCatalog.RootAlias)!;
+
+        // The site as it was before the step: no endpoint type or root, none of their data types, and the plan at the step before.
+        Assert.Equal(ContentTypeOperationStatus.Success, await types.DeleteAsync(container.Key, Constants.Security.SuperUserKey));
+        Assert.Equal(ContentTypeOperationStatus.Success, await types.DeleteAsync(fresh.Key, Constants.Security.SuperUserKey));
+        var own = new List<Guid>();
+        foreach (var dataType in await dataTypes.GetAllAsync())
+            if (dataType.EditorUiAlias is "AppBlocks.ApiRoute" or "AppBlocks.ApiEndpointTest" || dataType.Name == "Application: API shape")
+            {
+                own.Add(dataType.Key);
+                Assert.True((await dataTypes.DeleteAsync(dataType.Key, Constants.Security.SuperUserKey)).Success);
+            }
+        Assert.Equal(3, own.Count);
+        Assert.DoesNotContain("apiEndpoint", Allowed());
+        services.GetRequiredService<IKeyValueService>().SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-02-single-block-form-interface");
+        await RunPlanAsync(services);
+
+        var added = types.Get(ApiEndpointCatalog.Alias)!;
+        Assert.Equal(fresh.Key, added.Key);
+        Assert.Equal(fresh.PropertyTypes.Select(p => (p.Alias, p.DataTypeKey)).Order(), added.PropertyTypes.Select(p => (p.Alias, p.DataTypeKey)).Order());
+        foreach (var key in own) Assert.Contains(key, editors);
+        foreach (var key in editors) Assert.NotNull(await dataTypes.GetAsync(key));
+        Assert.Equal(["sqlDataSource", "listOfValues", "apiEndpoint"], Allowed());
+        var root = types.Get(ApiEndpointCatalog.RootAlias)!;
+        Assert.Equal((container.Key, true), (root.Key, root.AllowedAsRoot));
+        Assert.Equal(["apiEndpoint"], root.AllowedContentTypes!.Select(c => c.Alias));
+
+        // Run again over a site that has it: nothing changes.
+        services.GetRequiredService<IKeyValueService>().SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-02-single-block-form-interface");
+        await RunPlanAsync(services);
+        Assert.Equal(["sqlDataSource", "listOfValues", "apiEndpoint"], Allowed());
     }
 
     /// <summary>Takes the backing class away again, as a site that has not run its step has it, and sets the plan back before the step.</summary>

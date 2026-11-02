@@ -53,7 +53,7 @@ public sealed class PublishedDataCatalog(IUmbracoContextFactory contexts, IDocum
     /// What a node reads besides itself, for the definition cache: the data source's published definition and
     /// whether its schema could be read, so republishing, unpublishing or recovering the source reads the node again.
     /// </summary>
-    private string SourceVersion(DataSourceDefinition? source)
+    internal string SourceVersion(DataSourceDefinition? source)
     {
         if (source is null) return "";
         var (fingerprint, entry) = PlanOf(source);
@@ -61,7 +61,7 @@ public sealed class PublishedDataCatalog(IUmbracoContextFactory contexts, IDocum
     }
 
     /// <summary>One look at a source's plan per scope, so a cached definition and the version it is cached under agree.</summary>
-    private (string Fingerprint, DataSourceRuntime.PlanEntry Entry) PlanOf(DataSourceDefinition source)
+    internal (string Fingerprint, DataSourceRuntime.PlanEntry Entry) PlanOf(DataSourceDefinition source)
     {
         var fingerprint = source.ComputeFingerprint() + ":" + (managed?.Revision(source.Connection) ?? "");
         if (!plans.TryGetValue(fingerprint, out var entry)) plans[fingerprint] = entry = runtime.Plan(source);

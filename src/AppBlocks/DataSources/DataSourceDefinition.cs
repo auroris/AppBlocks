@@ -174,7 +174,7 @@ public sealed record DataSourceDefinition
             errors.Add($"Allow anonymous writes cannot be combined with the insert default for {value.Column}, which uses {value.Variable}: a visitor without an account has no such value.");
     }
 
-    private static DataSourceAccess? ReadAccess(string text) => text.ToLowerInvariant() switch {
+    internal static DataSourceAccess? ReadAccess(string text) => text.ToLowerInvariant() switch {
         "public" => DataSourceAccess.Public,
         "not public" => DataSourceAccess.NotPublic,
         "specific groups" => DataSourceAccess.SpecificGroups,

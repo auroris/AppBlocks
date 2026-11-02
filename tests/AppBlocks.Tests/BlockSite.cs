@@ -151,7 +151,7 @@ internal sealed class BlockSite : IAsyncDisposable
     public IServiceScope CreateScope() => app.Services.CreateScope();
 
     /// <summary>A browser stand-in with its own cookies that does not follow redirects.</summary>
-    public HttpClient CreateClient() => new(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = Address, Timeout = TimeSpan.FromSeconds(30) };
+    public HttpClient CreateClient(CookieContainer? cookies = null) => new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies ?? new() }) { BaseAddress = Address, Timeout = TimeSpan.FromSeconds(30) };
 
     public AttachmentsClient Attachments(HttpClient client, Guid page, Guid block) => new(client, PathBase, page, block);
     public TabularClient Tabular(HttpClient client, Guid page, Guid block) => new(client, PathBase, page, block);
@@ -275,12 +275,13 @@ internal sealed class BlockSite : IAsyncDisposable
         Assert.True(changed.Succeeded, string.Join("; ", changed.Errors.Select(error => error.Description)));
     }
 
-    public Task<HttpClient> SignInAsAdministratorAsync() => SignInManagementApiAsync(AdminEmail, password);
+    public Task<HttpClient> SignInAsAdministratorAsync(CookieContainer? cookies = null) => SignInManagementApiAsync(AdminEmail, password, cookies);
 
     /// <summary>Signs in as the backoffice does: the password login, then the PKCE code flow of the backoffice's client for the management API's token.</summary>
-    public async Task<HttpClient> SignInManagementApiAsync(string username, string userPassword)
+    /// <param name="cookies">Receives the backoffice cookies the token relies on, for a caller that hands them on.</param>
+    public async Task<HttpClient> SignInManagementApiAsync(string username, string userPassword, CookieContainer? cookies = null)
     {
-        var client = CreateClient();
+        var client = CreateClient(cookies);
         const string security = "/umbraco/management/api/v1/security/back-office";
         using var login = await client.PostAsJsonAsync(security + "/login", new { username, password = userPassword });
         Assert.True(login.IsSuccessStatusCode, "Test sign-in failed: " + login.StatusCode);

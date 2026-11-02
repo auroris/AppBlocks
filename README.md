@@ -53,6 +53,7 @@ Sites using Umbraco's conventional `blockgrid/Components` or `blocklist/Componen
 | [Business rules](docs/business-rules.md) | Identity, groups, ownership, validation, and authorization scenarios. Also under **Settings → AppBlocks → Business rules** |
 | [The C# section](docs/csharp-editor.md) | Writing form classes and backing classes in the backoffice on a development site, compiled while it runs, and the wizard that writes them for a table |
 | [Connections](docs/connections.md) | The default database, extra connections, upload storage and Oracle modes |
+| [API endpoints](docs/api-endpoints.md) | Rows of a data source as JSON over GET at a route you define: parameters, access without a page, shapes and limits |
 | [Database setup](docs/database-setup.md) | The tables AppBlocks creates, and what to do when the database account may not |
 | [Anti-spam](docs/anti-spam.md) | The Anti-spam block, its keys, privacy and rate limits |
 | [Shuttle field](docs/shuttle.md) | Two lists, ordered selections, and single-line CSV values |

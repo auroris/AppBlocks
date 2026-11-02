@@ -143,9 +143,11 @@ public sealed class OracleDialect : SqlDialect
 
     private static int? OptionalInt(DbDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : Convert.ToInt32(reader.GetValue(ordinal), Invariant);
 
-    public override string Select(string from, IEnumerable<string> columns, IReadOnlyList<(string Column, string Marker)> keys, string? restriction, int? limit = null)
+    public override string Select(string from, IEnumerable<string> columns, IReadOnlyList<(string Column, string Marker)> keys, string? restriction, int? limit = null,
+        IReadOnlyList<(string Column, bool Descending)>? order = null)
     {
-        var query = base.Select(from, columns, keys, restriction);
+        // Sorted inside, so ROWNUM counts the sorted rows.
+        var query = base.Select(from, columns, keys, restriction, order: order);
         // ROWNUM works on both releases, including queries whose outer projection must stay unchanged.
         return limit is { } rows ? $"SELECT * FROM (\n{query}\n) WHERE ROWNUM <= {rows.ToString(Invariant)}" : query;
     }

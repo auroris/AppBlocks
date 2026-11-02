@@ -65,7 +65,10 @@ internal static class SchemaInstallationChecks
         }
 
         var sources = types.Get("dataSources")!;
-        Assert.Equal(new[] { "sqlDataSource", "listOfValues" }, sources.AllowedContentTypes!.OrderBy(c => c.SortOrder).Select(c => c.Alias));
+        Assert.Equal(new[] { "sqlDataSource", "listOfValues", "apiEndpoint" }, sources.AllowedContentTypes!.OrderBy(c => c.SortOrder).Select(c => c.Alias));
+        var endpoints = types.Get("apiEndpoints")!;
+        Assert.True(endpoints.AllowedAsRoot);
+        Assert.Equal(new[] { "apiEndpoint" }, endpoints.AllowedContentTypes!.Select(c => c.Alias));
         await VerifyRowSourceAsync(services);
         await SchemaFolderChecks.VerifyAsync(services);
         var grid = Assert.Single(await dataTypes.GetByEditorAliasAsync("Umbraco.BlockGrid"), d => d.Name == "AppBlocks: Forms container");

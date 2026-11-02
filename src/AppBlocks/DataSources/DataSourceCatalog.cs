@@ -116,13 +116,13 @@ public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMembe
 }
 
 /// <summary>
-/// Gives data source nodes a URL segment of their own key, so a data source named like a page ("Orders") can never
+/// Gives data source and API endpoint nodes a URL segment of their own key, so a node named like a page ("Orders") can never
 /// take that page's URL. The nodes have no template, so their own URLs show nothing.
 /// </summary>
 public sealed class DataSourceUrlSegmentProvider : IUrlSegmentProvider
 {
     public string? GetUrlSegment(IContentBase content, string? culture = null)
-        => content.ContentType.Alias is DataSourceSchema.RootAlias or DataSourceSchema.SqlAlias or "reportDefinition" or PublishedDataCatalog.ListAlias ? "data-source-" + content.Key.ToString("N") : null;
+        => content.ContentType.Alias is DataSourceSchema.RootAlias or DataSourceSchema.SqlAlias or "reportDefinition" or PublishedDataCatalog.ListAlias or Api.ApiEndpointCatalog.RootAlias or Api.ApiEndpointCatalog.Alias ? "data-source-" + content.Key.ToString("N") : null;
 }
 
 public static class DataSourceExtensions

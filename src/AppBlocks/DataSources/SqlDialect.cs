@@ -156,8 +156,13 @@ public abstract class SqlDialect
     public string From(TableName? table, string? query) => table is not null ? Quote(table) : "(\n" + query + "\n)";
     public string ProbeText(string from, string? restriction = null) => $"SELECT * FROM {from} src WHERE 1 = 0{Restrict(restriction)}";
 
-    public virtual string Select(string from, IEnumerable<string> columns, IReadOnlyList<(string Column, string Marker)> keys, string? restriction, int? limit = null)
-        => $"SELECT {Top(limit)}{string.Join(", ", columns.Select(c => "src." + Quote(c)))} FROM {from} src WHERE {Match("src.", keys)}{Restrict(restriction)}{Limit(limit)}";
+    /// <param name="order">Columns of the row source to sort by, as the schema spells them; null or empty leaves the order to the database.</param>
+    public virtual string Select(string from, IEnumerable<string> columns, IReadOnlyList<(string Column, string Marker)> keys, string? restriction, int? limit = null,
+        IReadOnlyList<(string Column, bool Descending)>? order = null)
+        => $"SELECT {Top(limit)}{string.Join(", ", columns.Select(c => "src." + Quote(c)))} FROM {from} src WHERE {Match("src.", keys)}{Restrict(restriction)}{OrderBy(order)}{Limit(limit)}";
+
+    protected string OrderBy(IReadOnlyList<(string Column, bool Descending)>? order) => order is not { Count: > 0 } ? ""
+        : " ORDER BY " + string.Join(", ", order.Select(o => "src." + Quote(o.Column) + (o.Descending ? " DESC" : "")));
 
     public abstract string Insert(TableName table, IReadOnlyList<(string Column, string Value)> values, IReadOnlyList<TableColumn> returning);
 

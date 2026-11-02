@@ -16,5 +16,7 @@ public sealed class AppBlocksMigrationPlan() : AppBlocksPackagePlan("AppBlocks",
         To<AddDataSourceBackingClass>("2026-11-02-data-source-backing-class");
         To<InstallPackageDefinitions>("2026-11-02-package-install");
         To<UseSingleBlockFormInterface>("2026-11-02-single-block-form-interface");
+        // API endpoint nodes under Data sources.
+        To<AddApiEndpoints>("2026-11-03-api-endpoints");
     }
 }

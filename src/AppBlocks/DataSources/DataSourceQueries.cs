@@ -15,8 +15,14 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
     public bool AllowsAnonymousRead(DataSourceDefinition definition) => CanRead(definition, DataSourceUser.Anonymous)
         && runtime.Plan(definition).Plan is { BindsUser: false };
 
-    public async Task<DataSourceQueryResult> QueryAsync(DataSourceDefinition definition, FormExecutionContext context,
+    public Task<DataSourceQueryResult> QueryAsync(DataSourceDefinition definition, FormExecutionContext context,
         int maximumRows = 1000, CancellationToken ct = default)
+        => QueryAsync(definition, context, maximumRows, null, firstRows: false, ct);
+
+    /// <param name="order">Columns of the row source to sort by, as the plan spells them.</param>
+    /// <param name="firstRows">Return the first <paramref name="maximumRows"/> rows rather than refusing a larger result, for a caller that wants only those.</param>
+    internal async Task<DataSourceQueryResult> QueryAsync(DataSourceDefinition definition, FormExecutionContext context, int maximumRows,
+        IReadOnlyList<(string Column, bool Descending)>? order, bool firstRows, CancellationToken ct)
     {
         if (maximumRows < 1) throw new ArgumentOutOfRangeException(nameof(maximumRows));
         var plan = runtime.Plan(definition).Plan ?? throw new DataSourceException("The data source is not available.");
@@ -30,12 +36,13 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
         object? Value(BindVariable variable) => Bind(variable, user, context.Parameters, now, plan.Dialect, app);
         var from = plan.From(parameters, Value);
         var predicate = plan.Restriction?.Render(parameters, Value) ?? "1 = 1";
-        var sql = plan.Dialect.Select(from, plan.Columns.Select(c => c.Column), [], predicate, maximumRows == int.MaxValue ? maximumRows : maximumRows + 1);
+        var sql = plan.Dialect.Select(from, plan.Columns.Select(c => c.Column), [], predicate, firstRows || maximumRows == int.MaxValue ? maximumRows : maximumRows + 1, order);
         await using var command = parameters.Command(connection, null, sql);
         await using var reader = await command.ExecuteReaderAsync(ct);
         var rows = new List<IReadOnlyDictionary<string, object?>>();
         while (await reader.ReadAsync(ct))
         {
+            if (rows.Count == maximumRows && firstRows) break;
             if (rows.Count == maximumRows) throw new DataSourceException($"The query returned more than {maximumRows} rows. Narrow the query or increase its row limit.");
             var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             for (var i = 0; i < plan.Columns.Count; i++) row[plan.Columns[i].Column] = reader.IsDBNull(i) ? null : reader.GetValue(i);

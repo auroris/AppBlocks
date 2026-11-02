@@ -1,0 +1,74 @@
+# API endpoints
+
+An **API endpoint** serves a SQL data source's rows as JSON over GET, at a route the editor defines. It is AppBlocks' take on an Oracle APEX RESTful service: a URL template whose parameters bind into a query, answered as JSON. Endpoints read; they offer no writes, which stay with forms, tabular forms and their data sources.
+
+## Creating one
+
+Create an **API endpoint** and publish it. Where it sits in the content tree is up to you: under a **Data sources** root beside the sources it reads, or under an **API endpoints** root at the top of the tree that keeps them together; a site can also allow the type under document types of its own. AppBlocks serves every published endpoint whose ancestors are published, wherever it is, and its position never changes its URL, which comes from its **Route**. Its properties:
+
+| Property | What it does |
+| --- | --- |
+| **Alias** | The endpoint's name in logs and diagnostics, such as `orders.lines`. Unique among published endpoints. |
+| **Route** | The path below the base path, such as `orders/:id/lines`. The editor shows the full URL it will have. |
+| **SQL data source** | A published SQL data source to read, whose access, row restriction, policies and backing class apply. Leave it empty to give the endpoint SQL of its own. |
+| **Connection** and **SQL** | Only without a data source: the database, and a table name or SELECT, with the same rules and bind variables as a data source's row source. |
+| **Query parameters** | The `:PARAM.` names the query string may fill, separated by commas. |
+| **Shape** | **Collection**, the default, or **Single**. |
+| **Order by** | Optional columns to sort by, separated by commas, each optionally followed by `DESC`. |
+| **Maximum rows** | The most rows a collection returns; 1000 by default. |
+| **Access**, **Read groups**, **Row restriction** | Only with the endpoint's own SQL, on the Access tab, with the same choices and checks as a SQL data source. |
+
+**Test** calls the endpoint as you, signed in to the backoffice, with sample values for its route and query parameters, and shows the status and JSON it answers. It uses your current edits; nothing is saved or published.
+
+Publishing checks the endpoint as a request would read it, against its source's schema: the route must be well formed and answer no request another published endpoint answers, Order by must name columns of the source, and every `:PARAM.` the SQL uses must be a route parameter or listed under **Query parameters**, so a typo is refused rather than bound as NULL. With a data source selected, the endpoint's own connection, SQL, access, read groups and row restriction must stay empty.
+
+## Routes and parameters
+
+A route has up to eight segments separated by `/`. Each is a literal, of letters, digits, `-`, `.`, `_` and `~`, or a parameter, a colon and a name: `:id`. There are no empty segments, no `.` or `..`, and no query string. Literals match ignoring case. Two routes that would match the same requests, such as `orders/:id` and `orders/:key`, cannot both be published.
+
+When several routes match a request, the one with more literal segments wins, and then the one whose first literal comes earlier: `orders/latest` answers before `orders/:id`, and `orders/:id` before `:kind/latest`.
+
+A `:name` segment binds as `:PARAM.name` in the SQL. The query string fills any other `:PARAM.` listed under **Query parameters**, and a route segment wins over a query parameter of the same name. Nothing is read from request headers. `:USER_*`, `:NOW` and `:APP.` values work as they do everywhere else. A segment value that is empty after decoding is a 404.
+
+```sql
+SELECT LINE_ID, ITEM, QUANTITY, UNIT_PRICE
+FROM ORDER_LINES
+WHERE ORDER_ID = :PARAM.id AND (:PARAM.item IS NULL OR ITEM = :PARAM.item)
+```
+
+With the route `orders/:id/lines` and `item` under Query parameters, `GET /api/data/orders/4/lines?item=Bearing` binds `id` from the path and `item` from the query string.
+
+## Access without a page
+
+An endpoint has no page, so Umbraco Public Access does not apply to it. The read goes through the same path as lists of values and paper reports, and the source decides:
+
+- **Public**: anyone with the URL, including a visitor without an account, unless the SQL or row restriction uses a `:USER_*` value, which needs a signed-in account.
+- **Not public**: a signed-in Member or backoffice User.
+- **Specific groups**: Members of the read or write groups.
+- The row restriction, every registered `IDataSourcePolicy` and the backing class's `QueryAsync` apply. A policy sees `DataSourceAction.Query`, and a context whose page and form keys are `Guid.Empty`, with the bound parameters.
+
+The caller is the signed-in Member and backoffice User, as for the blocks' endpoints; a cookie for a disabled or locked-out account stays refused. A refused request is 401 for a caller without an account and 403 for a signed-in one. Public on an endpoint means public to the internet: choose it only for data you would put on a public page.
+
+## Responses
+
+Every answer is `application/json; charset=utf-8` with `Cache-Control: no-store`.
+
+- **Collection**: `{ "items": [ { ... }, ... ] }`, one object per row, keyed by field alias: the data source's mapped alias, or the column's name as a field (`ORDER_DATE` becomes `orderDate`). Numbers and booleans are JSON numbers and booleans, dates and times ISO text, and NULL is `null`.
+- **Single**: the first row as one object, in Order by's order when it is set, and 404 when there is none. A second row is no error.
+- **Errors**: `{ "status": 404, "title": "Not Found" }` and the like, with no SQL, column names or connection details; those go to the log.
+
+There is no paging. A collection returns every row up to **Maximum rows**, and a larger result is a 500 logged with its reason, never a silently shorter list: narrow the query or raise the limit. An unknown route is 404, and any method but GET is 405 with `Allow: GET`.
+
+## Base path
+
+Endpoints answer below `/api/data` unless `AppBlocks:ApiBasePath` says otherwise:
+
+```json
+{ "AppBlocks": { "ApiBasePath": "/api/v1/data" } }
+```
+
+The catalogue of endpoints is read from Umbraco's published content on each request, so publishing, unpublishing or deleting an endpoint takes effect on the next request.
+
+## Caching and CORS
+
+AppBlocks sends `no-store` and adds no CORS policy. Caching the answers, or calling them from a page on another origin, is the site's decision: a site that does configures ASP.NET Core's output caching or CORS middleware for the base path, keeping in mind that the answer depends on who asks.

@@ -1,5 +1,6 @@
 using static AppBlocks.ServiceDecoration;
 using AppBlocks.AntiSpam;
+using AppBlocks.Api;
 using AppBlocks.Connections;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -62,6 +63,7 @@ public static class AppBlocksExtensions
         services.AddScoped<Code.CodeEditorAccess>();
         services.AddScoped<IDataSourcePolicy, Code.CompiledDataSourcePolicies>();
         builder.AddDataSources();
+        builder.AddApiEndpoints();
         builder.AddAttachments(builder.Config);
         builder.AddSchedules();
         builder.AddTabular();
@@ -92,6 +94,7 @@ public static class AppBlocksExtensions
         endpoints.MapApplicationForms();
         endpoints.MapAttachments();
         endpoints.MapTabular();
+        endpoints.MapApiEndpoints();
     }
 
 }
