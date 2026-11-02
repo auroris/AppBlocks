@@ -37,7 +37,51 @@ public sealed class AnonymousAccessSiteTests
         await An_account_that_presented_itself_and_failed_is_refused_not_taken_for_anonymous(site);
         await Both_sessions_reach_forms_and_reports_as_distinct_accounts(site);
         await A_report_block_saved_without_a_page_size_uses_the_reports_default(site);
+        await Public_SQL_forms_accept_anonymous_submissions_only_with_the_source_opt_in(site);
         await Public_data_sources_deliver_reads_through_forms_tabular_and_schedules(site);
+    }
+
+    private static async Task Public_SQL_forms_accept_anonymous_submissions_only_with_the_source_opt_in(PublicSite site)
+    {
+        using var visitor = site.Anonymous();
+        site.Switch.PublicEngine = site.Switch.AnonymousEngineWrites = true;
+        try
+        {
+            var api = PublicSite.FormUrl(PublicSite.EnginePage, PublicSite.EngineForm);
+            var form = await Load(visitor, api);
+            Assert.True(form.GetProperty("record").GetProperty("capabilities").GetProperty("create").GetBoolean());
+            var token = form.GetProperty("antiforgeryToken").GetString();
+            using var missing = await Post(visitor, api, null, form, new { title = "No token" }, new Dictionary<string, object>());
+            Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);
+            using var submitted = await Post(visitor, api, token, form, new { title = "Anonymous contact" }, new Dictionary<string, object>());
+            Assert.Equal(HttpStatusCode.OK, submitted.StatusCode);
+            var record = (await submitted.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("record");
+            Assert.Equal("Anonymous contact", record.GetProperty("values").GetProperty("title").GetString());
+            Assert.True(site.Switch.LastDataAccount!.IsAnonymous);
+
+            site.Switch.DataPolicyRefuses = true;
+            using var denied = await Post(visitor, api, token, form, new { title = "Policy refusal" }, new Dictionary<string, object>());
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        }
+        finally { site.Switch.PublicEngine = site.Switch.AnonymousEngineWrites = site.Switch.DataPolicyRefuses = false; }
+    }
+
+    [Theory]
+    [InlineData("All pages", true)]
+    [InlineData("App Blocks Pages", false)]
+    [InlineData("Off", false)]
+    public async Task Page_cache_setting_controls_ordinary_pages(string mode, bool noStore)
+    {
+        await using var site = await PublicSite.StartAsync(noStorePages: mode);
+        using var visitor = site.Anonymous();
+        using var response = await visitor.GetAsync("/sign-in/");
+        Assert.Equal(noStore, response.Headers.CacheControl?.NoStore == true);
+        // Public Access alone does not opt an unrelated page into the default mode.
+        using var protectedPlainResponse = await visitor.GetAsync("/members/");
+        Assert.Equal(noStore, protectedPlainResponse.Headers.CacheControl?.NoStore == true);
+        // The protected branch has an AppBlocks page. Even its substituted login page follows the selected mode.
+        using var protectedResponse = await visitor.GetAsync("/members/inside/");
+        Assert.Equal(mode != "Off", protectedResponse.Headers.CacheControl?.NoStore == true);
     }
 
     /// <summary>

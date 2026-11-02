@@ -85,7 +85,7 @@ internal sealed class PublicSite : IAsyncDisposable
     private static Guid Key(string name) => AppBlockSchema.Key("public-site:" + name);
 
     /// <param name="outputCache">Gives the site what a site's own performance work might: ASP.NET Core's output cache on its pages, by a base policy.</param>
-    public static async Task<PublicSite> StartAsync(bool outputCache = false)
+    public static async Task<PublicSite> StartAsync(bool outputCache = false, string? noStorePages = null)
     {
         var root = Directory.CreateTempSubdirectory("appblocks-public-site-").FullName;
         Directory.CreateDirectory(Path.Combine(root, "wwwroot"));
@@ -94,6 +94,7 @@ internal sealed class PublicSite : IAsyncDisposable
             ApplicationName = typeof(PublicSite).Assembly.GetName().Name, ContentRootPath = root, EnvironmentName = "Development",
         });
         builder.WebHost.UseUrls("http://127.0.0.1:0");
+        if (noStorePages is not null) builder.Configuration["AppBlocks:NoStorePages"] = noStorePages;
         builder.Logging.ClearProviders();
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
             ["ConnectionStrings:umbracoDbDSN"] = $"Data Source={Path.Combine(root, "umbraco.db")};Pooling=False",
@@ -139,6 +140,7 @@ internal sealed class PublicSite : IAsyncDisposable
         builder.Services.AddScoped<IFormResource>(services => new SqlDataSource(new DataSourceDefinition {
             Key = Key("engine-source"), Name = "Rows", Alias = "public.engine", Connection = ConnectionCatalog.ApplicationConnection, Source = "PUBLIC_ROWS",
             Access = services.GetRequiredService<Switches>().PublicEngine ? DataSourceAccess.Public : DataSourceAccess.NotPublic,
+            AllowAnonymousWrites = services.GetRequiredService<Switches>().AnonymousEngineWrites,
             KeyColumns = ["id"], AllowInsert = true, AllowUpdate = true, AllowDelete = true,
         }, services.GetRequiredService<DataSourceRuntime>(), services.GetRequiredService<IDataSourceUserResolver>(), services.GetServices<IDataSourcePolicy>()));
         // An order and its lines on the engine, the order with a backing class: a form and its tabular block that save together.
@@ -436,7 +438,7 @@ internal sealed class RecordedForms
 internal sealed class Switches
 {
     public DataSourceUser? LastDataAccount;
-    public volatile bool ReportPolicyRefuses, DataPolicyRefuses, PublicEngine, AdmitBackOfficeAdministrators;
+    public volatile bool ReportPolicyRefuses, DataPolicyRefuses, PublicEngine, AnonymousEngineWrites, AdmitBackOfficeAdministrators;
 }
 
 /// <summary>

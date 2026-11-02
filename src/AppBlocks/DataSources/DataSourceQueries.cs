@@ -80,10 +80,15 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
     /// anonymous: it may represent a disabled account. Page endpoints also enforce Umbraco Public Access.
     /// </summary>
     internal static async Task<DataSourceUser?> ResolveReaderAsync(IDataSourceUserResolver users, FormExecutionContext context, CancellationToken ct)
+        => Reader(await users.ResolveAsync(context, ct), context.Member);
+
+    internal static async Task<DataSourceUser?> ResolveReaderAsync(IDataSourceUserResolver users, System.Security.Claims.ClaimsPrincipal principal, CancellationToken ct)
+        => Reader(await users.ResolveAsync(principal, ct), principal);
+
+    private static DataSourceUser? Reader(DataSourceUser? user, System.Security.Claims.ClaimsPrincipal principal)
     {
-        var user = await users.ResolveAsync(context, ct);
         if (user is not null && !user.IsAnonymous) return user;
-        return context.Member.Identities.Any(identity => identity.IsAuthenticated) ? null : DataSourceUser.Anonymous;
+        return principal.Identities.Any(identity => identity.IsAuthenticated) ? null : DataSourceUser.Anonymous;
     }
 
     /// <summary>The source's access setting. Callers must also enforce page access, identity binds and policies.</summary>

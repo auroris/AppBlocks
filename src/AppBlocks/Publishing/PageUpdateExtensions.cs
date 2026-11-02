@@ -115,6 +115,13 @@ namespace AppBlocks.Publishing
             if (context.Features.Get<IOutputCacheFeature>() is { } outputCache) outputCache.Context.AllowCacheStorage = false;
         }
 
+        /// <summary>Applies the host's page cache setting when a template renders an AppBlocks component.</summary>
+        public static void KeepAppBlockPageOutOfCaches(this HttpContext context)
+        {
+            if (!context.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<PageCacheOptions>>().Value.Is(PageCacheOptions.Off))
+                context.KeepOutOfCaches();
+        }
+
         /// <summary>
         /// Sets HTTP cache validators from the page update date and handles conditional requests.
         /// The shared view result filter discards any buffered Razor output for a 304 response.

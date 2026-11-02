@@ -102,7 +102,7 @@ public sealed class DataSourceOperation
     public string DataSource { get; }
     /// <summary>Initialize, Load, Create, Update, Delete, or Query for a tabular list and for the readers of <see cref="IDataSourceHandler.QueryAsync"/>.</summary>
     public DataSourceAction Action { get; }
-    /// <summary>The anonymous visitor, Member, backoffice User or both; writes never reach a class for an anonymous visitor.</summary>
+    /// <summary>The anonymous visitor, Member, backoffice User or both; anonymous writes require the data source to opt in.</summary>
     public DataSourceUser User { get; }
     public FormExecutionContext Context { get; }
     /// <summary>The record's key (Load, Update, Delete); null otherwise.</summary>

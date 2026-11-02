@@ -56,7 +56,7 @@ public sealed class NativeBlocksTests
         Assert.Contains("paperReport", Properties("appForm"));
         Assert.Contains("sql", Properties("listOfValues"));
         Assert.Contains("connection", Properties("listOfValues"));
-        foreach (var property in new[] { "connection", "source", "keyColumns", "mapping", "rowRestriction", "insertDefaults", "auditColumns", "keySequences", "customStatements" })
+        foreach (var property in new[] { "connection", "source", "keyColumns", "mapping", "rowRestriction", "insertDefaults", "auditColumns", "keySequences", "customStatements", "allowAnonymousWrites" })
             Assert.Contains(property, Properties("sqlDataSource"));
         var source = types.Single(type => (string?)type.Attribute("Alias") == "sqlDataSource")
             .Descendants("GenericProperty").Single(property => property.Element("Alias")!.Value == "source");

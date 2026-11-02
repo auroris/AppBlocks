@@ -1,3 +1,4 @@
+using static AppBlocks.ServiceDecoration;
 using AppBlocks.AntiSpam;
 using AppBlocks.Connections;
 using Microsoft.AspNetCore.Authorization;
@@ -41,7 +42,6 @@ public static class AppBlocksExtensions
         services.AddSingleton<IApplicationConnectionFactory, ApplicationConnections>();
         services.AddSingleton(new Setup.AppBlocksSchema(typeof(AppBlocksExtensions).Assembly));
         services.AddScoped<Setup.SchemaProperties>();
-        services.AddDataProtection();
         services.AddSingleton<ConnectionCatalog>();
         services.AddScoped<ConnectionTables>();
         services.AddScoped<Samples.FormInventory>();
@@ -62,12 +62,13 @@ public static class AppBlocksExtensions
         services.AddScoped<DataSourcePreview>();
         services.AddSingleton<IAuthorizationHandler, AppPageAuthorizationHandler>();
         Decorate<IAuthorizationPolicyProvider>(services, (_, inner) => new AppPagePolicyProvider(inner));
-        services.AddAntiforgery(options => options.HeaderName = "RequestVerificationToken");
         builder.AddNotificationHandler<ContentPublishingNotification, AppBlocksValidator>();
+        services.AddOptions<Publishing.PageCacheOptions>().Bind(builder.Config.GetSection(Publishing.PageCacheOptions.Section))
+            .Validate(options => options.IsValid, "AppBlocks:NoStorePages must be All pages, App Blocks Pages or Off.").ValidateOnStart();
         services.AddScoped<AppPageAssets>();
         services.AddTransient<Microsoft.AspNetCore.Razor.TagHelpers.ITagHelperComponent, AppPageAssetsTagHelperComponent>();
         services.AddScoped<AppBindVariableResolver>();
-        builder.AddNotificationAsyncHandler<RoutingRequestNotification, AppBlocks.Publishing.ProtectedPageCacheHeaders>();
+        builder.AddNotificationAsyncHandler<RoutingRequestNotification, AppBlocks.Publishing.PageCacheHeaders>();
         // Umbraco's website routing registers the Public Access check; whoever a host's IProtectedPageAdmission admits passes it, as on the blocks' endpoints.
         if (services.Any(descriptor => descriptor.ServiceType == typeof(IPublicAccessRequestHandler)))
             Decorate<IPublicAccessRequestHandler>(services, (provider, inner) =>
@@ -86,13 +87,4 @@ public static class AppBlocksExtensions
         endpoints.MapTabular();
     }
 
-    private static object Create(IServiceProvider provider, ServiceDescriptor descriptor) => descriptor.ImplementationInstance
-        ?? descriptor.ImplementationFactory?.Invoke(provider)
-        ?? ActivatorUtilities.CreateInstance(provider, descriptor.ImplementationType!);
-
-    private static void Decorate<T>(IServiceCollection services, Func<IServiceProvider, T, T> factory) where T : class
-    {
-        var descriptor = services.Last(d => d.ServiceType == typeof(T));
-        services.Replace(new ServiceDescriptor(typeof(T), sp => factory(sp, (T)Create(sp, descriptor)), descriptor.Lifetime));
-    }
 }

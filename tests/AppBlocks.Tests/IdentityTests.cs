@@ -34,7 +34,7 @@ public sealed class IdentityTests
             _ => throw new NotImplementedException(method.Name),
         });
         var users = Stub<IUserService>((method, _) => method.Name == "GetAsync" ? Task.FromResult<IUser?>(user) : throw new NotImplementedException(method.Name));
-        var resolver = new UmbracoDataSourceUsers(Stub<IMemberService>(Never), users, Logins());
+        var resolver = new UmbracoDataSourceUsers(Stub<IMemberManager>(Never), new ApplicationAccessPolicy(users), Logins());
         var principal = Principal(Constants.Security.BackOfficeAuthenticationType, key.ToString());
         var account = (await resolver.ResolveAsync(principal, default))!;
         Assert.True(account.IsBackOfficeUser); Assert.False(account.IsMember);
@@ -48,26 +48,26 @@ public sealed class IdentityTests
         locked = false; approved = false; Assert.Null(await resolver.ResolveAsync(principal, default));
     }
 
-    [Fact]
-    public async Task Member_groups_do_not_become_backoffice_user_groups()
+    [Theory]
+    [InlineData("42")]
+    [InlineData("ea833980-fb13-4c09-97db-e26739d6c9d2")]
+    public async Task Member_groups_do_not_become_backoffice_user_groups(string id)
     {
-        var locked = false;
-        var member = Stub<IMember>((method, _) => method.Name switch {
-            "get_Key" => Guid.Empty, "get_IsApproved" => true, "get_IsLockedOut" => locked,
-            "get_Username" => "member", "get_Email" => "member@example.test",
+        var member = new MemberIdentityUser { Key = Guid.Empty, IsApproved = true, UserName = "member", Email = "member@example.test" };
+        var members = Stub<IMemberManager>((method, args) => method.Name switch {
+            "FindByIdAsync" when Equals(args![0], id) => Task.FromResult<MemberIdentityUser?>(member),
+            "GetRolesAsync" when ReferenceEquals(args![0], member) => Task.FromResult<IList<string>>(["Administrators", "Order editors"]),
             _ => throw new NotImplementedException(method.Name),
         });
-        var members = Stub<IMemberService>((method, _) => method.Name switch {
-            "GetById" => member, "GetAllRoles" => new[] { "Administrators", "Order editors" },
-            _ => throw new NotImplementedException(method.Name),
-        });
-        var resolver = new UmbracoDataSourceUsers(members, Stub<IUserService>(Never), Logins());
-        var account = (await resolver.ResolveAsync(Principal(IdentityConstants.ApplicationScheme), default))!;
+        var resolver = new UmbracoDataSourceUsers(members, new ApplicationAccessPolicy(Stub<IUserService>(Never)), Logins());
+        var principal = Principal(IdentityConstants.ApplicationScheme, id);
+        var account = (await resolver.ResolveAsync(principal, default))!;
         Assert.True(account.IsMember); Assert.False(account.IsBackOfficeUser);
         Assert.True(account.IsInMemberGroup("order EDITORS"));
         Assert.False(account.IsInUserGroup("admin")); Assert.False(account.IsInUserGroup("Administrators"));
-        Assert.Equal("42", account.Key); Assert.Empty(account.UserGroupAliases);
-        locked = true; Assert.Null(await resolver.ResolveAsync(Principal(IdentityConstants.ApplicationScheme), default));
+        Assert.Equal(id, account.Key); Assert.Empty(account.UserGroupAliases);
+        member.LockoutEnd = DateTimeOffset.MaxValue; Assert.Null(await resolver.ResolveAsync(principal, default));
+        member.LockoutEnd = null; member.IsApproved = false; Assert.Null(await resolver.ResolveAsync(principal, default));
         Assert.Null(await resolver.ResolveAsync(new ClaimsPrincipal(), default));
         Assert.Null(await resolver.ResolveAsync(Principal("unrecognised"), default));
     }
@@ -104,7 +104,7 @@ public sealed class IdentityTests
             return Task.FromResult((Guid)args[1]! != pageKey ? ContentAuthorizationStatus.UnauthorizedMissingPathAccess
                 : (string)args[2]! == action ? status : ContentAuthorizationStatus.UnauthorizedMissingPermissionAccess);
         });
-        IDataSourceUserResolver resolver = new UmbracoDataSourceUsers(Stub<IMemberService>(Never), users, Logins(), permissions);
+        IDataSourceUserResolver resolver = new UmbracoDataSourceUsers(Stub<IMemberManager>(Never), new ApplicationAccessPolicy(users), Logins(), permissions);
         var principal = Principal(Constants.Security.BackOfficeExposedAuthenticationType, legacyId ? "42" : key.ToString());
         var context = new FormExecutionContext(principal, pageKey, Guid.NewGuid(), "1");
         Check((await resolver.ResolveAsync(context, default))!, true);
@@ -136,16 +136,12 @@ public sealed class IdentityTests
     [Fact]
     public async Task Members_do_not_receive_page_permissions_even_with_a_matching_backoffice_id()
     {
-        var member = Stub<IMember>((method, _) => method.Name switch {
-            "get_Key" => Guid.NewGuid(), "get_IsApproved" => true, "get_IsLockedOut" => false,
-            "get_Username" => "member", "get_Email" => "member@example.test",
+        var member = new MemberIdentityUser { Key = Guid.NewGuid(), IsApproved = true, UserName = "member", Email = "member@example.test" };
+        var members = Stub<IMemberManager>((method, _) => method.Name switch {
+            "FindByIdAsync" => Task.FromResult<MemberIdentityUser?>(member), "GetRolesAsync" => Task.FromResult<IList<string>>(["Administrators"]),
             _ => throw new NotImplementedException(method.Name),
         });
-        var members = Stub<IMemberService>((method, _) => method.Name switch {
-            "GetById" => member, "GetAllRoles" => new[] { "Administrators" },
-            _ => throw new NotImplementedException(method.Name),
-        });
-        var resolver = new UmbracoDataSourceUsers(members, Stub<IUserService>(Never), Logins(), Stub<IContentPermissionService>(Never));
+        var resolver = new UmbracoDataSourceUsers(members, new ApplicationAccessPolicy(Stub<IUserService>(Never)), Logins(), Stub<IContentPermissionService>(Never));
         var context = new FormExecutionContext(Principal(IdentityConstants.ApplicationScheme), Guid.NewGuid(), Guid.NewGuid(), "1");
         var account = (await resolver.ResolveAsync(context, default))!;
         Assert.False(account.CanEditPage);
@@ -213,21 +209,17 @@ public sealed class IdentityTests
     [InlineData(true)]
     public async Task Combined_accounts_keep_each_identity_and_group_store_separate_and_refresh_both(bool backOfficeFirst)
     {
-        var memberLocked = false; var userApproved = true;
+        var userApproved = true;
         var memberKey = Guid.NewGuid(); var userKey = Guid.NewGuid(); var pageKey = Guid.NewGuid();
-        var member = Stub<IMember>((method, _) => method.Name switch {
-            "get_Key" => memberKey, "get_IsApproved" => true, "get_IsLockedOut" => memberLocked,
-            "get_Username" => "website-member", "get_Email" => "member@example.test",
-            _ => throw new NotImplementedException(method.Name),
-        });
+        var member = new MemberIdentityUser { Key = memberKey, IsApproved = true, UserName = "website-member", Email = "member@example.test" };
         var user = Stub<IUser>((method, _) => method.Name switch {
             "get_Key" => userKey, "get_IsApproved" => userApproved, "get_IsLockedOut" => false,
             "get_Username" => "backoffice-editor", "get_Email" => "editor@example.test", "get_Groups" => new[] { Group("Editors", "editor") },
             _ => throw new NotImplementedException(method.Name),
         });
-        var members = Stub<IMemberService>((method, args) => method.Name switch {
-            "GetById" when Equals(args![0], 42) => member,
-            "GetAllRoles" when Equals(args![0], "website-member") => new[] { "Customers" },
+        var members = Stub<IMemberManager>((method, args) => method.Name switch {
+            "FindByIdAsync" when Equals(args![0], "42") => Task.FromResult<MemberIdentityUser?>(member),
+            "GetRolesAsync" when ReferenceEquals(args![0], member) => Task.FromResult<IList<string>>(["Customers"]),
             _ => throw new NotImplementedException(method.Name),
         });
         var users = Stub<IUserService>((method, args) => method.Name == "GetUserById" && Equals(args![0], 42)
@@ -239,7 +231,7 @@ public sealed class IdentityTests
             return Task.FromResult((string)args[2]! == ActionDelete.ActionLetter
                 ? ContentAuthorizationStatus.UnauthorizedMissingPermissionAccess : ContentAuthorizationStatus.Success);
         });
-        var resolver = new UmbracoDataSourceUsers(members, users, Logins(), permissions);
+        var resolver = new UmbracoDataSourceUsers(members, new ApplicationAccessPolicy(users), Logins(), permissions);
         // Matching numeric IDs in separate stores still identify different accounts.
         var identities = new[] { (ClaimsIdentity)Principal(IdentityConstants.ApplicationScheme).Identity!,
             (ClaimsIdentity)Principal(Constants.Security.BackOfficeAuthenticationType).Identity! };
@@ -266,7 +258,7 @@ public sealed class IdentityTests
         Assert.True(account.IsMember); Assert.False(account.IsBackOfficeUser);
         Assert.Null(account.BackOfficeUser); Assert.False(account.CanEditPage); Assert.Empty(account.UserGroupAliases);
         Assert.False(account.CanPublishPage); Assert.False(account.CanDeletePage);
-        userApproved = true; memberLocked = true;
+        userApproved = true; member.LockoutEnd = DateTimeOffset.MaxValue;
         account = (await resolver.ResolveAsync(context, default))!;
         Assert.False(account.IsMember); Assert.True(account.IsBackOfficeUser);
         Assert.Null(account.Member); Assert.Equal("backoffice:42", account.Key); Assert.Empty(account.MemberGroupNames);

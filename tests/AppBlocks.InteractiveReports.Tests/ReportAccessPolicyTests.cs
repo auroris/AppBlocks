@@ -27,7 +27,7 @@ public sealed class ReportAccessPolicyTests
         });
         var users = Stub<IUserService>((method, _) => method.Name == "GetAsync" ? Task.FromResult<IUser?>(user) : throw new NotImplementedException());
         var options = new AppBlocksOptions();
-        var policy = new DefaultReportAccessPolicy(users, Options.Create(options), null!);
+        var policy = new DefaultReportAccessPolicy(new AppBlocks.Authentication.ApplicationAccessPolicy(users), Options.Create(options), null!);
         var id = Guid.NewGuid().ToString();
         var backOfficeUser = new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, id)], Constants.Security.BackOfficeAuthenticationType));
         Assert.Equal(builtIn, await policy.IsAdministratorAsync(backOfficeUser));
@@ -52,7 +52,7 @@ public sealed class ReportAccessPolicyTests
             _ => throw new NotImplementedException(method.Name),
         });
         var users = Stub<IUserService>((method, _) => Task.FromResult<IUser?>(user));
-        var policy = new DefaultReportAccessPolicy(users, Options.Create(new AppBlocksOptions()), null!);
+        var policy = new DefaultReportAccessPolicy(new AppBlocks.Authentication.ApplicationAccessPolicy(users), Options.Create(new AppBlocksOptions()), null!);
         var principal = new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString())], Constants.Security.BackOfficeAuthenticationType));
         Assert.False(await policy.IsAdministratorAsync(principal));
     }
@@ -114,7 +114,7 @@ public sealed class ReportAccessPolicyTests
         });
         var users = Stub<IUserService>((method, _) => method.Name == "GetAsync" ? Task.FromResult<IUser?>(user) : throw new NotImplementedException());
         // A reserved report name keeps the published catalogue out of this test; it only governs reading the report itself.
-        var policy = new DefaultReportAccessPolicy(users, Options.Create(new AppBlocksOptions()), null!);
+        var policy = new DefaultReportAccessPolicy(new AppBlocks.Authentication.ApplicationAccessPolicy(users), Options.Create(new AppBlocksOptions()), null!);
         var member = new ClaimsIdentity([new(ClaimTypes.NameIdentifier, MemberId)], IdentityConstants.ApplicationScheme);
         var backOffice = new ClaimsIdentity([new(ClaimTypes.NameIdentifier, BackOfficeKey)], Constants.Security.BackOfficeAuthenticationType);
         var principal = new ClaimsPrincipal(signedIn switch {

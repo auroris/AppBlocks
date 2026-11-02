@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Umbraco.Cms.Core.Actions;
 using Umbraco.Cms.Core.Models.Membership;
 using Umbraco.Cms.Core.Services;
+using Umbraco.Cms.Core.Security;
 using Umbraco.Cms.Core.Services.AuthorizationStatus;
 using AppBlocks.Authentication;
 using AppBlocks.Forms;
@@ -32,7 +33,7 @@ public sealed record DataSourceUser(string Key, string? Sid, string? Name, strin
     private DataSourceBackOfficeAccount? AdditionalBackOfficeAccount { get; init; }
 
     /// <summary>
-    /// Nobody: what a policy sees for an anonymous visitor reading a public data source.
+    /// Nobody: what a policy sees for an anonymous visitor using a public data source.
     /// It has no key, name, email or groups, and is neither a Member nor a backoffice User.
     /// </summary>
     public static DataSourceUser Anonymous { get; } = new("", null, null, null, [], false);
@@ -102,7 +103,7 @@ public interface IDataSourceUserResolver
 /// Reads current account status and groups from Umbraco on every operation. Both Members and backoffice Users
 /// must be approved and unlocked. User Group membership never decides whether an identity can be resolved.
 /// </summary>
-public sealed class UmbracoDataSourceUsers(IMemberService members, IUserService users, IExternalLoginWithKeyService logins,
+public sealed class UmbracoDataSourceUsers(IMemberManager members, ApplicationAccessPolicy access, IExternalLoginWithKeyService logins,
     IContentPermissionService? permissions = null) : IDataSourceUserResolver
 {
     /// <summary>Enough groups for any real account, few enough to stay far below a statement's parameter limit.</summary>
@@ -124,8 +125,8 @@ public sealed class UmbracoDataSourceUsers(IMemberService members, IUserService 
     {
         if (identity?.FindFirst(ClaimTypes.NameIdentifier)?.Value is { Length: > 0 } id)
         {
-            var user = Guid.TryParse(id, out var key) ? await users.GetAsync(key) : int.TryParse(id, out var legacy) ? users.GetUserById(legacy) : null;
-            return user is not { IsApproved: true, IsLockedOut: false } ? null
+            var user = await access.ActiveUserAsync(new ClaimsPrincipal(identity));
+            return user is null ? null
                 : new("backoffice:" + id, Sid(user.Key), user.Username, user.Email,
                     Bounded(user.Groups.Select(g => g.Name ?? g.Alias)), IsBackOfficeUser: true) {
                     UserGroupAliases = Bounded(user.Groups.Select(g => g.Alias)),
@@ -144,11 +145,10 @@ public sealed class UmbracoDataSourceUsers(IMemberService members, IUserService 
     private async Task<DataSourceUser?> ResolveMemberAsync(ClaimsIdentity? identity)
     {
         if (identity?.FindFirst(ClaimTypes.NameIdentifier)?.Value is not { Length: > 0 } id) return null;
-        var member = int.TryParse(id, out var memberId) ? members.GetById(memberId)
-            : Guid.TryParse(id, out var memberKey) ? (await members.GetByKeysAsync(memberKey)).FirstOrDefault() : null;
+        var member = await members.FindByIdAsync(id);
         if (member is not { IsApproved: true, IsLockedOut: false }) return null;
-        return new(id, Sid(member.Key), member.Username, member.Email,
-            Bounded(members.GetAllRoles(member.Username)), IsBackOfficeUser: false);
+        return new(id, Sid(member.Key), member.UserName, member.Email,
+            Bounded(await members.GetRolesAsync(member)), IsBackOfficeUser: false);
     }
 
     private string? Sid(Guid key) => logins.GetExternalLogins(key).Select(login => login.ProviderKey).FirstOrDefault(sid => !string.IsNullOrWhiteSpace(sid));

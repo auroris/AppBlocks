@@ -17,7 +17,7 @@ public sealed class NativeAppBlockViewComponent(AppPageAccess access, AppBindVar
         if (page is null && contexts.TryGetUmbracoContext(out var context)) page = context.PublishedRequest?.PublishedContent;
         block ??= listItem is null ? null : AppBlockContent.AsGridItem(listItem);
         if (page is null || block is null) return Content("");
-        HttpContext.KeepOutOfCaches();
+        HttpContext.KeepAppBlockPageOutOfCaches();
         var visitor = await access.VisitorAsync(page);
         if (visitor is not null) {
             HttpContext.User = visitor;

@@ -41,24 +41,23 @@ public sealed class ApplicationAccessPolicy(IUserService users)
     /// <summary>Authenticates a current backoffice User, without requiring a particular User Group.</summary>
     public async Task<ClaimsPrincipal?> BackOfficeUserAsync(HttpContext context)
     {
-        foreach (var scheme in new[] { Constants.Security.BackOfficeExposedAuthenticationType, Constants.Security.BackOfficeAuthenticationType })
-        {
-            var result = await context.AuthenticateAsync(scheme);
-            if (result.Succeeded && result.Principal is { Identity.IsAuthenticated: true } principal && IsBackOfficeIdentity(principal))
-                return await ActiveUserAsync(principal) is not null ? principal : null;
-        }
-        return null;
+        var principal = await BackOfficeTicketAsync(context);
+        return principal is not null && await ActiveUserAsync(principal) is not null ? principal : null;
     }
 
     /// <summary>Whether the request carries a valid backoffice ticket at all, whatever the account's current standing.</summary>
     public async Task<bool> HasBackOfficeTicketAsync(HttpContext context)
+        => await BackOfficeTicketAsync(context) is not null;
+
+    /// <summary>Probes Umbraco's website-facing and classic backoffice cookies, without deciding the account's current standing.</summary>
+    public static async Task<ClaimsPrincipal?> BackOfficeTicketAsync(HttpContext context)
     {
         foreach (var scheme in new[] { Constants.Security.BackOfficeExposedAuthenticationType, Constants.Security.BackOfficeAuthenticationType })
         {
             var result = await context.AuthenticateAsync(scheme);
-            if (result.Succeeded && result.Principal is { Identity.IsAuthenticated: true } principal && IsBackOfficeIdentity(principal)) return true;
+            if (result.Succeeded && result.Principal is { Identity.IsAuthenticated: true } principal && IsBackOfficeIdentity(principal)) return principal;
         }
-        return false;
+        return null;
     }
 
     // Member and backoffice IDs belong to separate account stores. Keep their browser state and
@@ -71,7 +70,7 @@ public sealed class ApplicationAccessPolicy(IUserService users)
     /// The approved, not locked-out User a backoffice principal names, read from the store so its
     /// current standing and groups count rather than the ticket's claims.
     /// </summary>
-    private async Task<IUser?> ActiveUserAsync(ClaimsPrincipal principal)
+    public async Task<IUser?> ActiveUserAsync(ClaimsPrincipal principal)
     {
         if (BackOfficeIdentity(principal) is not { } identity) return null;
         var id = identity.FindFirst(ClaimTypes.NameIdentifier)?.Value;

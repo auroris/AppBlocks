@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Models.Membership;
-using Umbraco.Cms.Core.Notifications;
+using Umbraco.Cms.Core.Strings;
 using Umbraco.Cms.Core.Services;
 
 namespace AppBlocks.InteractiveReports.Tests;
@@ -28,15 +28,13 @@ public sealed class ReportAdministrationSiteTests
         const string editorEmail = "reports.editor@example.test";
         await site.WithServices(async services => {
             var groups = services.GetRequiredService<IUserGroupService>();
-            var group = await groups.GetAsync(ReportAdministratorGroup.Alias);
-            Assert.NotNull(group);
-            Assert.Equal(ReportAdministratorGroup.Name, group.Name);
-            Assert.Contains(Constants.Applications.Settings, group.AllowedSections);
-            var originalKey = group.Key;
-            // Running startup again neither duplicates the group nor replaces it.
-            await ActivatorUtilities.CreateInstance<ReportAdministratorGroup>(services)
-                .HandleAsync(new UmbracoApplicationStartedNotification(false), default);
-            Assert.Equal(originalKey, (await groups.GetAsync(ReportAdministratorGroup.Alias))!.Key);
+            // Installing the companion does not create groups or grant Settings access.
+            Assert.Null(await groups.GetAsync(ReportAdministratorGroup.Alias));
+            var group = new UserGroup(services.GetRequiredService<IShortStringHelper>()) {
+                Alias = ReportAdministratorGroup.Alias, Name = ReportAdministratorGroup.Name,
+            };
+            group.AddAllowedSection(Constants.Applications.Settings);
+            Assert.True((await groups.CreateAsync(group, Constants.Security.SuperUserKey, [])).Success);
             var users = services.GetRequiredService<IUserService>();
             reportAdminKey = await Create(users, email, group.Key);
             editorKey = await Create(users, editorEmail, Constants.Security.EditorGroupKey);

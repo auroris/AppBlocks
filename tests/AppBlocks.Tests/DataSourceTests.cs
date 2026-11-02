@@ -133,7 +133,7 @@ public sealed class DataSourceTests : IDisposable
     private static FormExecutionContext AnonymousContext => Context(Owner) with { Member = new ClaimsPrincipal(new ClaimsIdentity()) };
 
     [Fact]
-    public async Task Public_sources_allow_anonymous_reads_but_never_row_or_attachment_writes()
+    public async Task Public_sources_allow_anonymous_reads_but_default_to_refusing_row_or_attachment_writes()
     {
         var seen = new List<DataSourceRequest>();
         var source = Working(Tasks(("access", "Public"), ("rowRestriction", "PRIORITY = 2")), new Policy(request => { seen.Add(request); return true; }));
@@ -159,6 +159,64 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal(403, (await source.SaveRowsAsync(new("projectId", "1"), [new("delete", "1", loaded.Record.Version, Json(new { }))], context, 100, default)).Status);
         Assert.False(await source.MayWriteAsync(context.Member, default));
         Assert.False(await ((AppBlocks.Attachments.IAttachmentOwner)source).MayWriteAttachmentsAsync(loaded.Record, context, default));
+        Assert.Equal(3, Count());
+    }
+
+    [Fact]
+    public async Task Anonymous_write_opt_in_reaches_CRUD_batches_and_policies_and_changes_the_contract()
+    {
+        var definition = Definition(Tasks(("insertDefaults", "OWNER_SID = visitor")));
+        var optedIn = definition with { AllowAnonymousWrites = true };
+        Assert.NotEqual(definition.ComputeFingerprint(), optedIn.ComputeFingerprint());
+        Assert.True(Definition(Tasks(("allowAnonymousWrites", true))).AllowAnonymousWrites);
+        var seen = new List<DataSourceRequest>();
+        var source = new SqlDataSource(optedIn, runtime, new TestUsers(), [new Policy(request => { seen.Add(request); return true; })]);
+        var context = AnonymousContext;
+        Assert.True((await source.InitializeAsync(context, default)).Record!.Capabilities.Create);
+        Assert.True(await source.MayWriteAsync(context.Member, default));
+        var created = await source.CreateAsync(Json(new { title = "Contact message" }), context, default);
+        Assert.Equal(200, created.Status);
+        Assert.Equal(4, Count());
+        // Retrying the same submission still creates only one row.
+        Assert.Equal(200, (await source.CreateAsync(Json(new { title = "Contact message" }), context, default)).Status);
+        Assert.Equal(4, Count());
+        var record = created.Record!;
+        Assert.True(record.Capabilities.Update && record.Capabilities.Delete);
+        Assert.True(await ((AppBlocks.Attachments.IAttachmentOwner)source).MayWriteAttachmentsAsync(record, context, default));
+        var updated = await source.UpdateAsync(record.Key!, Json(new { title = "Edited" }), record.Version!, context, default);
+        Assert.Equal(200, updated.Status);
+        Assert.Equal(409, (await source.UpdateAsync(record.Key!, Json(new { title = "Stale" }), record.Version!, context, default)).Status);
+        Assert.Equal(204, (await source.DeleteAsync(record.Key!, updated.Record!.Version!, context, default)).Status);
+        var batch = await source.SaveRowsAsync(new("projectId", "1"), [new("create", null, null, Json(new { title = "New line" }))],
+            context with { SubmissionKey = Guid.NewGuid().ToString() }, 100, default);
+        Assert.Equal(200, batch.Status);
+        Assert.All(seen, request => Assert.True(request.User.IsAnonymous));
+        Assert.Contains(seen, request => request.Action == DataSourceAction.Create && request.Transaction is not null);
+        var denied = new SqlDataSource(optedIn, runtime, new TestUsers(), [new Policy(request => request.Action != DataSourceAction.Create)]);
+        Assert.Equal(403, (await denied.CreateAsync(Json(new { title = "Refused" }), AnonymousContext, default)).Status);
+        Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM TASKS WHERE TITLE = 'Refused'"));
+    }
+
+    [Theory]
+    [InlineData("access", "Not public")]
+    [InlineData("writeGroups", "Planners")]
+    [InlineData("rowRestriction", "OWNER_SID = :USER_SID OR :USER_SID IS NULL")]
+    [InlineData("insertDefaults", "OWNER_SID = :USER_SID")]
+    [InlineData("customStatements", "-- insert\nINSERT INTO TASKS (TITLE, OWNER_SID) VALUES (:FIELD.title, :USER_KEY) RETURNING TASK_ID")]
+    [InlineData("allowInsert", "0")]
+    public async Task Anonymous_write_opt_in_preserves_other_access_and_identity_requirements(string setting, string value)
+    {
+        var source = Working(Tasks(("allowAnonymousWrites", true), ("insertDefaults", "OWNER_SID = visitor"), (setting, value)));
+        Assert.Equal(403, (await source.CreateAsync(Json(new { title = "Refused" }), AnonymousContext, default)).Status);
+        Assert.Equal(3, Count());
+    }
+
+    [Fact]
+    public async Task Anonymous_write_opt_in_does_not_turn_a_failed_account_into_a_visitor()
+    {
+        var source = Working(Tasks(("allowAnonymousWrites", true), ("insertDefaults", "OWNER_SID = visitor")));
+        var failed = Context(Owner with { Key = "disabled" });
+        Assert.Equal(403, (await source.CreateAsync(Json(new { title = "Refused" }), failed, default)).Status);
         Assert.Equal(3, Count());
     }
 

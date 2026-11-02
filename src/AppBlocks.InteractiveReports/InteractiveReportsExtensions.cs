@@ -1,3 +1,4 @@
+using static AppBlocks.ServiceDecoration;
 using AppBlocks.InteractiveReports.Connections;
 using AppBlocks.Connections;
 using AppBlocks.Databases;
@@ -45,7 +46,6 @@ public static class InteractiveReportsExtensions
         services.AddControllersWithViews().AddApplicationPart(typeof(InteractiveReportsExtensions).Assembly);
         services.AddSingleton(new AppBlocksSchema(typeof(InteractiveReportsExtensions).Assembly));
         builder.PackageMigrationPlans().Add<Setup.InteractiveReportsMigrationPlan>();
-        builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, Setup.ReportAdministratorGroup>();
         services.AddScoped<IAppBlockPlugin, InteractiveReportBlock>();
         services.AddScoped<IAppBlocksCatalogueContributor, ReportCatalogueContributor>();
         services.AddSingleton<ReportPrintPreviews>();
@@ -118,13 +118,4 @@ public static class InteractiveReportsExtensions
         endpoints.MapInteractiveReportFileDownload(InteractiveReportsSite.BackOfficeDownloadRoute);
     }
 
-    private static object Create(IServiceProvider provider, ServiceDescriptor descriptor) => descriptor.ImplementationInstance
-        ?? descriptor.ImplementationFactory?.Invoke(provider)
-        ?? ActivatorUtilities.CreateInstance(provider, descriptor.ImplementationType!);
-
-    private static void Decorate<T>(IServiceCollection services, Func<IServiceProvider, T, T> factory) where T : class
-    {
-        var descriptor = services.Last(d => d.ServiceType == typeof(T));
-        services.Replace(new ServiceDescriptor(typeof(T), sp => factory(sp, (T)Create(sp, descriptor)), descriptor.Lifetime));
-    }
 }

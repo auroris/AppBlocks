@@ -156,19 +156,14 @@ public static class InteractiveReportsSite
                 // User-only identity so a Member sign-in never changes their saved-view ownership.
                 var identities = new List<System.Security.Claims.ClaimsIdentity>();
                 if (backOffice) context.User = new System.Security.Claims.ClaimsPrincipal();
-                var schemes = backOffice ? ReportAuthenticationSchemes.Skip(1) : ReportAuthenticationSchemes;
-                foreach (var scheme in schemes)
+                if (!backOffice)
                 {
-                    var result = await context.AuthenticateAsync(scheme);
-                    if (result.Succeeded && result.Principal is { Identity.IsAuthenticated: true } principal)
-                    {
+                    var member = await context.AuthenticateAsync(IdentityConstants.ApplicationScheme);
+                    if (member.Succeeded && member.Principal is { Identity.IsAuthenticated: true } principal)
                         identities.AddRange(principal.Identities);
-                        context.RequestServices.GetRequiredService<ILoggerFactory>()
-                            .CreateLogger(typeof(InteractiveReportsSite))
-                            .LogDebug("Report request authenticated with {Scheme}.", scheme);
-                        if (scheme != IdentityConstants.ApplicationScheme) break;
-                    }
                 }
+                if (await AppBlocks.Authentication.ApplicationAccessPolicy.BackOfficeTicketAsync(context) is { } ticket)
+                    identities.AddRange(ticket.Identities);
                 if (identities.Count > 0) context.User = new System.Security.Claims.ClaimsPrincipal(identities);
                 await next(context);
             }));

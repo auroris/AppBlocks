@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using InteractiveReport.AspNetCore;
 using Microsoft.Extensions.Options;
-using Umbraco.Cms.Core.Services;
 using AppBlocks.Authentication;
 using AppBlocks.Blocks;
 using AppBlocks.InteractiveReports.DataSources;
@@ -23,16 +22,13 @@ public static class AnonymousReportAccess
 }
 
 /// <summary>Uses native backoffice groups; member identities never acquire administrator access by matching email.</summary>
-public sealed class DefaultReportAccessPolicy(IUserService users, IOptions<AppBlocksOptions> settings,
+public sealed class DefaultReportAccessPolicy(ApplicationAccessPolicy access, IOptions<AppBlocksOptions> settings,
     PublishedReportCatalog definitions) : IReportAccessPolicy
 {
     public async Task<bool> IsAdministratorAsync(ClaimsPrincipal principal)
     {
-        if (ApplicationAccessPolicy.BackOfficeIdentity(principal) is not { } identity) return false;
-        var id = identity.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        var user = Guid.TryParse(id, out var key) ? await users.GetAsync(key)
-            : int.TryParse(id, out var legacy) ? users.GetUserById(legacy) : null;
-        return user is { IsApproved: true, IsLockedOut: false }
+        var user = await access.ActiveUserAsync(principal);
+        return user is not null
             && user.Groups.Any(group => group.Alias.Equals(Constants.Security.AdminGroupAlias, StringComparison.OrdinalIgnoreCase)
                 || group.Alias.Equals(ReportAdministratorGroup.Alias, StringComparison.OrdinalIgnoreCase)
                 || settings.Value.ReportAdministratorGroups.Contains(group.Alias, StringComparer.OrdinalIgnoreCase));

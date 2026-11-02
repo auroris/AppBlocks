@@ -181,7 +181,7 @@ For the built-in data-source engine, **Public** is the normal rule: **if you can
 | Specific groups | Members in any selected Read group or Write group; at least one Read group is required |
 | Empty or unknown | Configuration error: publishing is refused and the source cannot run |
 
-**Read groups** and **Write groups** select Umbraco Member Groups. Public and Not public ignore Read groups, and selecting them does not change Access: choose Specific groups for them to apply. Write groups still limit writes in every mode: when empty, any signed-in reader may write; when set, only readers in a selected Write group may write. Allow insert/update/delete and all other checks still apply. Public never allows anonymous row or attachment changes.
+**Read groups** and **Write groups** select Umbraco Member Groups. Public and Not public ignore Read groups, and selecting them does not change Access: choose Specific groups for them to apply. Write groups still limit writes in every mode: when empty, any signed-in reader may write; when set, only readers in a selected Write group may write. Allow insert/update/delete and all other checks still apply. Anonymous row and attachment changes additionally require **Allow anonymous writes** on the source, off by default. The source must be Public and Write groups empty; queries, restrictions, insert defaults and custom write statements that bind `:USER_*` still require an account.
 
 Page Public Access, row restrictions and every `IDataSourcePolicy` still apply to public reads. Policies receive `DataSourceUser.Anonymous` for a visitor without an account. A query or row restriction that uses `:USER_*` binds still requires sign-in, even on a Public source; this prevents an absent identity from broadening a predicate such as `:USER_KEY IS NULL`. An authenticated account that fails resolution cannot fall back to anonymous access.
 
@@ -220,7 +220,7 @@ Register it with `services.AddScoped<IBindVariableProvider, TenantProvider>()`. 
 
 By default, whoever can read a record can read its files and, for a custom resource, change them too if they are signed in. An anonymous visitor can change them only through this interface. They are not told which account filed a file, only that someone signed in did. Implement `IAttachmentOwner` on the resource when the rule for changing files is narrower. The data source engine already limits changes to its write groups.
 
-Interactive Reports exposes `IReportAccessPolicy` for report permissions. By default, any signed-in account that can reach a report's page can view, query and export it, and manage its own saved views. A saved view belongs to one identity: the Member when a Member is signed in, otherwise the backoffice User, so someone signed in to both saves and owns views as the Member on the website and as the User on the backoffice routes. Backoffice Users in either the Administrators group (`admin`) or the automatically installed Interactive Reports Administrator group (`interactiveReportsAdministrator`) can manage public and private saved reports through **Settings → Interactive Reports → Administration**. `AppBlocks:ReportAdministratorGroups` grants additional User Group aliases the same access. Member groups never grant report administration; to change this rule, supply your own policy. Umbraco's own backoffice management permissions remain separate from application business rules.
+Interactive Reports exposes `IReportAccessPolicy` for report permissions. By default, any signed-in account that can reach a report's page can view, query and export it, and manage its own saved views. A saved view belongs to one identity: the Member when a Member is signed in, otherwise the backoffice User, so someone signed in to both saves and owns views as the Member on the website and as the User on the backoffice routes. Backoffice Users in either the Administrators group (`admin`) or a host-created Interactive Reports Administrator group (`interactiveReportsAdministrator`) can manage public and private saved reports through **Settings → Interactive Reports → Administration**. `AppBlocks:ReportAdministratorGroups` grants additional User Group aliases the same access. Member groups never grant report administration; to change this rule, supply your own policy. Umbraco's own backoffice management permissions remain separate from application business rules.
 
 ## Common scenarios
 
@@ -564,7 +564,7 @@ public sealed class OrderRules : IDataSourceHandler
 }
 ```
 
-Everything else still applies around the class. Before it is asked, the engine checks Access, the read and write groups and the allow flags, refuses anonymous writes, and checks the version and the submitted values. After it answers, every `IDataSourcePolicy` runs and sees the values as the class left them, and a refusal there rolls back what the class wrote. The written row is read back through the row restriction, so a class cannot place a row outside what the caller may see. Publishing refuses a backing class that is not registered, and a data source whose class is no longer registered is unavailable, like one whose column is gone, rather than running without it. A form class registered in code still wins an alias over a data source.
+Everything else still applies around the class. Before it is asked, the engine checks Access, the read and write groups and the allow flags, requires the source to opt in to anonymous writes, and checks the version and the submitted values. After it answers, every `IDataSourcePolicy` runs and sees the values as the class left them, and a refusal there rolls back what the class wrote. The written row is read back through the row restriction, so a class cannot place a row outside what the caller may see. Publishing refuses a backing class that is not registered, and a data source whose class is no longer registered is unavailable, like one whose column is gone, rather than running without it. A form class registered in code still wins an alias over a data source.
 
 Two limits follow from where the class sits. A value `LoadAsync` changes is what the form shows and sends back, so a form that saves it writes the changed value: change only fields the form cannot edit, or expect that. And `QueryAsync` can only refuse: a report runs its own SELECT in Interactive Reports, so its rows never pass through AppBlocks, and lists of values, schedules and paper reports get the same check so that every reader is judged alike. Put a rule about which rows they may read in the row restriction, which every reader applies.
 
@@ -798,3 +798,22 @@ The built-in engine handles optimistic concurrency and create receipts. Custom r
 Implement `IFormResource`, or derive from `FormResource<TCreate, TUpdate>` for typed input and data-annotation validation. Register it as an `IFormResource`, choose its alias in the Form interface and map the field blocks to its field descriptors. The generated repository is a persistence example to call from those operations, not an automatically registered form resource.
 
 Return `FormResult.Denied()` for refused operations, `Missing()` for absent records, `Conflict()` for stale updates, `Invalid(field, message)` for validation, and `Ok(record)` for success. Set the returned `FormCapabilities` to describe the actions the caller may see, and enforce the same rules again when an action is submitted.
+
+## An anonymous SQL contact form
+
+For a contact form backed by SQL, set the source's **Access** to **Public**, enable **Allow anonymous writes** and **Allow insert**, and leave **Write groups**, **Allow update** and **Allow delete** empty/off. Put the form on a page without Public Access. Keep identity-dependent `:USER_*` variables out of its SQL and defaults; name and email supplied by the visitor are ordinary form fields. Antiforgery and any Anti-spam block still run on submissions.
+
+Public access also permits reads. To keep submitted messages private, register a policy that allows only initialization and creation for this source (or enforce the same rule in its backing class):
+
+```csharp
+public sealed class ContactSubmissionPolicy : IDataSourcePolicy
+{
+    public ValueTask<bool> IsAllowedAsync(DataSourceRequest request, CancellationToken ct)
+        => ValueTask.FromResult(request.DataSource != "contact"
+            || request.Action is DataSourceAction.Initialize or DataSourceAction.Create);
+}
+```
+
+Register it with `builder.Services.AddScoped<IDataSourcePolicy, ContactSubmissionPolicy>()` and use the alias `contact` for the source. This refuses loads and queries of saved messages as well as updates and deletes. Use a separately authorized source for staff to read submissions.
+
+Existing installations obtain the new **Allow anonymous writes** property through **Settings → AppBlocks → Definitions → Reinstall**. No migration changes existing definitions; an absent setting remains off.

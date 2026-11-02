@@ -12,7 +12,7 @@ using Umbraco.Cms.Core.Services;
 namespace AppBlocks.InteractiveReports.Reports;
 
 /// <summary>Limits the Welcome report to the content available to the current backoffice user.</summary>
-public sealed class RecentPagesReport(IUserService users, IEntityService entities, AppCaches caches)
+public sealed class RecentPagesReport(ApplicationAccessPolicy access, IUserService users, IEntityService entities, AppCaches caches)
 {
     public const string Name = "umbraco-recent-pages";
     public const string Policy = "UmbracoBackOfficeContentReports";
@@ -35,11 +35,8 @@ public sealed class RecentPagesReport(IUserService users, IEntityService entitie
 
     public async Task<IUser?> GetUserAsync(ClaimsPrincipal principal)
     {
-        if (ApplicationAccessPolicy.BackOfficeIdentity(principal) is not { } identity) return null;
-        var id = identity.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        var user = Guid.TryParse(id, out var key) ? await users.GetAsync(key)
-            : int.TryParse(id, out var legacyId) ? users.GetUserById(legacyId) : null;
-        return user is { IsApproved: true, IsLockedOut: false }
+        var user = await access.ActiveUserAsync(principal);
+        return user is not null
             && user.AllowedSections.Contains(Constants.Applications.Content) ? user : null;
     }
 

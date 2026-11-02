@@ -45,7 +45,7 @@ public sealed partial class SqlDataSource
     {
         if (Ready is not { } plan) return new(Unavailable());
         var creating = key is null;
-        if (await users.ResolveAsync(context, ct) is not { } user || !plan.Writable || !CanWrite(user) || !(creating ? definition.AllowInsert : definition.AllowUpdate))
+        if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !plan.Writable || !CanWrite(user) || !(creating ? definition.AllowInsert : definition.AllowUpdate))
             return new(FormResult.Denied());
         if (!Guid.TryParse(context.SubmissionKey, out var submission)) return new(FormResult.Invalid("", "A submission identifier is required."));
         if (details.FirstOrDefault(d => !SharesConnectionWith(d.Source)) is { } other)
@@ -154,7 +154,7 @@ public sealed partial class SqlDataSource
     {
         PreparedBatch Refused(DataSourceRowsResult refusal) => new(this, null!, null!, batch, "", "", null) { Refusal = refusal };
         if (Ready is not { } plan) return Refused(DataSourceRowsResult.From(Unavailable()));
-        if (await users.ResolveAsync(batch.Context, ct) is not { } user || !plan.Writable || !CanWrite(user)) return Refused(new(403));
+        if (await DataSourceQueries.ResolveReaderAsync(users, batch.Context, ct) is not { } user || !plan.Writable || !CanWrite(user)) return Refused(new(403));
         if (plan.Columns.All(c => !c.Field.Equals(batch.LinkField, StringComparison.OrdinalIgnoreCase)))
             return Refused(DataSourceRowsResult.From(FormResult.Invalid("", $"'{batch.LinkField}' is not a field of the data source.")));
         if (batch.Changes.Count > MaxChanges) return Refused(new(422, Errors: new Dictionary<string, string[]> { [""] = [$"Save at most {MaxChanges} rows at a time."] }));

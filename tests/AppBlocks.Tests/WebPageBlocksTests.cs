@@ -5,6 +5,21 @@ namespace AppBlocks.Tests;
 
 public sealed class WebPageBlocksTests
 {
+    [Theory]
+    [InlineData("All pages", true)]
+    [InlineData("App Blocks Pages", true)]
+    [InlineData("Off", false)]
+    public void Page_cache_setting_controls_rendered_blocks_without_erasing_host_headers(string mode, bool noStore)
+    {
+        using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
+            .Configure<PageCacheOptions>(options => options.NoStorePages = mode).BuildServiceProvider();
+        var context = new DefaultHttpContext { RequestServices = services };
+        context.Response.Headers.CacheControl = "private, max-age=60";
+        context.KeepAppBlockPageOutOfCaches();
+        Assert.Equal(noStore, context.Response.GetTypedHeaders().CacheControl!.NoStore);
+        if (!noStore) Assert.Equal("private, max-age=60", context.Response.Headers.CacheControl);
+    }
+
     [Fact]
     public void An_explicit_no_store_response_cannot_be_replaced_by_content_only_cache_validation()
     {

@@ -38,7 +38,7 @@ public sealed record AuditColumns(string? CreatedBy = null, string? CreatedAt = 
 /// <summary>Statements an editor writes to replace the generated insert, update or delete; each runs whole, with bound parameters.</summary>
 public sealed record CustomStatements(string? Insert = null, string? Update = null, string? Delete = null);
 
-/// <summary>Who may read a data source. Public access grants reads only; writes always require an account.</summary>
+/// <summary>Who may read a data source. Public access grants reads; anonymous writes need a separate opt-in.</summary>
 public enum DataSourceAccess { NotPublic, Public, SpecificGroups }
 
 /// <summary>
@@ -64,6 +64,9 @@ public sealed record DataSourceDefinition
     public bool AllowInsert { get; init; }
     public bool AllowUpdate { get; init; }
     public bool AllowDelete { get; init; }
+    /// <summary>Allows anonymous writes to a Public source, subject to write groups, operation flags and policies. Off by default.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool AllowAnonymousWrites { get; init; }
     /// <summary>The version column; null compares a checksum of the fetched row instead.</summary>
     public string? VersionColumn { get; init; }
     public IReadOnlyList<InsertDefault> InsertDefaults { get; init; } = [];
@@ -72,7 +75,7 @@ public sealed record DataSourceDefinition
     public required DataSourceAccess? Access { get; init; }
     /// <summary>Member group names that may read in SpecificGroups mode. Write groups may also read.</summary>
     public IReadOnlyList<string> ReadGroups { get; init; } = [];
-    /// <summary>Member group names that may write; empty allows signed-in readers. Anonymous visitors can never write.</summary>
+    /// <summary>Member group names that may write; empty allows readers subject to AllowAnonymousWrites.</summary>
     public IReadOnlyList<string> WriteGroups { get; init; } = [];
     public CustomStatements CustomStatements { get; init; } = new();
 
@@ -138,6 +141,7 @@ public sealed record DataSourceDefinition
             InsertDefaults = ReadInsertDefaults(Text("insertDefaults"), errors),
             AuditColumns = ReadAuditColumns(Text("auditColumns"), errors),
             Access = ReadAccess(Text("access")),
+            AllowAnonymousWrites = Flag("allowAnonymousWrites"),
             ReadGroups = Groups(Text("readGroups"), "read groups"),
             WriteGroups = Groups(Text("writeGroups"), "write groups"),
             CustomStatements = ReadCustomStatements(Text("customStatements"), errors),

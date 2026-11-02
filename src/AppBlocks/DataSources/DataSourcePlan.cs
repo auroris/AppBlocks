@@ -54,6 +54,10 @@ internal sealed class DataSourcePlan
     /// <summary>Whether reading this source binds anything about the caller, so it means nothing without an account.</summary>
     public bool BindsUser => new[] { Query, Restriction }.OfType<SqlTemplate>().SelectMany(template => template.Variables)
         .Any(variable => variable.Kind is BindVariableKind.UserSid or BindVariableKind.UserName or BindVariableKind.UserKey or BindVariableKind.UserEmail or BindVariableKind.UserGroups);
+    /// <summary>Identity-dependent defaults and write statements cannot run for an anonymous visitor.</summary>
+    public bool WritesBindUser => new[] { InsertStatement, UpdateStatement, DeleteStatement }.OfType<SqlTemplate>()
+        .SelectMany(template => template.Variables).Concat(Defaults.Select(value => value.Variable).OfType<BindVariable>())
+        .Any(variable => variable.Kind is BindVariableKind.UserSid or BindVariableKind.UserName or BindVariableKind.UserKey or BindVariableKind.UserEmail or BindVariableKind.UserGroups);
     public PlanColumn? Field(string alias) => Columns.FirstOrDefault(c => c.Field == alias);
     /// <summary>The columns a fetch reads: every field, and the rowversion when it is the version.</summary>
     public IEnumerable<string> ReadColumns => RowVersionColumn is null ? Columns.Select(c => c.Column) : Columns.Select(c => c.Column).Append(RowVersionColumn);

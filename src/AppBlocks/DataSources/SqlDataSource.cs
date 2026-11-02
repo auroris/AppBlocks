@@ -102,7 +102,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public async Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct)
     {
         if (Ready is not { } plan) return Unavailable();
-        if (await users.ResolveAsync(context, ct) is not { } user || !definition.AllowInsert || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
+        if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !definition.AllowInsert || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
         if (!Guid.TryParse(context.SubmissionKey, out var submission)) return FormResult.Invalid("", "A submission identifier is required.");
         if (Parse(plan, input, null, out var rejected) is not { } values) return rejected!;
         var now = runtime.Now();
@@ -178,7 +178,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public async Task<FormResult> UpdateAsync(string key, JsonElement input, string version, FormExecutionContext context, CancellationToken ct)
     {
         if (Ready is not { } plan) return Unavailable();
-        if (await users.ResolveAsync(context, ct) is not { } user || !definition.AllowUpdate || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
+        if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !definition.AllowUpdate || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
         if (input.ValueKind != JsonValueKind.Object) return FormResult.Invalid("", "Form values must be an object.");
         var now = runtime.Now();
@@ -254,7 +254,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public async Task<FormResult> DeleteAsync(string key, string version, FormExecutionContext context, CancellationToken ct)
     {
         if (Ready is not { } plan) return Unavailable();
-        if (await users.ResolveAsync(context, ct) is not { } user || !definition.AllowDelete || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
+        if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !definition.AllowDelete || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
         var app = await AppAsync(context, ct);
         return await RunAsync(plan, write: true, async (connection, transaction) => {
@@ -351,12 +351,13 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     private bool CanRead(DataSourceUser user) => DataSourceQueries.CanRead(definition, user)
         && (!user.IsAnonymous || Entry.Plan is { BindsUser: false });
 
-    /// <summary>Writers: signed-in readers when no write groups are set, else Members in the configured write Member Groups.</summary>
-    private bool CanWrite(DataSourceUser user) => !user.IsAnonymous && CanRead(user) && (definition.WriteGroups.Count == 0 || InAny(user, definition.WriteGroups));
+    /// <summary>Writers: readers allowed by the anonymous-write setting and the configured write Member Groups.</summary>
+    private bool CanWrite(DataSourceUser user) => (!user.IsAnonymous || definition.AllowAnonymousWrites && Entry.Plan is { WritesBindUser: false })
+        && CanRead(user) && (definition.WriteGroups.Count == 0 || InAny(user, definition.WriteGroups));
 
     /// <summary>A record's files follow its groups: the write groups add, replace and remove them, whatever the allow flags say about the row itself.</summary>
     async ValueTask<bool> Attachments.IAttachmentOwner.MayWriteAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct)
-        => await users.ResolveAsync(context, ct) is { } user && CanWrite(user);
+        => await DataSourceQueries.ResolveReaderAsync(users, context, ct) is { } user && CanWrite(user);
 
     private async Task<bool> AllowedAsync(DataSourceAction action, DataSourceUser user, FormExecutionContext context, string? key,
         IReadOnlyDictionary<string, object?>? current, IReadOnlyDictionary<string, object?>? proposed, DbConnection? connection, DbTransaction? transaction,

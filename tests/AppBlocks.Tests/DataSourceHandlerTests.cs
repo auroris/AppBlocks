@@ -183,7 +183,7 @@ public sealed class DataSourceHandlerTests : IDisposable
         var policy = new Policy(request => { seen.Add(request); return request.Action != DataSourceAction.Create || Equals(request.Proposed!["status"], "APPROVED"); });
         var source = Orders(handler, [policy], ("writeGroups", "Buyers"));
 
-        // Anonymous visitors never write, and a Member outside the write groups is refused, before the class is asked.
+        // Without the opt-in anonymous visitors cannot write, and write groups still refuse other Members before the class is asked.
         var anonymous = Context(Owner) with { Member = new ClaimsPrincipal(new ClaimsIdentity()) };
         Assert.Equal(403, (await source.CreateAsync(Json(new { customer = "Anonymous" }), anonymous, default)).Status);
         Assert.Equal(403, (await source.CreateAsync(Json(new { customer = "Crew" }), Context(Other), default)).Status);
@@ -473,6 +473,38 @@ public sealed class DataSourceHandlerTests : IDisposable
             runtime, new Users(), []);
         Assert.True(source.Problem is null, source.Problem);
         return source;
+    }
+
+    [Fact]
+    public async Task Anonymous_master_and_detail_writes_require_each_source_to_opt_in_and_keep_handler_refusals_atomic()
+    {
+        var handler = new Handler {
+            Create = async operation => {
+                Assert.True(operation.User.IsAnonymous);
+                await operation.Sql.ExecuteAsync("INSERT INTO ORDER_LOG (ENTRY) VALUES ('anonymous')");
+                return Equals(operation.Values!["customer"], "Refuse") ? DataSourceOutcome.Refuse() : DataSourceOutcome.Continue;
+            },
+        };
+        var orders = Orders(handler, [], ("access", "Public"), ("allowAnonymousWrites", true));
+        var lines = Lines(("access", "Public"), ("allowAnonymousWrites", true));
+        var context = Context(Owner) with { Member = new ClaimsPrincipal(new ClaimsIdentity()) };
+        var batch = Batch(lines, Change("create", values: new { product = "Visitor line" })) with { Context = context };
+        var saved = await orders.SaveWithDetailsAsync(null, Json(new { customer = "Visitor" }), null, [batch], context, default);
+        Assert.Equal(200, saved.Status);
+        Assert.Equal("Visitor line", Assert.Single(saved.Details![0].Rows!).Values["product"]);
+        Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ORDER_LOG"));
+
+        var refused = await orders.SaveWithDetailsAsync(null, Json(new { customer = "Refuse" }), null, [batch],
+            context with { SubmissionKey = Guid.NewGuid().ToString() }, default);
+        Assert.Equal(403, refused.Status);
+        Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ORDER_LOG"));
+        Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM ORDERS WHERE CUSTOMER = 'Refuse'"));
+
+        var closed = Lines(("access", "Public"));
+        var denied = await orders.SaveWithDetailsAsync(null, Json(new { customer = "Closed detail" }), null,
+            [batch with { Source = closed }], context with { SubmissionKey = Guid.NewGuid().ToString() }, default);
+        Assert.Equal(403, denied.Status);
+        Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM ORDERS WHERE CUSTOMER = 'Closed detail'"));
     }
 
     private static DataSourceChange Change(string operation, string? key = null, string? version = null, object? values = null)

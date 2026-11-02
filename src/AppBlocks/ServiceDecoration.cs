@@ -1,0 +1,16 @@
+using Microsoft.Extensions.DependencyInjection.Extensions;
+
+namespace AppBlocks;
+
+internal static class ServiceDecoration
+{
+    internal static object Create(IServiceProvider provider, ServiceDescriptor descriptor) => descriptor.ImplementationInstance
+        ?? descriptor.ImplementationFactory?.Invoke(provider)
+        ?? ActivatorUtilities.CreateInstance(provider, descriptor.ImplementationType!);
+
+    internal static void Decorate<T>(IServiceCollection services, Func<IServiceProvider, T, T> factory) where T : class
+    {
+        var descriptor = services.Last(d => d.ServiceType == typeof(T));
+        services.Replace(new ServiceDescriptor(typeof(T), sp => factory(sp, (T)Create(sp, descriptor)), descriptor.Lifetime));
+    }
+}

@@ -41,7 +41,7 @@ public sealed partial class SqlDataSource
 
     /// <summary>Whether the caller may write this data source at all: a writable table, and membership of the write groups.</summary>
     public async Task<bool> MayWriteAsync(ClaimsPrincipal member, CancellationToken ct)
-        => Ready is { Writable: true } && await users.ResolveAsync(member, ct) is { } user && CanWrite(user);
+        => Ready is { Writable: true } && await DataSourceQueries.ResolveReaderAsync(users, member, ct) is { } user && CanWrite(user);
 
     /// <summary>The rows linked to the scope's key, at most <paramref name="maximumRows"/>, and the record a new row starts from.</summary>
     public async Task<DataSourceRowsResult> ListRowsAsync(DataSourceScope scope, FormExecutionContext context, int maximumRows, CancellationToken ct)
@@ -94,7 +94,7 @@ public sealed partial class SqlDataSource
         int maximumRows, CancellationToken ct)
     {
         if (Ready is not { } plan) return DataSourceRowsResult.From(Unavailable());
-        if (await users.ResolveAsync(context, ct) is not { } user || !plan.Writable || !CanWrite(user)) return new(403);
+        if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !plan.Writable || !CanWrite(user)) return new(403);
         if (Link(plan, scope, out var link, out var value) is { } problem) return DataSourceRowsResult.From(problem);
         if (changes.Count == 0) return await ListRowsAsync(scope, context, maximumRows, ct);
         if (changes.Count > MaxChanges) return new(422, Errors: new Dictionary<string, string[]> { [""] = [$"Save at most {MaxChanges} rows at a time."] });
