@@ -30,6 +30,11 @@
       "meta": { "entityType": "appblocks-report-administration", "headline": "Interactive Reports Administration" }
     },
     {
+      "type": "propertyValuePreset", "alias": "AppBlocks.PropertyValuePreset.ReportRecordLinks", "name": "Report record links start at Open and create",
+      "forPropertyEditorSchemaAlias": "Umbraco.RadioButtonList",
+      "api": "/App_Plugins/AppBlocks.InteractiveReports/record-links-preset.js"
+    },
+    {
       "type": "propertyEditorUi",
       "alias": "AppBlocks.ReportSource",
       "name": "Application report table or SQL",

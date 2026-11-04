@@ -10,6 +10,7 @@ using Umbraco.Extensions;
 using AppBlocks.InteractiveReports.DataSources;
 using AppBlocks.Blocks;
 using AppBlocks.DataSources;
+using AppBlocks.Forms;
 
 namespace AppBlocks.InteractiveReports.Blocks;
 
@@ -21,7 +22,8 @@ public sealed class AppReportDefinitionStore(
     ReportDefinitionCompiler compiler,
     PublishedReportCatalog catalog, DataSourceReportBindings bindings, ConnectionCatalog? managed = null,
     AppBlocks.DocumentOutput.IAppDocumentLinks? documents = null,
-    ReportSourcePreviews? previews = null, IHttpContextAccessor? http = null, SavedViewStore? savedViews = null, AppPageAccess? pages = null)
+    ReportSourcePreviews? previews = null, IHttpContextAccessor? http = null, SavedViewStore? savedViews = null, AppPageAccess? pages = null,
+    FormResourceRegistry? formResources = null, PublishedDataCatalog? dataCatalog = null, ILogger<AppReportDefinitionStore>? logger = null)
     : IReportDefinitionStore, IReportDefinitionAuthorizationStore
 {
     private bool CallerIsAnonymous => http?.HttpContext is { } context && context.User.Identity?.IsAuthenticated != true;
@@ -110,17 +112,65 @@ public sealed class AppReportDefinitionStore(
         }
         if (block.Value<IPublishedContent>("formPage") is { } formPage) {
             var url = formPage.Url(culture: instance.Culture);
-            var column = block.Value<string>("keyColumn");
-            var parameter = block.Value<string>("keyParameter") is { Length: > 0 } key ? key : "id";
-            if (string.IsNullOrWhiteSpace(column)) throw new InvalidOperationException("A report with a form page requires its record key column.");
-            result.EditLink = new ReportEditLink { UrlTemplate = url + "?" + Uri.EscapeDataString(parameter) + "={" + column + "}", Label = block.Value<string>("editLabel") };
-            result.CreateLink = new ReportCreateLink { Url = url, Label = block.Value<string>("createLabel") };
+            var links = ReportRecordLinkChoices.Parse(block.Value<string>(ReportRecordLinkChoices.Property));
+            if (links.Opens()) {
+                var column = block.Value<string>("keyColumn");
+                var parameter = block.Value<string>("keyParameter") is { Length: > 0 } key ? key : "id";
+                if (string.IsNullOrWhiteSpace(column)) throw new InvalidOperationException("A report that opens records on a form page requires its record key column.");
+                result.EditLink = new ReportEditLink { UrlTemplate = url + "?" + Uri.EscapeDataString(parameter) + "={" + column + "}", Label = Label(block, "editLabel") };
+            }
+            if (links.Creates() && await MayCreateAsync(formPage, instance.Culture, ct))
+                result.CreateLink = new ReportCreateLink { Url = url, Label = Label(block, "createLabel") };
         }
         // A paper report always renders for a person, so it is no action to offer someone anonymous.
         if (documents is not null && !CallerIsAnonymous && block.Value<IPublishedContent>("paperReport") is not null && block.Value<string>("keyColumn") is { Length: > 0 } printKey)
             AppBlocks.InteractiveReports.InteractiveReportPrintLinks.AddPrintAction(result, printKey);
         return compiler.CompileManaged(name, result, managed);
     }
+    /// <summary>
+    /// Whether this caller could create a record on the form page, so the create button is not offered to someone the form would
+    /// refuse. Hiding it is a convenience, not a rule: the form refuses the write whatever the button showed. The answer depends on
+    /// who asks, so it is worked out for every request and never kept. The caller is who the form page takes them for, as the form's
+    /// own endpoints do. When no form on the page resolves, or the services to ask are missing, the button stays, as it always did;
+    /// with several forms, one that would create is enough.
+    /// </summary>
+    private async Task<bool> MayCreateAsync(IPublishedContent formPage, string? culture, CancellationToken ct)
+    {
+        if (formResources is null || pages is null) return true;
+        var forms = new List<FormDefinition>();
+        foreach (var block in AppBlockContent.Flatten(AppBlockContent.Blocks(formPage, culture), culture).Where(b => b.Content.ContentType.Alias == "appForm"))
+            if (await FormDefinition.ResolveAsync(formPage, block.ContentKey, formResources, dataCatalog, culture) is { } form) forms.Add(form);
+        if (forms.Count == 0) return true;
+        // The form page refuses this caller altogether, as its Public Access does someone not signed in.
+        if (await pages.VisitorAsync(formPage) is not { } caller) return false;
+        foreach (var form in forms)
+            if (await CreatesAsync(form, caller, ct)) return true;
+        return false;
+    }
+
+    private async Task<bool> CreatesAsync(FormDefinition form, System.Security.Claims.ClaimsPrincipal caller, CancellationToken ct)
+    {
+        if (form.ViewOnly) return false;
+        // A data source answers from its own settings: the allow flag, the write groups, anonymous writes and :USER_ bindings in its writes.
+        if (form.Resource is SqlDataSource source) return source.Definition.AllowInsert && await source.MayWriteAsync(caller, ct);
+        // A C# class says in its Initialize, which the form page asks too before every new record and which must be safe to repeat.
+        // It is asked with no query parameters, as the create button opens the page without any. A class that fails keeps the
+        // button, as the page then reports what happened.
+        try
+        {
+            var context = new FormExecutionContext(caller, form.Page.Key, form.Block.ContentKey, form.Revision);
+            return (await form.Resource.InitializeAsync(context, ct)).Record?.Capabilities.Create == true;
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            logger?.LogWarning(error, "Form resource {Resource} failed while a report decided whether to offer creating a record.", form.Resource.Alias);
+            return true;
+        }
+    }
+
+    /// <summary>A link label as the engine takes it: none rather than blank, as a cleared text box may store, so the engine's default applies.</summary>
+    private static string? Label(IPublishedElement block, string alias) => block.Value<string>(alias) is { } label && !string.IsNullOrWhiteSpace(label) ? label : null;
+
     private PublishedReport? ReadBlock(Guid key, Func<string, object?> value) => catalog.ReadBlockReport(key, value, new List<string>());
     private static ReportDefinition Copy(ReportDefinition source) => JsonSerializer.Deserialize<ReportDefinition>(JsonSerializer.Serialize(source, IrJson.Options), IrJson.Options)!;
 }

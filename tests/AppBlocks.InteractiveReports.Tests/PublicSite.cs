@@ -64,6 +64,11 @@ internal sealed class PublicSite : IAsyncDisposable
     public static readonly Guid DataPage = Key("data"), Rows = Key("rows"), Schedule = Key("schedule");
     public static readonly Guid OrderPage = Key("order"), OrderForm = Key("order-form"), OrderLines = Key("order-lines");
     public static readonly Guid MembersPage = Key("members"), ProtectedPage = Key("protected"), ProtectedForm = Key("protected-form"), ProtectedReport = Key("protected-report"), ProtectedFiles = Key("protected-files");
+    /// <summary>A form page only the Writers member group may create records on, and reports linking to it with each Record links choice.</summary>
+    public static readonly Guid WritersPage = Key("writers"), WritersForm = Key("writers-form"), LinksPage = Key("links"), RefusingLinks = Key("links:refusing");
+    public static readonly IReadOnlyDictionary<string, Guid> LinkReports = new[] { "", "Open and create", "Open only", "Create only", "None" }
+        .ToDictionary(choice => choice, choice => Key("links:" + choice));
+    public const string WritersGroup = "Writers";
     public const string AdminEmail = "public.admin@example.test";
 
     private readonly WebApplication app;
@@ -154,6 +159,10 @@ internal sealed class PublicSite : IAsyncDisposable
         builder.Services.AddScoped<IFormResource>(services => new SqlDataSource(new DataSourceDefinition {
             Key = Key("order-lines-source"), Name = "Order lines", Alias = "public.orders.lines", Connection = ConnectionCatalog.ApplicationConnection, Source = "PUBLIC_ORDER_LINES",
             Access = DataSourceAccess.NotPublic, KeyColumns = ["id"], AllowInsert = true, AllowUpdate = true, AllowDelete = true,
+        }, services.GetRequiredService<DataSourceRuntime>(), services.GetRequiredService<IDataSourceUserResolver>(), services.GetServices<IDataSourcePolicy>()));
+        builder.Services.AddScoped<IFormResource>(services => new SqlDataSource(new DataSourceDefinition {
+            Key = Key("writers-source"), Name = "Writers", Alias = "public.writers", Connection = ConnectionCatalog.ApplicationConnection, Source = "PUBLIC_ROWS",
+            Access = DataSourceAccess.Public, WriteGroups = [WritersGroup], KeyColumns = ["id"], AllowInsert = true, AllowUpdate = true,
         }, services.GetRequiredService<DataSourceRuntime>(), services.GetRequiredService<IDataSourceUserResolver>(), services.GetServices<IDataSourcePolicy>()));
         builder.Services.AddSingleton<IDataSourcePolicy, SwitchedPolicy>();
         builder.Services.AddScoped<IProtectedPageAdmission, SwitchedAdmission>();
@@ -267,6 +276,9 @@ internal sealed class PublicSite : IAsyncDisposable
         Page("Data", DataPage, home.Id, Container(
             Block(Rows, AppBlockSchema.TabularAlias, ("dataSource", "public.engine"), ("linkField", "owner"), ("ownerResource", "public.closed"), ("ownerKey", "1")),
             Block(Schedule, AppBlockSchema.ScheduleAlias, ("rowsSource", "public.schedule.rows"), ("barsSource", "public.schedule.bars"), ("daysBefore", "1"), ("daysAfter", "1"), ("columns", "Days"))));
+        Assert.True((await services.GetRequiredService<IMemberGroupService>().CreateAsync(new MemberGroup { Name = WritersGroup })).Success);
+        Page("Writers", WritersPage, home.Id, Container(FormBlock(WritersForm, "public.writers", Field("title", "Entry title"))));
+        Page("Links", LinksPage, home.Id, LinkedReports([.. LinkReports.Select(link => (link.Value, WritersPage, link.Key)), (RefusingLinks, RefusingPage, "")]));
         var members = Page("Members", MembersPage, home.Id);
         var inside = Reports((ProtectedReport, Source("table", "PUBLIC_ROWS")));
         Merge(inside, Container(FormBlock(ProtectedForm, "public.contact", Field("name", "Your name")), Attachments(ProtectedFiles, "public.open")));
@@ -327,6 +339,17 @@ internal sealed class PublicSite : IAsyncDisposable
         var body = Set("Umbraco.BlockList");
         foreach (var (key, source, pageSize) in reports)
             Add(body, "Umbraco.BlockList", key, AppBlockSchema.Key("appReport"), [("heading", JsonValue.Create("Rows")), ("dataSource", JsonValue.Create(source)), .. pageSize is null ? [] : new (string, JsonNode?)[] { ("pageSize", pageSize) }]);
+        return body;
+    }
+
+    /// <summary>Reports over PUBLIC_ROWS linking to a form page by their id column, each with its Record links choice; an empty choice saves no value.</summary>
+    private static JsonObject LinkedReports(params (Guid Key, Guid FormPage, string Choice)[] reports)
+    {
+        var body = Set("Umbraco.BlockList");
+        foreach (var (key, formPage, choice) in reports)
+            Add(body, "Umbraco.BlockList", key, AppBlockSchema.Key("appReport"), [("heading", JsonValue.Create("Linked rows")), ("dataSource", JsonValue.Create(Source("table", "PUBLIC_ROWS"))),
+                ("formPage", JsonValue.Create("umb://document/" + formPage.ToString("N"))), ("keyColumn", JsonValue.Create("id")), ("createLabel", JsonValue.Create("New row")),
+                .. choice.Length == 0 ? [] : new (string, JsonNode?)[] { ("recordLinks", JsonValue.Create(choice)) }]);
         return body;
     }
 

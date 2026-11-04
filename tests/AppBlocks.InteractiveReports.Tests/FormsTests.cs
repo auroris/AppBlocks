@@ -51,6 +51,15 @@ public sealed class FormsTests
         report["contentData"]![0]!["values"]!.AsArray().First(p => p!["alias"]!.GetValue<string>() == "pageSize")!["value"] = 5000;
         Assert.Contains(validator.Validate(report.ToJsonString()), e => e.Contains("cannot be larger than"));
         Assert.NotEmpty(validator.Validate("{bad"));
+        // Only a report that opens records needs their key column; one that only creates them, or offers neither, does not.
+        foreach (var (choice, needsKey) in new[] { ("", true), ("Open and create", true), ("Open only", true), ("Create only", false), ("None", false) })
+        {
+            var linked = ReportBlockSupport.OrdersReport();
+            var block = linked["contentData"]![0]!;
+            block["values"]!.AsArray().Remove(block["values"]!.AsArray().First(p => p!["alias"]!.GetValue<string>() == "keyColumn"));
+            if (choice.Length > 0) BlockPages.SetValue(block, "recordLinks", choice);
+            Assert.True(needsKey == validator.Validate(linked.ToJsonString()).Contains("Select the record key column for the form link."), choice);
+        }
         // A form binds a registered C# class: neither an unknown name nor a published data source will do.
         foreach (var resource in new[] { "no-such-source", "orders" })
             Assert.Contains(validator.Validate(BlockPages.OrdersForm(resource).ToJsonString()),
