@@ -389,7 +389,7 @@ public sealed class DataSourceHandlerTests : IDisposable
         var orders = Orders(new Handler());
         var lines = Lines();
         var context = Context(Owner);
-        var batch = Batch(lines, Change("create", values: new { product = "Bolt", quantity = "2" }), Change("create", values: new { product = "Nut", orderId = "999" }));
+        var batch = Batch(lines, Change(RowOperation.Create, values: new { product = "Bolt", quantity = "2" }), Change(RowOperation.Create, values: new { product = "Nut", orderId = "999" }));
 
         // A new master's key becomes the link value of its new rows, whatever a change says.
         var created = await orders.SaveWithDetailsAsync(null, Json(new { customer = "Tower Inc" }), null, [batch], context, default);
@@ -409,7 +409,7 @@ public sealed class DataSourceHandlerTests : IDisposable
 
         // A row the engine refuses rolls back the master and every earlier row, and names its block and its place.
         var refused = await orders.SaveWithDetailsAsync(null, Json(new { customer = "Never" }), null,
-            [Batch(lines, Change("create", values: new { product = "Washer" })), Batch(lines, Change("create", values: new { product = "Ok" }), Change("create", values: new { quantity = "1" }))],
+            [Batch(lines, Change(RowOperation.Create, values: new { product = "Washer" })), Batch(lines, Change(RowOperation.Create, values: new { product = "Ok" }), Change(RowOperation.Create, values: new { quantity = "1" }))],
             Context(Owner), default);
         Assert.Equal(422, refused.Status);
         Assert.Equal(1, refused.Detail);
@@ -421,21 +421,21 @@ public sealed class DataSourceHandlerTests : IDisposable
         // An update of the master with an update and a delete of its rows; a row of another master is not found there.
         var bolt = rows[0];
         var updated = await orders.SaveWithDetailsAsync(key, Json(new { customer = "Tower Two" }), "1",
-            [Batch(lines, Change("update", bolt.Key, bolt.Version, new { quantity = "5" }), Change("delete", rows[1].Key, rows[1].Version))], Context(Owner), default);
+            [Batch(lines, Change(RowOperation.Update, bolt.Key, bolt.Version, new { quantity = "5" }), Change(RowOperation.Delete, rows[1].Key, rows[1].Version))], Context(Owner), default);
         Assert.Equal(200, updated.Status);
         Assert.Equal("Tower Two", updated.Master.Record!.Values["customer"]);
         Assert.Equal("5", Assert.Single(updated.Details![0].Rows!).Values["quantity"]);
         var foreign = await orders.SaveWithDetailsAsync(key, Json(new { customer = "Tower Three" }), "2",
-            [Batch(lines, Change("delete", "1", "1"))], Context(Owner), default);
+            [Batch(lines, Change(RowOperation.Delete, "1", "1"))], Context(Owner), default);
         Assert.Equal(404, foreign.Status);
         Assert.Equal("Tower Two", Scalar($"SELECT CUSTOMER FROM ORDERS WHERE ORDER_ID = {key}"));
         Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ORDER_LINES WHERE ORDER_ID = 1"));
 
         // The allow flags and the size of a batch are checked before anything is written.
         var noDeletes = Lines(("allowDelete", "0"));
-        var flagged = await orders.SaveWithDetailsAsync(key, Json(new { customer = "Flagged" }), "2", [Batch(noDeletes, Change("delete", bolt.Key, "2"))], Context(Owner), default);
+        var flagged = await orders.SaveWithDetailsAsync(key, Json(new { customer = "Flagged" }), "2", [Batch(noDeletes, Change(RowOperation.Delete, bolt.Key, "2"))], Context(Owner), default);
         Assert.Equal((403, 0, 0), (flagged.Status, flagged.Detail, flagged.Refusal!.Index));
-        var many = Enumerable.Range(0, SqlDataSource.MaxChanges + 1).Select(i => Change("create", values: new { product = "P" + i })).ToArray();
+        var many = Enumerable.Range(0, SqlDataSource.MaxChanges + 1).Select(i => Change(RowOperation.Create, values: new { product = "P" + i })).ToArray();
         Assert.Equal(422, (await orders.SaveWithDetailsAsync(key, Json(new { customer = "Many" }), "2", [Batch(lines, many)], Context(Owner), default)).Status);
         Assert.Equal("Tower Two", Scalar($"SELECT CUSTOMER FROM ORDERS WHERE ORDER_ID = {key}"));
     }
@@ -475,13 +475,13 @@ public sealed class DataSourceHandlerTests : IDisposable
         Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM ORDERS WHERE CUSTOMER = 'Empty'"));
 
         var saved = await orders.SaveWithDetailsAsync("1", Json(new { customer = "Hangar Co" }), "1",
-            [Batch(lines, Change("create", values: new { product = "Special" }), Change("create", values: new { product = "Lower" }))], Context(Owner), default);
+            [Batch(lines, Change(RowOperation.Create, values: new { product = "Special" }), Change(RowOperation.Create, values: new { product = "Lower" }))], Context(Owner), default);
         Assert.Equal(200, saved.Status);
         Assert.Equal(["Paint", "Special (by class)", "lower"], saved.Details![0].Rows!.Select(row => (string)row.Values["product"]!));
         Assert.Equal(7L, Scalar("SELECT QUANTITY FROM ORDER_LINES WHERE PRODUCT = 'Special (by class)' AND ORDER_ID = 1"));
 
         var forbidden = await orders.SaveWithDetailsAsync("1", Json(new { customer = "Hangar Co" }), "1",
-            [Batch(lines, Change("create", values: new { product = "Special" }), Change("create", values: new { product = "Forbidden" }))], Context(Owner), default);
+            [Batch(lines, Change(RowOperation.Create, values: new { product = "Special" }), Change(RowOperation.Create, values: new { product = "Forbidden" }))], Context(Owner), default);
         Assert.Equal(422, forbidden.Status);
         Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ORDER_LINES WHERE PRODUCT = 'Special (by class)'"));
     }
@@ -507,7 +507,7 @@ public sealed class DataSourceHandlerTests : IDisposable
         var orders = Orders(handler, [], ("access", "Public"), ("allowAnonymousWrites", true));
         var lines = Lines(("access", "Public"), ("allowAnonymousWrites", true));
         var context = Context(Owner) with { Member = new ClaimsPrincipal(new ClaimsIdentity()) };
-        var batch = Batch(lines, Change("create", values: new { product = "Visitor line" })) with { Context = context };
+        var batch = Batch(lines, Change(RowOperation.Create, values: new { product = "Visitor line" })) with { Context = context };
         var saved = await orders.SaveWithDetailsAsync(null, Json(new { customer = "Visitor" }), null, [batch], context, default);
         Assert.Equal(200, saved.Status);
         Assert.Equal("Visitor line", Assert.Single(saved.Details![0].Rows!).Values["product"]);
@@ -526,7 +526,7 @@ public sealed class DataSourceHandlerTests : IDisposable
         Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM ORDERS WHERE CUSTOMER = 'Closed detail'"));
     }
 
-    private static DataSourceChange Change(string operation, string? key = null, string? version = null, object? values = null)
+    private static DataSourceChange Change(RowOperation operation, string? key = null, string? version = null, object? values = null)
         => new(operation, key, version, Json(values ?? new { }));
 
     private static DataSourceDetailBatch Batch(SqlDataSource source, params DataSourceChange[] changes)

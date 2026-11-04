@@ -118,6 +118,13 @@ public sealed class TabularHttpTests
         Assert.Equal(HttpStatusCode.NotFound, (await lines.SaveAsync([new("delete", foreign, "1")], "id=4")).Response.StatusCode);
         Assert.Equal(1L, Sample(site, $"SELECT COUNT(*) FROM ORDER_LINES WHERE LINE_ID = {foreign}"));
 
+        // An operation that is not a create, an update or a delete is refused at its index and never deletes.
+        var current = Sample(site, $"SELECT VERSION FROM ORDER_LINES WHERE LINE_ID = {Key(first)}")!.ToString();
+        var unknown = await lines.SaveAsync([new("Update", Key(first), current, new { notes = "Cased" }), new("remove", Key(first), current)], "id=4");
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, unknown.Response.StatusCode);
+        Assert.Equal(1, unknown.Index);
+        Assert.Equal(1L, Sample(site, $"SELECT COUNT(*) FROM ORDER_LINES WHERE LINE_ID = {Key(first)}"));
+
         // Only the block's columns can be sent: the link field is the server's and is dropped, any other field is refused.
         var relinked = await lines.SaveAsync([new("create", Values: new { item = "Washer", orderId = "5" })], "id=4");
         Assert.True(relinked.IsSuccess, relinked.Body.ToString());

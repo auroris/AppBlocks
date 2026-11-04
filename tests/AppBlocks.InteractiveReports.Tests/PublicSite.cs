@@ -548,7 +548,7 @@ internal sealed class OrderRules : IDataSourceHandler
         Seen.Enqueue((operation.Action, changes.Length));
         if (changes.Any(change => change.Values.TryGetProperty("item", out var item) && item.GetString() == "Forbidden"))
             return ValueTask.FromResult(DataSourceOutcome.Invalid("", "Forbidden is not sold."));
-        operation.Values!["lines"] = stored + changes.Count(change => change.Operation == "create") - changes.Count(change => change.Operation == "delete");
+        operation.Values!["lines"] = stored + changes.Count(change => change.Operation == RowOperation.Create) - changes.Count(change => change.Operation == RowOperation.Delete);
         return ValueTask.FromResult(DataSourceOutcome.Continue);
     }
 }

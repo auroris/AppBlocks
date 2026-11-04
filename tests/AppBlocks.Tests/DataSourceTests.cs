@@ -156,7 +156,7 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal(403, (await source.CreateAsync(Json(new { title = "Anonymous" }), context, default)).Status);
         Assert.Equal(403, (await source.UpdateAsync("1", Json(new { title = "Anonymous" }), loaded.Record.Version!, context, default)).Status);
         Assert.Equal(403, (await source.DeleteAsync("1", loaded.Record.Version!, context, default)).Status);
-        Assert.Equal(403, (await source.SaveRowsAsync(new("projectId", "1"), [new("delete", "1", loaded.Record.Version, Json(new { }))], context, 100, default)).Status);
+        Assert.Equal(403, (await source.SaveRowsAsync(new("projectId", "1"), [new(RowOperation.Delete, "1", loaded.Record.Version, Json(new { }))], context, 100, default)).Status);
         Assert.False(await source.MayWriteAsync(context.Member, default));
         Assert.False(await ((AppBlocks.Attachments.IAttachmentOwner)source).MayWriteAttachmentsAsync(loaded.Record, context, default));
         Assert.Equal(3, Count());
@@ -187,7 +187,7 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal(200, updated.Status);
         Assert.Equal(409, (await source.UpdateAsync(record.Key!, Json(new { title = "Stale" }), record.Version!, context, default)).Status);
         Assert.Equal(204, (await source.DeleteAsync(record.Key!, updated.Record!.Version!, context, default)).Status);
-        var batch = await source.SaveRowsAsync(new("projectId", "1"), [new("create", null, null, Json(new { title = "New line" }))],
+        var batch = await source.SaveRowsAsync(new("projectId", "1"), [new(RowOperation.Create, null, null, Json(new { title = "New line" }))],
             context with { SubmissionKey = Guid.NewGuid().ToString() }, 100, default);
         Assert.Equal(200, batch.Status);
         Assert.All(seen, request => Assert.True(request.User.IsAnonymous));
@@ -369,8 +369,8 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal("editor", Scalar($"SELECT OWNER_SID FROM TASKS WHERE TASK_ID = {created.Record!.Key}"));
         // Three rows in one save ask once, so a time- or database-dependent answer cannot differ between the rows.
         var batch = await source.SaveRowsAsync(new DataSourceScope("projectId", "1"), [
-            new("create", null, null, Json(new { title = "First of three" })), new("create", null, null, Json(new { title = "Second" })),
-            new("update", created.Record.Key, created.Record.Version, Json(new { title = "Third, changed" }))],
+            new(RowOperation.Create, null, null, Json(new { title = "First of three" })), new(RowOperation.Create, null, null, Json(new { title = "Second" })),
+            new(RowOperation.Update, created.Record.Key, created.Record.Version, Json(new { title = "Third, changed" }))],
             context with { SubmissionKey = Guid.NewGuid().ToString() }, 100, default);
         Assert.Equal(200, batch.Status);
         Assert.Equal(2, provider.Calls);
@@ -411,7 +411,7 @@ public sealed class DataSourceTests : IDisposable
         Assert.NotEmpty((await queries.QueryAsync(definition, context)).Rows);
         var scope = new DataSourceScope("projectId", "1");
         Assert.Equal(200, (await source.ListRowsAsync(scope, context, 100, default)).Status);
-        Assert.Equal(200, (await source.SaveRowsAsync(scope, [new("update", key, "2", Json(new { title = "Batch updated" }))],
+        Assert.Equal(200, (await source.SaveRowsAsync(scope, [new(RowOperation.Update, key, "2", Json(new { title = "Batch updated" }))],
             context with { SubmissionKey = Guid.NewGuid().ToString() }, 100, default)).Status);
         Assert.Equal(204, (await source.DeleteAsync(key, "3", context, default)).Status);
         Assert.All(policy.Requests, request => {
@@ -428,7 +428,7 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal(403, (await source.UpdateAsync("1", Json(new { title = "Refused" }), "1", otherPage, default)).Status);
         Assert.Equal(403, (await source.DeleteAsync("1", "1", otherPage, default)).Status);
         Assert.Equal(403, (await source.ListRowsAsync(scope, otherPage, 100, default)).Status);
-        Assert.Equal(403, (await source.SaveRowsAsync(scope, [new("update", "1", "1", Json(new { title = "Refused" }))], otherPage, 100, default)).Status);
+        Assert.Equal(403, (await source.SaveRowsAsync(scope, [new(RowOperation.Update, "1", "1", Json(new { title = "Refused" }))], otherPage, 100, default)).Status);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(definition, otherPage));
         Assert.Equal("Paint the hangar", Scalar("SELECT TITLE FROM TASKS WHERE TASK_ID = 1"));
     }
