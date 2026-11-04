@@ -124,6 +124,27 @@ public sealed class DocumentOutputServiceTests
     }
 
     [Fact]
+    public async Task A_hand_edited_output_is_left_out_of_the_destinations_rather_than_breaking_them()
+    {
+        using var site = new DocumentSettingsTests.SettingsSite();
+        await site.Store.DeleteAsync(DocumentSettingsStore.LegacyId);
+        var pdf = await site.Store.SaveConfigurationAsync(new(null, "Browser PDF", "https://pdf.example/"));
+        var path = Path.Combine(site.Root, "App_Data/AppBlocks/documents.json");
+        var stored = JsonSerializer.Deserialize<StoredPressroomConfigurations>(await File.ReadAllTextAsync(path))!;
+        StoredPressroomConfiguration html = new(Guid.NewGuid(), "Edited", "https://pdf.example/", null, "html", 65), missing = html with { Id = Guid.NewGuid(), Name = "Blank", Output = null! };
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(stored with { Configurations = [.. stored.Configurations, html, missing] }));
+
+        var factory = new Factory(_ => throw new Exception("Unexpected request"));
+        var destination = Assert.Single(Service(site, factory).GetDestinations());
+        Assert.Equal((pdf.Id, DocumentOutputKind.Pdf), (destination.Id, destination.Output));
+        // Settings still lists it, so it can be corrected or deleted; submitting to it says what is wrong.
+        Assert.Equal(3, site.Store.List().Configurations.Count);
+        var refused = await Assert.ThrowsAsync<KeyNotFoundException>(() => Service(site, factory).SubmitAsync(html.Id, new("<html>Report</html>")));
+        Assert.Contains("neither PDF nor a printer", refused.Message);
+        Assert.Equal(0, factory.Calls);
+    }
+
+    [Fact]
     public async Task Only_printer_configurations_do_not_turn_template_document_GETs_into_print_jobs()
     {
         using var site = new DocumentSettingsTests.SettingsSite();
