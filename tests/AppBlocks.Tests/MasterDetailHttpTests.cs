@@ -39,6 +39,12 @@ public sealed class MasterDetailHttpTests
         Assert.StartsWith("tabular:", revision);
         using (var anonymous = site.CreateClient())
             Assert.Equal(HttpStatusCode.Forbidden, (await anonymous.GetAsync(tabular + "/new")).StatusCode);
+        // A form that cannot start a record answers with its own status and reason, not as a record still to save.
+        using (var offline = await client.GetAsync(tabular + "/new?unavailable=1"))
+        {
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, offline.StatusCode);
+            Assert.Contains("Orders are offline.", await offline.Content.ReadAsStringAsync());
+        }
 
         var state = await client.GetFromJsonAsync<JsonElement>(api);
         var token = state.GetProperty("antiforgeryToken").GetString()!;

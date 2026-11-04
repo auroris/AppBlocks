@@ -89,9 +89,19 @@ public sealed class SavedViewStore(ISavedReportStore inner, ConnectionCatalog ca
     private void Report(Exception? error, string reason)
     {
         if (Interlocked.Exchange(ref reported, reason) == reason) return;
-        var detail = error is null ? "" : " " + DbErrorClassifier.Classify(ReportDialect.SqlServer, error).Summary;
+        var detail = error is null ? "" : " " + DbErrorClassifier.Classify(StoreDialect(), error).Summary;
         logger.LogWarning(error, "Saved report views are off: {Reason}{Detail} Grant the permission or run the script shown in Settings > AppBlocks > Database setup. Reports keep working, and saved views return without a restart once this is done.",
             reason, detail);
+    }
+
+    /// <summary>
+    /// The database the store is configured for, which names an error its provider does not identify itself; SQL Server, as
+    /// before, for a store AppBlocks did not configure or a configuration that cannot be read.
+    /// </summary>
+    private ReportDialect StoreDialect()
+    {
+        try { return (inner as SqlSavedReportStore)?.Configuration.Dialect ?? ReportDialect.SqlServer; }
+        catch (InvalidOperationException) { return ReportDialect.SqlServer; }
     }
 
     private async Task<T> ReadAsync<T>(Func<Task<T>> read, T nothing, CancellationToken ct)

@@ -22,9 +22,15 @@ public sealed class DocumentOutputService : IDocumentOutputService
         => (this.configuration, this.clients, this.logger, this.settings) = (configuration, clients, logger, settings);
 
     public IReadOnlyList<DocumentDestination> GetDestinations()
-        => settings is null ? Legacy() is { } legacy ? [legacy.Destination] : []
-            : settings.List().Configurations.Select(c => new DocumentDestination(c.Id, c.Name,
-                c.Output == "pdf" ? DocumentOutputKind.Pdf : DocumentOutputKind.Printer, c.Output == "pdf" ? null : c.Output[8..])).ToArray();
+    {
+        if (settings is null) return Legacy() is { } legacy ? [legacy.Destination] : [];
+        var configurations = settings.List().Configurations;
+        // A hand-edited settings file can hold any output: that configuration is left out, and the rest are still offered.
+        foreach (var invalid in configurations.Where(c => !DocumentSettingsStore.ValidOutput(c.Output)))
+            logger.LogWarning("Document configuration {Name} is left out: its output {Output} is neither PDF nor a printer. Choose its output again in Settings.", invalid.Name, invalid.Output);
+        return configurations.Where(c => DocumentSettingsStore.ValidOutput(c.Output)).Select(c => new DocumentDestination(c.Id, c.Name,
+            c.Output == "pdf" ? DocumentOutputKind.Pdf : DocumentOutputKind.Printer, c.Output == "pdf" ? null : c.Output[8..])).ToArray();
+    }
 
     public Task<DocumentOutputResult> SubmitAsync(Guid configurationId, DocumentRequest document, CancellationToken cancellationToken = default)
     {

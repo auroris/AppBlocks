@@ -52,7 +52,16 @@ public sealed class DocumentSettingsStore(IConfiguration configuration, IWebHost
     internal ResolvedPressroomConfiguration? DefaultPdf()
         => ReadConfigurations().FirstOrDefault(c => c.Output == "pdf" && !string.IsNullOrWhiteSpace(c.Url)) is { } item ? Resolve(item) : null;
     internal ResolvedPressroomConfiguration Resolve(Guid id)
-        => Resolve(ReadConfigurations().SingleOrDefault(c => c.Id == id) ?? throw new KeyNotFoundException("The selected document configuration no longer exists."));
+    {
+        var item = ReadConfigurations().SingleOrDefault(c => c.Id == id) ?? throw new KeyNotFoundException("The selected document configuration no longer exists.");
+        // A hand-edited file can hold any output; it is not a destination until it is PDF or a printer again.
+        return ValidOutput(item.Output) ? Resolve(item)
+            : throw new KeyNotFoundException($"The document configuration {item.Name} has an output that is neither PDF nor a printer. Choose its output again in Settings.");
+    }
+
+    /// <summary>"pdf", or "printer:" and a printer identifier, as a save accepts and the file should hold.</summary>
+    internal static bool ValidOutput(string? output) => output == "pdf"
+        || output?.StartsWith("printer:", StringComparison.Ordinal) == true && RequestValidator.IsPrinterIdentifier(output[8..]);
     private ResolvedPressroomConfiguration Resolve(StoredPressroomConfiguration item)
         => new(item.Id, item.Name, item.Url, item.ProtectedApiKey is null ? null : protector.Unprotect(item.ProtectedApiKey), item.Output, item.TimeoutSeconds);
 
@@ -61,9 +70,7 @@ public sealed class DocumentSettingsStore(IConfiguration configuration, IWebHost
         ValidateConnection(request.Url, request.TimeoutSeconds);
         if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length > 100)
             throw new ArgumentException("Enter a configuration name of at most 100 characters.");
-        if (request.Output != "pdf" && !(request.Output?.StartsWith("printer:", StringComparison.Ordinal) == true
-            && RequestValidator.IsPrinterIdentifier(request.Output[8..])))
-            throw new ArgumentException("Choose PDF or a printer returned by Pressroom.");
+        if (!ValidOutput(request.Output)) throw new ArgumentException("Choose PDF or a printer returned by Pressroom.");
         await gate.WaitAsync(ct);
         try
         {

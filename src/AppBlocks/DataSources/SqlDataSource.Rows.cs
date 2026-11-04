@@ -11,11 +11,14 @@ namespace AppBlocks.DataSources;
 /// <summary>The rows that belong to one parent record: those whose <paramref name="Field"/> holds the parent's key, given as text.</summary>
 public sealed record DataSourceScope(string Field, string Value);
 
+/// <summary>What one change of a batch does to a row.</summary>
+public enum RowOperation { Create, Update, Delete }
+
 /// <summary>
-/// One change of a batch: <c>create</c> with the new row's values, <c>update</c> with the row's key, the version the
-/// caller read and the values that changed, or <c>delete</c> with the key and the version.
+/// One change of a batch: <see cref="RowOperation.Create"/> with the new row's values, <see cref="RowOperation.Update"/> with the
+/// row's key, the version the caller read and the values that changed, or <see cref="RowOperation.Delete"/> with the key and the version.
 /// </summary>
-public sealed record DataSourceChange(string Operation, string? Key, string? Version, JsonElement Values);
+public sealed record DataSourceChange(RowOperation Operation, string? Key, string? Version, JsonElement Values);
 
 /// <summary>
 /// What a list or a batch answers: the rows of the scope, in key order, and the record a new row starts from; or the
@@ -125,13 +128,13 @@ public sealed partial class SqlDataSource
         for (var i = 0; i < changes.Count; i++)
         {
             var refused = changes[i].Operation switch {
-                "create" => definition.AllowInsert ? null : "New rows are not accepted here.",
-                "update" => definition.AllowUpdate ? null : "Rows cannot be changed here.",
-                "delete" => definition.AllowDelete ? null : "Rows cannot be deleted here.",
+                RowOperation.Create => definition.AllowInsert ? null : "New rows are not accepted here.",
+                RowOperation.Update => definition.AllowUpdate ? null : "Rows cannot be changed here.",
+                RowOperation.Delete => definition.AllowDelete ? null : "Rows cannot be deleted here.",
                 _ => "Each change is a create, an update or a delete.",
             };
             if (refused is not null)
-                return new(changes[i].Operation is "create" or "update" or "delete" ? 403 : 422, Index: i, Errors: new Dictionary<string, string[]> { [""] = [refused] });
+                return new(Enum.IsDefined(changes[i].Operation) ? 403 : 422, Index: i, Errors: new Dictionary<string, string[]> { [""] = [refused] });
         }
         return null;
     }
@@ -170,18 +173,20 @@ public sealed partial class SqlDataSource
         var scope = new ScopeMatch(link, value);
         switch (change.Operation)
         {
-            case "create":
+            case RowOperation.Create:
                 if (Parse(plan, change.Values, null, out var rejected) is not { } values) return rejected!;
                 // The new row belongs to the parent, whatever the change says.
                 values[link] = value;
                 return await InsertRecordAsync(plan, user, context, values, now, connection, transaction, app, ct);
-            case "update":
+            case RowOperation.Update:
                 if (change.Key is null || !TryParseKey(plan, change.Key, out var keys)) return FormResult.Missing();
                 if (change.Values.ValueKind != JsonValueKind.Object) return FormResult.Invalid("", "Row values must be an object.");
                 return await UpdateRecordAsync(plan, user, context, change.Key, keys, change.Values, change.Version, now, connection, transaction, scope, app, ct);
-            default:
+            case RowOperation.Delete:
                 if (change.Key is null || !TryParseKey(plan, change.Key, out var deleteKeys)) return FormResult.Missing();
                 return await DeleteRecordAsync(plan, user, context, change.Key, deleteKeys, change.Version, connection, transaction, scope, app, ct);
+            default:
+                return FormResult.Invalid("", "Each change is a create, an update or a delete.");
         }
     }
 

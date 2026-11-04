@@ -6,6 +6,9 @@ namespace AppBlocks.Connections;
 
 public enum DatabaseDialect { Sqlite, SqlServer, Postgres, Oracle, Oracle11g }
 
+/// <summary>No connection by the name is registered or managed; other failures to make a connection keep their own exception.</summary>
+public sealed class ConnectionNotRegisteredException(string message) : InvalidOperationException(message);
+
 /// <summary>Named connections shared by forms, attachments and optional companions.</summary>
 public interface IApplicationConnectionFactory
 {
@@ -59,7 +62,7 @@ internal sealed class ApplicationConnections(IServiceProvider provider, AppBlock
     public DbConnection CreateConnection(string name) => catalog.Find(name) is { } material
         ? builder.Create(name, () => ConnectionCatalog.Create(material), provider)
         : builder.Connections.ContainsKey(name) ? builder.CreateRegistered(name, provider)
-        : throw new InvalidOperationException($"The connection {name} is not registered with AppBlocks.");
+        : throw new ConnectionNotRegisteredException($"The connection {name} is not registered with AppBlocks.");
 
     public DatabaseDialect Dialect(string name)
     {

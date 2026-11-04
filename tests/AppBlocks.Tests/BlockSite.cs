@@ -334,8 +334,11 @@ internal sealed class OrdersResource(ConnectionCatalog connections) : IFormResou
             ? FormResult.Ok(new(key, "1", new Dictionary<string, object?> { ["customer"] = customer }, new(Update: true))) : FormResult.Missing();
     }
 
-    public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => Task.FromResult(context.Member.Identity?.AuthenticationType == IdentityConstants.ApplicationScheme
-        ? FormResult.Ok(new(null, null, new Dictionary<string, object?> { ["customer"] = "" }, new(Create: true))) : FormResult.Denied());
+    public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => Task.FromResult(
+        context.Member.Identity?.AuthenticationType != IdentityConstants.ApplicationScheme ? FormResult.Denied()
+        // A test asks for a resource that cannot start a record right now.
+        : context.Parameters?.GetValueOrDefault("unavailable") == "1" ? new FormResult(503, Errors: new Dictionary<string, string[]> { [""] = ["Orders are offline."] })
+        : FormResult.Ok(new(null, null, new Dictionary<string, object?> { ["customer"] = "" }, new(Create: true))));
     public async Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct)
     {
         if (context.Member.Identity?.AuthenticationType != IdentityConstants.ApplicationScheme) return FormResult.Denied();

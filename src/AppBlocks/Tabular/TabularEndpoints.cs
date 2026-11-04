@@ -94,9 +94,9 @@ public static class TabularEndpoints
         for (var i = 0; i < sent.Count; i++)
         {
             var change = sent[i];
-            var operation = change.Operation?.Trim().ToLowerInvariant() ?? "";
-            if (operation == "create" && block.HideAdd) return new(403, i, "This tabular form does not add rows.");
-            if (operation == "delete" && block.HideDelete) return new(403, i, "This tabular form does not delete rows.");
+            if (Operation(change.Operation) is not { } operation) return new(422, i, "Each change is a create, an update or a delete.");
+            if (operation == RowOperation.Create && block.HideAdd) return new(403, i, "This tabular form does not add rows.");
+            if (operation == RowOperation.Delete && block.HideDelete) return new(403, i, "This tabular form does not delete rows.");
             var values = new JsonObject();
             if (change.Values is { ValueKind: JsonValueKind.Object } submitted)
                 foreach (var property in submitted.EnumerateObject())
@@ -111,6 +111,14 @@ public static class TabularEndpoints
         changes = converted;
         return null;
     }
+
+    /// <summary>The operation a change names, in any letter case; null for anything else, so an unknown name never runs.</summary>
+    private static RowOperation? Operation(string? sent) => sent?.Trim().ToLowerInvariant() switch {
+        "create" => RowOperation.Create,
+        "update" => RowOperation.Update,
+        "delete" => RowOperation.Delete,
+        _ => null,
+    };
 
     /// <summary>The list, the capabilities and the columns, with a fresh antiforgery token.</summary>
     private static Task<object> Answer(TabularScope scope, DataSourceRowsResult rows, HttpContext http, CancellationToken ct)

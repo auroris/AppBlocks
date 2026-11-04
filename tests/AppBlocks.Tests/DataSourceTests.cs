@@ -156,7 +156,7 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal(403, (await source.CreateAsync(Json(new { title = "Anonymous" }), context, default)).Status);
         Assert.Equal(403, (await source.UpdateAsync("1", Json(new { title = "Anonymous" }), loaded.Record.Version!, context, default)).Status);
         Assert.Equal(403, (await source.DeleteAsync("1", loaded.Record.Version!, context, default)).Status);
-        Assert.Equal(403, (await source.SaveRowsAsync(new("projectId", "1"), [new("delete", "1", loaded.Record.Version, Json(new { }))], context, 100, default)).Status);
+        Assert.Equal(403, (await source.SaveRowsAsync(new("projectId", "1"), [new(RowOperation.Delete, "1", loaded.Record.Version, Json(new { }))], context, 100, default)).Status);
         Assert.False(await source.MayWriteAsync(context.Member, default));
         Assert.False(await ((AppBlocks.Attachments.IAttachmentOwner)source).MayWriteAttachmentsAsync(loaded.Record, context, default));
         Assert.Equal(3, Count());
@@ -187,7 +187,7 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal(200, updated.Status);
         Assert.Equal(409, (await source.UpdateAsync(record.Key!, Json(new { title = "Stale" }), record.Version!, context, default)).Status);
         Assert.Equal(204, (await source.DeleteAsync(record.Key!, updated.Record!.Version!, context, default)).Status);
-        var batch = await source.SaveRowsAsync(new("projectId", "1"), [new("create", null, null, Json(new { title = "New line" }))],
+        var batch = await source.SaveRowsAsync(new("projectId", "1"), [new(RowOperation.Create, null, null, Json(new { title = "New line" }))],
             context with { SubmissionKey = Guid.NewGuid().ToString() }, 100, default);
         Assert.Equal(200, batch.Status);
         Assert.All(seen, request => Assert.True(request.User.IsAnonymous));
@@ -369,8 +369,8 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal("editor", Scalar($"SELECT OWNER_SID FROM TASKS WHERE TASK_ID = {created.Record!.Key}"));
         // Three rows in one save ask once, so a time- or database-dependent answer cannot differ between the rows.
         var batch = await source.SaveRowsAsync(new DataSourceScope("projectId", "1"), [
-            new("create", null, null, Json(new { title = "First of three" })), new("create", null, null, Json(new { title = "Second" })),
-            new("update", created.Record.Key, created.Record.Version, Json(new { title = "Third, changed" }))],
+            new(RowOperation.Create, null, null, Json(new { title = "First of three" })), new(RowOperation.Create, null, null, Json(new { title = "Second" })),
+            new(RowOperation.Update, created.Record.Key, created.Record.Version, Json(new { title = "Third, changed" }))],
             context with { SubmissionKey = Guid.NewGuid().ToString() }, 100, default);
         Assert.Equal(200, batch.Status);
         Assert.Equal(2, provider.Calls);
@@ -412,7 +412,7 @@ public sealed class DataSourceTests : IDisposable
         Assert.NotEmpty((await queries.QueryAsync(definition, context)).Rows);
         var scope = new DataSourceScope("projectId", "1");
         Assert.Equal(200, (await source.ListRowsAsync(scope, context, 100, default)).Status);
-        Assert.Equal(200, (await source.SaveRowsAsync(scope, [new("update", key, updated.Record!.Version, Json(new { title = "Batch updated" }))],
+        Assert.Equal(200, (await source.SaveRowsAsync(scope, [new(RowOperation.Update, key, updated.Record!.Version, Json(new { title = "Batch updated" }))],
             context with { SubmissionKey = Guid.NewGuid().ToString() }, 100, default)).Status);
         var saved = await source.LoadAsync(key, context, default);
         Assert.Equal(204, (await source.DeleteAsync(key, saved.Record!.Version, context, default)).Status);
@@ -431,7 +431,7 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal(403, (await source.UpdateAsync("1", Json(new { title = "Refused" }), original.Version, otherPage, default)).Status);
         Assert.Equal(403, (await source.DeleteAsync("1", original.Version, otherPage, default)).Status);
         Assert.Equal(403, (await source.ListRowsAsync(scope, otherPage, 100, default)).Status);
-        Assert.Equal(403, (await source.SaveRowsAsync(scope, [new("update", "1", original.Version, Json(new { title = "Refused" }))], otherPage, 100, default)).Status);
+        Assert.Equal(403, (await source.SaveRowsAsync(scope, [new(RowOperation.Update, "1", original.Version, Json(new { title = "Refused" }))], otherPage, 100, default)).Status);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(definition, otherPage));
         Assert.Equal("Paint the hangar", Scalar("SELECT TITLE FROM TASKS WHERE TASK_ID = 1"));
     }
@@ -575,7 +575,7 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal(409, (await checksum.DeleteAsync("2", null, Context(Owner), default)).Status);
         Assert.Equal(409, (await checksum.DeleteAsync("2", row.Version, Context(Owner), default)).Status);
         Assert.Equal(409, (await checksum.SaveRowsAsync(new("projectId", "2"),
-            [new("update", "2", null, Json(new { title = "Missing batch token" }))], Context(Owner), 100, default)).Status);
+            [new(RowOperation.Update, "2", null, Json(new { title = "Missing batch token" }))], Context(Owner), 100, default)).Status);
         var fresh = (await checksum.LoadAsync("2", Context(Owner), default)).Record!;
         Assert.NotEqual(row.Version, fresh.Version);
         var saved = await checksum.UpdateAsync("2", Json(new { title = "Current update" }), fresh.Version!, Context(Owner), default);
@@ -602,11 +602,11 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal(1L, Scalar("SELECT VERSION FROM TASKS WHERE TASK_ID = 1")); // A column's existence does not enable it.
 
         var batch = await source.SaveRowsAsync(new("projectId", "1"),
-            [new("update", "1", null, Json(new { title = "Batch save" }))], Context(Owner), 100, default);
+            [new(RowOperation.Update, "1", null, Json(new { title = "Batch save" }))], Context(Owner), 100, default);
         Assert.Equal(200, batch.Status);
         Assert.Equal("Batch save", Scalar("SELECT TITLE FROM TASKS WHERE TASK_ID = 1"));
         Assert.Equal(200, (await source.SaveRowsAsync(new("projectId", "1"),
-            [new("delete", "1", null, Json(new { }))], Context(Owner), 100, default)).Status);
+            [new(RowOperation.Delete, "1", null, Json(new { }))], Context(Owner), 100, default)).Status);
         Assert.Equal(404, (await source.UpdateAsync("1", Json(new { title = "Deleted" }), null, Context(Owner), default)).Status);
         Assert.Equal(204, (await source.DeleteAsync("2", null, Context(Owner), default)).Status);
     }
@@ -707,6 +707,24 @@ public sealed class DataSourceTests : IDisposable
         Assert.Empty(source.Fields);
         Assert.Equal(503, (await source.InitializeAsync(Context(Owner), default)).Status);
         Assert.Equal(503, (await source.LoadAsync("1", Context(Owner), default)).Status);
+    }
+
+    [Fact]
+    public void A_connection_whose_driver_is_missing_says_so_rather_than_that_it_is_not_registered()
+    {
+        var collection = new ServiceCollection();
+        collection.AddLogging();
+        collection.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+        collection.AddTestConnections(connections => connections.AddConnection("OracleDb",
+            _ => throw new AppBlocks.Connections.DatabaseDrivers.MissingDriverException("No Oracle driver is installed. Add the Oracle.ManagedDataAccess.Core package.")));
+        collection.AddSingleton<DataSourceRuntime>();
+        using var provider = collection.BuildServiceProvider();
+        var runtime = provider.GetRequiredService<DataSourceRuntime>();
+
+        var missingDriver = runtime.Validate(Definition(Tasks(("connection", "OracleDb"))));
+        Assert.Contains(missingDriver, e => e.Contains("No Oracle driver is installed"));
+        Assert.DoesNotContain(missingDriver, e => e.Contains("not registered"));
+        Assert.Contains(runtime.Validate(Definition(Tasks(("connection", "NoSuchDb")))), e => e.Contains("is not registered"));
     }
 
     [Fact]

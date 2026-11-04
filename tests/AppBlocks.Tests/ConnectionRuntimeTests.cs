@@ -167,7 +167,7 @@ public sealed class ConnectionRuntimeTests
         read.CommandText = "PRAGMA foreign_keys";
         Assert.Equal(1L, await read.ExecuteScalarAsync());
         Assert.False(File.Exists(Path.Combine(root, "cms.db")));
-        Assert.Throws<InvalidOperationException>(() => connections.CreateConnection("Missing"));
+        Assert.Throws<AppBlocks.Connections.ConnectionNotRegisteredException>(() => connections.CreateConnection("Missing"));
     }
 
     [Fact]

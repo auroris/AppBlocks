@@ -1,6 +1,7 @@
 using System;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.OutputCaching;
+using Microsoft.Net.Http.Headers;
 
 namespace AppBlocks.Publishing
 {
@@ -76,7 +77,7 @@ namespace AppBlocks.Publishing
                 }
                 if (val is DateTimeOffset dateTimeOffset)
                 {
-                    return dateTimeOffset.DateTime;
+                    return dateTimeOffset.UtcDateTime;
                 }
             }
             return fallbackDate;
@@ -168,21 +169,17 @@ namespace AppBlocks.Publishing
             context.Response.Headers["Last-Modified"] = updateDate.ToString("R");
             context.Response.Headers["Cache-Control"] = "public, max-age=0, must-revalidate";
 
-            var reqEtag = context.Request.Headers["If-None-Match"].ToString();
-            var reqModSince = context.Request.Headers["If-Modified-Since"].ToString();
-
-            bool notModified = false;
-
-            if (!string.IsNullOrEmpty(reqEtag) && reqEtag.Contains(etag))
+            // If-None-Match compares whole tags, weakly; when it is sent, If-Modified-Since is ignored (RFC 9110 13.1.3).
+            var request = context.Request.GetTypedHeaders();
+            var current = new EntityTagHeaderValue(etag);
+            bool notModified;
+            if (request.IfNoneMatch is { Count: > 0 } ifNoneMatch)
             {
-                notModified = true;
+                notModified = ifNoneMatch.Any(tag => tag.Equals(EntityTagHeaderValue.Any) || tag.Compare(current, useStrongComparison: false));
             }
-            else if (!string.IsNullOrEmpty(reqModSince) && DateTime.TryParse(reqModSince, out var modSinceDate))
+            else
             {
-                if (updateDate <= modSinceDate.ToUniversalTime())
-                {
-                    notModified = true;
-                }
+                notModified = request.IfModifiedSince is { } modifiedSince && updateDate <= modifiedSince.UtcDateTime;
             }
 
             if (notModified)

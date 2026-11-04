@@ -1,9 +1,11 @@
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Core.Execution;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using AppBlocks.Databases;
 using AppBlocks.DataSources;
 
@@ -53,6 +55,8 @@ public sealed class ApplicationDatabaseTests
         var collection = new ServiceCollection();
         collection.AddLogging();
         collection.AddSingleton<IConfiguration>(configuration);
+        // The default file sits beside the CMS SQLite file, or under App_Data without one; the data root stands in for the site.
+        collection.AddSingleton<IWebHostEnvironment>(new Environment(dataRoot));
         collection.AddInteractiveReports(configuration).AddAppBlocksConnections(collection, connections => connections.AddApplicationDatabase("TestDb", schema));
         collection.AddSingleton<DataSourceRuntime>();
         return collection.AddReportBlockSupport().BuildServiceProvider();
@@ -78,5 +82,15 @@ public sealed class ApplicationDatabaseTests
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         return command.ExecuteScalar();
+    }
+
+    private sealed class Environment(string root) : IWebHostEnvironment
+    {
+        public string ApplicationName { get; set; } = "AppBlocks.InteractiveReports.Tests";
+        public string EnvironmentName { get; set; } = "Development";
+        public string ContentRootPath { get; set; } = root;
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+        public string WebRootPath { get; set; } = root;
+        public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
     }
 }

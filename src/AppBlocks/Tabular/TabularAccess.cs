@@ -58,6 +58,9 @@ public sealed class TabularAccess(BlockOwnerAccess owners, FormResourceRegistry 
         var context = new FormExecutionContext(owner.User!, pageKey, form.Block.ContentKey, form.Revision, Parameters: owner.Parameters);
         var initialized = await form.Resource.InitializeAsync(context, ct);
         if (initialized.Status == 403) return TabularScope.Refused(403, "You do not have access to these rows.");
+        // Any other refusal is the resource's own, such as a data source that is not available: it is not a record still to save.
+        if (initialized.Status != 200)
+            return TabularScope.Refused(initialized.Status, initialized.Errors?.Values.SelectMany(errors => errors).FirstOrDefault() ?? "The form could not start a new record.");
         if (form.ViewOnly || initialized.Record?.Capabilities.Create != true) return TabularScope.Refused(404, "Save the record before adding rows.");
         return new(200, null, block, owner.User, source, null, owner.Resource!.Alias, owner.Parameters);
     }

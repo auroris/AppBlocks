@@ -133,7 +133,10 @@ public sealed class CompanionTests
         Assert.Single(services, d => d.ServiceType == typeof(IAppBlockPlugin));
         // This storage fixture has no running Umbraco host or virtual-path URL rewriting.
         services.Remove(services.Single(d => d.ImplementationType == typeof(AppBlocks.InteractiveReports.Reports.ReportLinksUnderVirtualPath)));
+        // The backoffice reports follow the options, so code can turn them on as configuration can.
+        if (separateStores) services.Configure<AppBlocksOptions>(options => options.IncludeBackOfficeReports = true);
         using var provider = services.BuildServiceProvider();
+        Assert.Equal(separateStores, provider.GetRequiredService<IOptions<InteractiveReportOptions>>().Value.Reports.ContainsKey(AppBlocks.InteractiveReports.Reports.RecentPagesReport.Name));
         var compiler = provider.GetRequiredService<ReportDefinitionCompiler>();
         var application = provider.GetRequiredService<IApplicationConnectionFactory>();
         foreach (var name in new[] { "Before", "After", "Legacy", "UmbracoDb", "AppBlocksDb", "AttachmentsDb" }) {

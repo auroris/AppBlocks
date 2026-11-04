@@ -218,7 +218,14 @@ public sealed class CodeCompilation : IHostedService, IDisposable
                 return status = new(true, Folder.Root, true, started, 0, null, [], []);
             }
             var number = serving.Number + 1;
-            var output = await Task.Run(() => compiler.Compile($"AppBlocks.Code.{number}", sources, Folder.Relative, ct), ct);
+            RoslynOutput output;
+            try { output = await Task.Run(() => compiler.Compile($"AppBlocks.Code.{number}", sources, Folder.Relative, ct), ct); }
+            catch
+            {
+                // A compile that did not finish, cancelled with its request or failed, is no attempt: the next change compiles again.
+                attemptedHash = null;
+                throw;
+            }
             if (output.Image is null)
             {
                 var errors = output.Diagnostics.Count(d => d.IsError);
