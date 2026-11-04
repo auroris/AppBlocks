@@ -99,7 +99,7 @@ public sealed class DataSourceTests : IDisposable
         var values = new Dictionary<string, object?> {
             ["access"] = "Public",
             ["alias"] = "tasks", ["connection"] = "TasksDb", ["source"] = "TASKS", ["keyColumns"] = "TASK_ID",
-            ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1", ["concurrency"] = "VERSION",
+            ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1", ["concurrencyMode"] = DataSourceConcurrency.Checksum,
             ["mapping"] = """{ "dueDate": { "kind": "date" }, "done": { "kind": "checkbox" }, "createdAt": { "kind": "datetime" }, "updatedAt": { "kind": "datetime" } }""",
             ["auditColumns"] = "createdBy = CREATED_BY\ncreatedAt = CREATED_AT\nupdatedBy = UPDATED_BY\nupdatedAt = UPDATED_AT",
             ["insertDefaults"] = "OWNER_SID = :USER_SID\nPRIORITY = 2\nDUE_DATE = :NOW\nTAG = :PARAM.tag",
@@ -407,13 +407,15 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal(200, created.Status);
         var key = created.Record!.Key!;
         Assert.Equal(200, (await source.LoadAsync(key, context, default)).Status);
-        Assert.Equal(200, (await source.UpdateAsync(key, Json(new { title = "Updated" }), "1", context, default)).Status);
+        var updated = await source.UpdateAsync(key, Json(new { title = "Updated" }), created.Record.Version, context, default);
+        Assert.Equal(200, updated.Status);
         Assert.NotEmpty((await queries.QueryAsync(definition, context)).Rows);
         var scope = new DataSourceScope("projectId", "1");
         Assert.Equal(200, (await source.ListRowsAsync(scope, context, 100, default)).Status);
-        Assert.Equal(200, (await source.SaveRowsAsync(scope, [new("update", key, "2", Json(new { title = "Batch updated" }))],
+        Assert.Equal(200, (await source.SaveRowsAsync(scope, [new("update", key, updated.Record!.Version, Json(new { title = "Batch updated" }))],
             context with { SubmissionKey = Guid.NewGuid().ToString() }, 100, default)).Status);
-        Assert.Equal(204, (await source.DeleteAsync(key, "3", context, default)).Status);
+        var saved = await source.LoadAsync(key, context, default);
+        Assert.Equal(204, (await source.DeleteAsync(key, saved.Record!.Version, context, default)).Status);
         Assert.All(policy.Requests, request => {
             Assert.Equal(pageKey, request.Context.PageKey);
             Assert.True(request.User.CanEditPage);
@@ -422,13 +424,14 @@ public sealed class DataSourceTests : IDisposable
 
         // The same account on another page gets refused by the rule; no permission leaks between pages.
         var otherPage = context with { PageKey = Guid.NewGuid() };
+        var original = (await source.LoadAsync("1", context, default)).Record!;
         Assert.Equal(403, (await source.InitializeAsync(otherPage, default)).Status);
         Assert.Equal(403, (await source.LoadAsync("1", otherPage, default)).Status);
         Assert.Equal(403, (await source.CreateAsync(Json(new { title = "Refused" }), otherPage with { SubmissionKey = Guid.NewGuid().ToString() }, default)).Status);
-        Assert.Equal(403, (await source.UpdateAsync("1", Json(new { title = "Refused" }), "1", otherPage, default)).Status);
-        Assert.Equal(403, (await source.DeleteAsync("1", "1", otherPage, default)).Status);
+        Assert.Equal(403, (await source.UpdateAsync("1", Json(new { title = "Refused" }), original.Version, otherPage, default)).Status);
+        Assert.Equal(403, (await source.DeleteAsync("1", original.Version, otherPage, default)).Status);
         Assert.Equal(403, (await source.ListRowsAsync(scope, otherPage, 100, default)).Status);
-        Assert.Equal(403, (await source.SaveRowsAsync(scope, [new("update", "1", "1", Json(new { title = "Refused" }))], otherPage, 100, default)).Status);
+        Assert.Equal(403, (await source.SaveRowsAsync(scope, [new("update", "1", original.Version, Json(new { title = "Refused" }))], otherPage, 100, default)).Status);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.QueryAsync(definition, otherPage));
         Assert.Equal("Paint the hangar", Scalar("SELECT TITLE FROM TASKS WHERE TASK_ID = 1"));
     }
@@ -477,7 +480,7 @@ public sealed class DataSourceTests : IDisposable
         Assert.True(fields["dueDate"] is { Kind: "date", Required: false, Label: "Due date" });
         Assert.True(fields["done"] is { Kind: "checkbox", HasServerDefault: true });
         Assert.True(fields["tag"] is { Kind: "text", MaxLength: FieldKinds.DefaultTextLength });
-        Assert.True(fields["version"] is { ReadOnly: true, Required: false, HasServerDefault: true });
+        Assert.True(fields["version"] is { ReadOnly: false, Required: true, HasServerDefault: true });
         Assert.True(fields["createdBy"] is { ReadOnly: true } && fields["updatedAt"] is { ReadOnly: true, Kind: "datetime" });
         Assert.StartsWith("ds-", source.ContractVersion);
         Assert.Equal(source.ContractVersion, new SqlDataSource(source.Definition, runtime, new TestUsers(), []).ContractVersion);
@@ -512,14 +515,14 @@ public sealed class DataSourceTests : IDisposable
     }
 
     [Fact]
-    public async Task Records_round_trip_with_version_audit_columns_and_a_generated_key()
+    public async Task Records_round_trip_with_checksum_audit_columns_and_a_generated_key()
     {
         var source = Working(Tasks());
         var created = await source.CreateAsync(Json(new { title = "Check the lights", done = true, projectId = "2" }), Context(Owner, new() { ["tag"] = "West" }), default);
         Assert.Equal(200, created.Status);
         var key = created.Record!.Key!;
         Assert.Equal("4", key);
-        Assert.Equal("1", created.Record.Version);
+        Assert.Equal(32, created.Record.Version!.Length);
         Assert.Equal(new object?[] { "Check the lights", "S-1-5-21-1", 2L, "2026-10-23", 1L, 2L, "West", "jsmith", "jsmith", "2026-10-23 14:30:00", 1L },
             new[] { "TITLE", "OWNER_SID", "PRIORITY", "DUE_DATE", "DONE", "PROJECT_ID", "TAG", "CREATED_BY", "UPDATED_BY", "CREATED_AT", "VERSION" }
                 .Select(c => Scalar($"SELECT {c} FROM TASKS WHERE TASK_ID = 4")));
@@ -534,21 +537,21 @@ public sealed class DataSourceTests : IDisposable
         var update = Json(new { title = "Check the lights again", dueDate = "2026-12-24", done = false });
         var updated = await source.UpdateAsync(key, update, loaded.Record.Version!, Context(Administrator), default);
         Assert.Equal(200, updated.Status);
-        Assert.Equal("2", updated.Record!.Version);
+        Assert.NotEqual(loaded.Record.Version, updated.Record!.Version);
         Assert.Equal("Check the lights again", updated.Record.Values["title"]);
-        Assert.Equal(new object?[] { "2026-12-24", 0L, "admin", "jsmith", 2L },
+        Assert.Equal(new object?[] { "2026-12-24", 0L, "admin", "jsmith", 1L },
             new[] { "DUE_DATE", "DONE", "UPDATED_BY", "CREATED_BY", "VERSION" }.Select(c => Scalar($"SELECT {c} FROM TASKS WHERE TASK_ID = 4")));
 
         // A save that changes nothing writes nothing: no new version and no audit change.
         var same = await source.UpdateAsync(key, update, updated.Record.Version!, Context(Owner), default);
         Assert.Equal(200, same.Status);
-        Assert.Equal("2", same.Record!.Version);
+        Assert.Equal(updated.Record.Version, same.Record!.Version);
         Assert.Equal("admin", Scalar("SELECT UPDATED_BY FROM TASKS WHERE TASK_ID = 4"));
 
-        Assert.Equal(204, (await source.DeleteAsync(key, "2", Context(Owner), default)).Status);
+        Assert.Equal(204, (await source.DeleteAsync(key, updated.Record.Version, Context(Owner), default)).Status);
         Assert.Equal(404, (await source.LoadAsync(key, Context(Owner), default)).Status);
-        Assert.Equal(404, (await source.DeleteAsync(key, "2", Context(Owner), default)).Status);
-        Assert.Equal(404, (await source.UpdateAsync(key, update, "2", Context(Owner), default)).Status);
+        Assert.Equal(404, (await source.DeleteAsync(key, updated.Record.Version, Context(Owner), default)).Status);
+        Assert.Equal(404, (await source.UpdateAsync(key, update, updated.Record.Version, Context(Owner), default)).Status);
     }
 
     [Fact]
@@ -562,18 +565,66 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal(409, (await source.UpdateAsync("1", Json(new { title = "Not a version" }), "x", Context(Owner), default)).Status);
         Assert.Equal("First save", Scalar("SELECT TITLE FROM TASKS WHERE TASK_ID = 1"));
 
-        // Without a version column the token is a checksum of the row: any change elsewhere makes it stale.
-        var checksum = Working(Tasks(("concurrency", "")));
+        // Checksum is an explicit opt-in that needs no version column.
+        var checksum = Working(Tasks(("concurrencyMode", DataSourceConcurrency.Checksum)));
         var row = (await checksum.LoadAsync("2", Context(Owner), default)).Record!;
         Assert.Equal(32, row.Version!.Length);
         Execute("UPDATE TASKS SET PRIORITY = 9 WHERE TASK_ID = 2");
         Assert.Equal(409, (await checksum.UpdateAsync("2", Json(new { title = "Lost update" }), row.Version, Context(Owner), default)).Status);
+        Assert.Equal(409, (await checksum.UpdateAsync("2", Json(new { title = "Missing token" }), null, Context(Owner), default)).Status);
+        Assert.Equal(409, (await checksum.DeleteAsync("2", null, Context(Owner), default)).Status);
+        Assert.Equal(409, (await checksum.DeleteAsync("2", row.Version, Context(Owner), default)).Status);
+        Assert.Equal(409, (await checksum.SaveRowsAsync(new("projectId", "2"),
+            [new("update", "2", null, Json(new { title = "Missing batch token" }))], Context(Owner), 100, default)).Status);
         var fresh = (await checksum.LoadAsync("2", Context(Owner), default)).Record!;
         Assert.NotEqual(row.Version, fresh.Version);
         var saved = await checksum.UpdateAsync("2", Json(new { title = "Current update" }), fresh.Version!, Context(Owner), default);
         Assert.Equal(200, saved.Status);
         Assert.NotEqual(fresh.Version, saved.Record!.Version);
         Assert.Equal(204, (await checksum.DeleteAsync("2", saved.Record.Version!, Context(Owner), default)).Status);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task Last_save_wins_without_concurrency_for_records_and_batches(string? concurrency)
+    {
+        var settings = Tasks(("concurrencyMode", concurrency));
+        if (concurrency is null) settings.Remove("concurrencyMode");
+        var source = Working(settings);
+        var loaded = (await source.LoadAsync("1", Context(Owner), default)).Record!;
+        Assert.Null(loaded.Version);
+        Assert.Equal(200, (await source.UpdateAsync("1", Json(new { title = "First save" }), null, Context(Owner), default)).Status);
+        var last = await source.UpdateAsync("1", Json(new { title = "Last save" }), loaded.Version, Context(Owner), default);
+        Assert.Equal(200, last.Status);
+        Assert.Null(last.Record!.Version);
+        Assert.Equal("Last save", Scalar("SELECT TITLE FROM TASKS WHERE TASK_ID = 1"));
+        Assert.Equal(1L, Scalar("SELECT VERSION FROM TASKS WHERE TASK_ID = 1")); // A column's existence does not enable it.
+
+        var batch = await source.SaveRowsAsync(new("projectId", "1"),
+            [new("update", "1", null, Json(new { title = "Batch save" }))], Context(Owner), 100, default);
+        Assert.Equal(200, batch.Status);
+        Assert.Equal("Batch save", Scalar("SELECT TITLE FROM TASKS WHERE TASK_ID = 1"));
+        Assert.Equal(200, (await source.SaveRowsAsync(new("projectId", "1"),
+            [new("delete", "1", null, Json(new { }))], Context(Owner), 100, default)).Status);
+        Assert.Equal(404, (await source.UpdateAsync("1", Json(new { title = "Deleted" }), null, Context(Owner), default)).Status);
+        Assert.Equal(204, (await source.DeleteAsync("2", null, Context(Owner), default)).Status);
+    }
+
+    [Fact]
+    public void Concurrency_modes_are_typed_and_invalid_choices_are_rejected()
+    {
+        foreach (var mode in Enum.GetValues<DataSourceConcurrency>())
+            Assert.Equal(mode, Definition(Tasks(("concurrencyMode", mode))).Concurrency);
+        Assert.Equal(DataSourceConcurrency.LastSaveWins, Definition(Tasks(("concurrencyMode", ""))).Concurrency);
+        Assert.Equal(DataSourceConcurrency.Checksum, Definition(Tasks()).Concurrency);
+        foreach (var invalid in new[] { "Typo", "VERSION", "VersionColumn", "2", "999" })
+        {
+            var settings = Tasks(("concurrencyMode", invalid));
+            var errors = new List<string>();
+            Assert.Null(DataSourceDefinition.Read(Guid.NewGuid(), "Tasks", alias => settings.GetValueOrDefault(alias), _ => [], errors));
+            Assert.Contains(errors, e => e.Contains("concurrency mode"));
+        }
     }
 
     [Fact]
@@ -603,7 +654,7 @@ public sealed class DataSourceTests : IDisposable
     [Fact]
     public async Task Hidden_fields_are_written_and_read_only_fields_never()
     {
-        var source = Working(Tasks(("mapping", """{ "dueDate": { "kind": "date" }, "tag": { "readOnly": true } }""")));
+        var source = Working(Tasks(("mapping", """{ "dueDate": { "kind": "date" }, "tag": { "readOnly": true }, "version": { "readOnly": true } }""")));
         // projectId stands for a hidden field: the form never shows it, but it is bound and submitted, so it is written.
         var created = await source.CreateAsync(Json(new { title = "Hidden foreign key", projectId = "1" }), Context(Owner), default);
         Assert.Equal(1L, Scalar($"SELECT PROJECT_ID FROM TASKS WHERE TASK_ID = {created.Record!.Key}"));
@@ -620,7 +671,7 @@ public sealed class DataSourceTests : IDisposable
         }
         Assert.Equal(422, (await source.CreateAsync(Json(new { title = "x", version = "7" }), Context(Owner), default)).Status);
         Assert.Equal(422, (await source.CreateAsync(Json(new { title = "x", unknown = "7" }), Context(Owner), default)).Status);
-        Assert.Equal(new object?[] { 2L, "jsmith", null }, new[] { "VERSION", "UPDATED_BY", "TAG" }.Select(c => Scalar($"SELECT {c} FROM TASKS WHERE TASK_ID = {created.Record.Key}")));
+        Assert.Equal(new object?[] { 1L, "jsmith", null }, new[] { "VERSION", "UPDATED_BY", "TAG" }.Select(c => Scalar($"SELECT {c} FROM TASKS WHERE TASK_ID = {created.Record.Key}")));
     }
 
     [Fact]
@@ -635,7 +686,7 @@ public sealed class DataSourceTests : IDisposable
         merged["priority"] = "1";
         var saved = await source.UpdateAsync("3", Json(merged), loaded.Version!, Context(Owner), default);
         Assert.Equal(200, saved.Status);
-        Assert.Equal(new object?[] { "", 5000L, 1L, 2L }, new[] { "TITLE", "LENGTH(TAG)", "PRIORITY", "VERSION" }.Select(c => Scalar($"SELECT {c} FROM TASKS WHERE TASK_ID = 3")));
+        Assert.Equal(new object?[] { "", 5000L, 1L, 1L }, new[] { "TITLE", "LENGTH(TAG)", "PRIORITY", "VERSION" }.Select(c => Scalar($"SELECT {c} FROM TASKS WHERE TASK_ID = 3")));
         merged["title"] = "  ";
         Assert.Equal(422, (await source.UpdateAsync("3", Json(merged), saved.Record!.Version!, Context(Owner), default)).Status);
     }
@@ -924,6 +975,7 @@ public sealed class DataSourceTests : IDisposable
             ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1",
         });
         var row = (await pairs.LoadAsync("1|y", Context(Owner), default)).Record!;
+        Assert.Null(row.Version);
         Assert.Equal("One y", row.Values["label"]);
         Assert.Equal("1|y", row.Key);
         Assert.Equal(404, (await pairs.LoadAsync("1", Context(Owner), default)).Status);
@@ -961,11 +1013,9 @@ public sealed class DataSourceTests : IDisposable
         Refused("table name", ("source", "TASKS WHERE 1=1"));
         Refused("Enter the key columns", ("keyColumns", ""));
         Refused("primary key or a unique key", ("keyColumns", "TITLE"));
-        Refused("primary key or a unique key", ("source", "LOOSE"), ("keyColumns", "ID"), ("concurrency", ""), ("auditColumns", ""), ("insertDefaults", ""), ("mapping", ""));
-        Refused("is a view", ("source", "OPEN_TASKS"), ("concurrency", ""), ("auditColumns", ""), ("insertDefaults", ""), ("mapping", ""));
+        Refused("primary key or a unique key", ("source", "LOOSE"), ("keyColumns", "ID"), ("concurrencyMode", DataSourceConcurrency.LastSaveWins), ("auditColumns", ""), ("insertDefaults", ""), ("mapping", ""));
+        Refused("is a view", ("source", "OPEN_TASKS"), ("concurrencyMode", DataSourceConcurrency.LastSaveWins), ("auditColumns", ""), ("insertDefaults", ""), ("mapping", ""));
         Refused("not a column of the row source", ("keyColumns", "NOPE"));
-        Refused("whole-number", ("concurrency", "TITLE"));
-        Refused("does not allow NULL", ("concurrency", "PROJECT_ID"));
         Refused("not a bind variable", ("rowRestriction", "OWNER_SID = :USER"));
         Refused("restricts nothing", ("rowRestriction", "OWNER_SID = :PARAM.owner"));
         Refused("restricts nothing", ("rowRestriction", "OWNER_SID = :FIELD.ownerSid"));

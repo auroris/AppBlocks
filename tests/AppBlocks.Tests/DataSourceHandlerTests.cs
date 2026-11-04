@@ -93,11 +93,11 @@ public sealed class DataSourceHandlerTests : IDisposable
         var key = created.Record.Key!;
         Assert.Equal("APPROVED", Scalar($"SELECT STATUS FROM ORDERS WHERE ORDER_ID = {key}"));
 
-        var updated = await source.UpdateAsync(key, Json(new { total = "7" }), "1", context, default);
+        var updated = await source.UpdateAsync(key, Json(new { total = "7" }), null, context, default);
         Assert.Equal(200, updated.Status);
         Assert.Equal("CHANGED", updated.Record!.Values["status"]);
         Assert.Equal("42.5", updated.Record.Values["total"]);
-        Assert.Equal(2L, Scalar($"SELECT VERSION FROM ORDERS WHERE ORDER_ID = {key}"));
+        Assert.Equal(1L, Scalar($"SELECT VERSION FROM ORDERS WHERE ORDER_ID = {key}"));
 
         var loaded = await source.LoadAsync(key, context, default);
         Assert.Equal("Shown: TOWER INC", loaded.Record!.Values["customer"]);
@@ -119,7 +119,7 @@ public sealed class DataSourceHandlerTests : IDisposable
                 return DataSourceOutcome.Handled(Convert.ToString(id, CultureInfo.InvariantCulture));
             },
             Update = async operation => {
-                await operation.Sql.ExecuteAsync("UPDATE ORDERS SET STATUS = 'BY CLASS', VERSION = VERSION + 1 WHERE ORDER_ID = :ARG.key", new { key = operation.Key });
+                await operation.Sql.ExecuteAsync("UPDATE ORDERS SET STATUS = 'BY CLASS' WHERE ORDER_ID = :ARG.key", new { key = operation.Key });
                 return DataSourceOutcome.Handled();
             },
             // A soft delete: the row stays, marked.
@@ -139,12 +139,12 @@ public sealed class DataSourceHandlerTests : IDisposable
         Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ORDERS WHERE CUSTOMER = 'Tower Inc'"));
         Assert.Equal("1001", Scalar($"SELECT BY_KEY FROM ORDER_LOG WHERE ORDER_ID = {key}"));
 
-        var updated = await source.UpdateAsync(key, Json(new { customer = "Ignored" }), "1", context, default);
+        var updated = await source.UpdateAsync(key, Json(new { customer = "Ignored" }), null, context, default);
         Assert.Equal(200, updated.Status);
         Assert.Equal("BY CLASS", updated.Record!.Values["status"]);
         Assert.Equal("Tower Inc", updated.Record.Values["customer"]);
 
-        Assert.Equal(204, (await source.DeleteAsync(key, "2", context, default)).Status);
+        Assert.Equal(204, (await source.DeleteAsync(key, null, context, default)).Status);
         Assert.Equal("CANCELLED", Scalar($"SELECT STATUS FROM ORDERS WHERE ORDER_ID = {key}"));
     }
 
@@ -162,12 +162,12 @@ public sealed class DataSourceHandlerTests : IDisposable
         var source = Orders(handler);
         var context = Context(Owner);
 
-        var refused = await source.UpdateAsync("2", Json(new { customer = "Changed" }), "1", context, default);
+        var refused = await source.UpdateAsync("2", Json(new { customer = "Changed" }), null, context, default);
         Assert.Equal(422, refused.Status);
         Assert.Equal(["A closed order cannot change."], refused.Errors!["status"]);
         Assert.Equal("Runway Ltd", Scalar("SELECT CUSTOMER FROM ORDERS WHERE ORDER_ID = 2"));
         Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM ORDER_LOG"));
-        Assert.Equal(403, (await source.DeleteAsync("2", "1", context, default)).Status);
+        Assert.Equal(403, (await source.DeleteAsync("2", null, context, default)).Status);
         Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ORDERS WHERE ORDER_ID = 2"));
         Assert.Equal(404, (await source.LoadAsync("1", context, default)).Status);
         Assert.Throws<ArgumentOutOfRangeException>(() => DataSourceOutcome.Refuse(500));
@@ -220,7 +220,7 @@ public sealed class DataSourceHandlerTests : IDisposable
         Assert.Contains("createdBy", audited.Errors!.Keys);
 
         var rekey = new Handler { Update = async operation => { operation.Values!["orderId"] = "99"; return DataSourceOutcome.Continue; } };
-        var rekeyed = await Orders(rekey).UpdateAsync("1", Json(new { customer = "Rekeyed" }), "1", Context(Owner), default);
+        var rekeyed = await Orders(rekey).UpdateAsync("1", Json(new { customer = "Rekeyed" }), null, Context(Owner), default);
         Assert.Equal(422, rekeyed.Status);
         Assert.Contains("orderId", rekeyed.Errors!.Keys);
 
@@ -260,7 +260,7 @@ public sealed class DataSourceHandlerTests : IDisposable
         Assert.Equal(200, initialized.Status);
         Assert.Equal("Order 3", initialized.Record!.Values["customer"]);
         Assert.Equal(200, (await source.LoadAsync("1", Context(Owner), default)).Status);
-        Assert.Equal(200, (await source.UpdateAsync("1", Json(new { customer = "Plain" }), "1", Context(Owner), default)).Status);
+        Assert.Equal(200, (await source.UpdateAsync("1", Json(new { customer = "Plain" }), null, Context(Owner), default)).Status);
         Assert.Equal("Plain", Scalar("SELECT CUSTOMER FROM ORDERS WHERE ORDER_ID = 1"));
     }
 
@@ -273,8 +273,8 @@ public sealed class DataSourceHandlerTests : IDisposable
         Assert.Equal(503, (await source.InitializeAsync(Context(Owner), default)).Status);
         Assert.Equal(503, (await source.LoadAsync("1", Context(Owner), default)).Status);
         Assert.Equal(503, (await source.CreateAsync(Json(new { customer = "Unguarded" }), Context(Owner), default)).Status);
-        Assert.Equal(503, (await source.UpdateAsync("1", Json(new { customer = "Unguarded" }), "1", Context(Owner), default)).Status);
-        Assert.Equal(503, (await source.DeleteAsync("1", "1", Context(Owner), default)).Status);
+        Assert.Equal(503, (await source.UpdateAsync("1", Json(new { customer = "Unguarded" }), null, Context(Owner), default)).Status);
+        Assert.Equal(503, (await source.DeleteAsync("1", null, Context(Owner), default)).Status);
         Assert.Equal(503, (await source.ListRowsAsync(new DataSourceScope("owner", "1001"), Context(Owner), 100, default)).Status);
         Assert.False(await source.MayWriteAsync(Context(Owner).Member, default));
         // Without any registry, as a test or a site without classes constructs it, the same.
@@ -308,7 +308,7 @@ public sealed class DataSourceHandlerTests : IDisposable
                 return DataSourceOutcome.Continue;
             },
         };
-        var updated = await Orders(handler).UpdateAsync("1", Json(new { customer = "Proposed" }), "1", Context(Owner, new() { ["region"] = "NORTH" }), default);
+        var updated = await Orders(handler).UpdateAsync("1", Json(new { customer = "Proposed" }), null, Context(Owner, new() { ["region"] = "NORTH" }), default);
         Assert.Equal(200, updated.Status);
         Assert.DoesNotContain("12.5", text);
         Assert.Contains("-- :ARG.ignored in a comment", text);
@@ -407,18 +407,40 @@ public sealed class DataSourceHandlerTests : IDisposable
         Assert.Equal("Tower Two", updated.Master.Record!.Values["customer"]);
         Assert.Equal("5", Assert.Single(updated.Details![0].Rows!).Values["quantity"]);
         var foreign = await orders.SaveWithDetailsAsync(key, Json(new { customer = "Tower Three" }), "2",
-            [Batch(lines, Change("delete", "1", "1"))], Context(Owner), default);
+            [Batch(lines, Change("delete", "1"))], Context(Owner), default);
         Assert.Equal(404, foreign.Status);
         Assert.Equal("Tower Two", Scalar($"SELECT CUSTOMER FROM ORDERS WHERE ORDER_ID = {key}"));
         Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ORDER_LINES WHERE ORDER_ID = 1"));
 
         // The allow flags and the size of a batch are checked before anything is written.
         var noDeletes = Lines(("allowDelete", "0"));
-        var flagged = await orders.SaveWithDetailsAsync(key, Json(new { customer = "Flagged" }), "2", [Batch(noDeletes, Change("delete", bolt.Key, "2"))], Context(Owner), default);
+        var flagged = await orders.SaveWithDetailsAsync(key, Json(new { customer = "Flagged" }), "2", [Batch(noDeletes, Change("delete", bolt.Key))], Context(Owner), default);
         Assert.Equal((403, 0, 0), (flagged.Status, flagged.Detail, flagged.Refusal!.Index));
         var many = Enumerable.Range(0, SqlDataSource.MaxChanges + 1).Select(i => Change("create", values: new { product = "P" + i })).ToArray();
         Assert.Equal(422, (await orders.SaveWithDetailsAsync(key, Json(new { customer = "Many" }), "2", [Batch(lines, many)], Context(Owner), default)).Status);
         Assert.Equal("Tower Two", Scalar($"SELECT CUSTOMER FROM ORDERS WHERE ORDER_ID = {key}"));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Master_and_detail_concurrency_is_opt_in_and_conflicts_roll_back_the_save(bool masterChecksum, bool detailChecksum)
+    {
+        var orders = Orders(new Handler(), null, ("concurrencyMode", masterChecksum ? DataSourceConcurrency.Checksum : DataSourceConcurrency.LastSaveWins));
+        var lines = Lines(("concurrencyMode", detailChecksum ? DataSourceConcurrency.Checksum : DataSourceConcurrency.LastSaveWins));
+        var master = (await orders.LoadAsync("1", Context(Owner), default)).Record!;
+        var detail = (await lines.LoadAsync("1", Context(Owner), default)).Record!;
+        var first = await orders.SaveWithDetailsAsync("1", Json(new { customer = "First save" }), master.Version,
+            [Batch(lines, Change("update", "1", detail.Version, new { quantity = "4" }))], Context(Owner), default);
+        Assert.Equal(200, first.Status);
+
+        var last = await orders.SaveWithDetailsAsync("1", Json(new { customer = "Last save" }), master.Version,
+            [Batch(lines, Change("update", "1", detail.Version, new { quantity = "5" }))], Context(Owner), default);
+        var detectsConflicts = masterChecksum || detailChecksum;
+        Assert.Equal(detectsConflicts ? 409 : 200, last.Status);
+        Assert.Equal(detectsConflicts ? "First save" : "Last save", Scalar("SELECT CUSTOMER FROM ORDERS WHERE ORDER_ID = 1"));
+        Assert.Equal(detectsConflicts ? 4L : 5L, Scalar("SELECT QUANTITY FROM ORDER_LINES WHERE LINE_ID = 1"));
     }
 
     [Fact]
@@ -524,7 +546,7 @@ public sealed class DataSourceHandlerTests : IDisposable
     {
         var values = new Dictionary<string, object?> {
             ["access"] = "Not public", ["alias"] = "orders", ["connection"] = "OrdersDb", ["source"] = "ORDERS", ["keyColumns"] = "ORDER_ID",
-            ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1", ["concurrency"] = "VERSION",
+            ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1",
             ["mapping"] = """{ "status": { "readOnly": true } }""", ["handler"] = "orders.rules",
         };
         foreach (var (alias, value) in settings) values[alias] = value;

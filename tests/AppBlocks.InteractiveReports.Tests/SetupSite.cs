@@ -268,8 +268,8 @@ internal sealed class SetupSite : IAsyncDisposable
         public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => records.InitializeAsync(context, ct);
         public Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct) => records.LoadAsync(key, context, ct);
         public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct) => records.CreateAsync(input, context, ct);
-        public Task<FormResult> UpdateAsync(string key, JsonElement input, string version, FormExecutionContext context, CancellationToken ct) => records.UpdateAsync(key, input, version, context, ct);
-        public Task<FormResult> DeleteAsync(string key, string version, FormExecutionContext context, CancellationToken ct) => records.DeleteAsync(key, version, context, ct);
+        public Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct) => records.UpdateAsync(key, input, version, context, ct);
+        public Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct) => records.DeleteAsync(key, version, context, ct);
     }
 }
 

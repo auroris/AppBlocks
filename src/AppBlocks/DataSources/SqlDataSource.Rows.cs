@@ -177,12 +177,10 @@ public sealed partial class SqlDataSource
                 return await InsertRecordAsync(plan, user, context, values, now, connection, transaction, app, ct);
             case "update":
                 if (change.Key is null || !TryParseKey(plan, change.Key, out var keys)) return FormResult.Missing();
-                if (string.IsNullOrWhiteSpace(change.Version)) return FormResult.Invalid("", "The row's version is required.");
                 if (change.Values.ValueKind != JsonValueKind.Object) return FormResult.Invalid("", "Row values must be an object.");
                 return await UpdateRecordAsync(plan, user, context, change.Key, keys, change.Values, change.Version, now, connection, transaction, scope, app, ct);
             default:
                 if (change.Key is null || !TryParseKey(plan, change.Key, out var deleteKeys)) return FormResult.Missing();
-                if (string.IsNullOrWhiteSpace(change.Version)) return FormResult.Invalid("", "The row's version is required.");
                 return await DeleteRecordAsync(plan, user, context, change.Key, deleteKeys, change.Version, connection, transaction, scope, app, ct);
         }
     }
@@ -232,7 +230,7 @@ public sealed partial class SqlDataSource
                 if (cell is string { Length: > FieldKinds.MaxTextLength }) throw new DataSourceException($"The value of {plan.Columns[i].Label} is larger than a form can hold.");
                 values[plan.Columns[i]] = cell;
             }
-            rows.Add(new Row(values, plan.RowVersionColumn is null ? null : reader.GetValue(plan.Columns.Count)));
+            rows.Add(new Row(values));
         }
         // Key order whatever the table's physical order: numbers as numbers, everything else as text.
         rows.Sort((a, b) => CompareKeys(plan, a.Values, b.Values));

@@ -32,10 +32,10 @@ public interface IDataSourceHandler
     /// <summary>A new row, after the submitted values are parsed and the defaults filled; <see cref="DataSourceOutcome.Handled"/> returns its key.</summary>
     ValueTask<DataSourceOutcome> CreateAsync(DataSourceOperation operation, CancellationToken ct) => DataSourceOutcome.Pass;
 
-    /// <summary>A changed row, locked, after the version check; <see cref="DataSourceOperation.Values"/> is the whole row as it would be stored.</summary>
+    /// <summary>A changed row, locked, after any enabled version check; <see cref="DataSourceOperation.Values"/> is the whole row as it would be stored.</summary>
     ValueTask<DataSourceOutcome> UpdateAsync(DataSourceOperation operation, CancellationToken ct) => DataSourceOutcome.Pass;
 
-    /// <summary>A row about to be deleted, locked, after the version check.</summary>
+    /// <summary>A row about to be deleted, locked, after any enabled version check.</summary>
     ValueTask<DataSourceOutcome> DeleteAsync(DataSourceOperation operation, CancellationToken ct) => DataSourceOutcome.Pass;
 
     /// <summary>The rows of one parent record, as a tabular form lists them; <see cref="DataSourceOperation.Rows"/> is what it shows.</summary>

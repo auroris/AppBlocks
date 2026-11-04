@@ -178,7 +178,6 @@ public static class FormEndpoints
         try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
         catch (AntiforgeryValidationException) { return Results.BadRequest(); }
         if (submission.DefinitionVersion != form.Revision) return Results.Json(FormResult.Invalid("", "This form has changed. Reload the page before saving."), statusCode: 409);
-        if (key is not null && string.IsNullOrWhiteSpace(submission.Version)) return Results.BadRequest();
         var context = new FormExecutionContext(member, pageKey, formKey, form.Revision, submission.SubmissionKey, Parameters(http.Request.Query)) {
             FormData = FormData(submission.FormData, http.RequestServices.GetRequiredService<IOptions<AntiforgeryOptions>>().Value.FormFieldName),
         };
@@ -187,7 +186,10 @@ public static class FormEndpoints
         if (operation == "delete") {
             // Nothing to check on a delete, which only ever acts on a record the class allows; its token still stops here.
             context = context with { FormData = antiSpam.WithoutChecks(form, context.FormData) };
-            var deletion = await form.Resource.DeleteAsync(key!, submission.Version!, context, ct);
+            var current = await form.Resource.LoadAsync(key!, context, ct);
+            if (current.Record is null) return Result(current);
+            if (current.Record.Version is { } expected && expected != submission.Version) return Result(FormResult.Conflict());
+            var deletion = await form.Resource.DeleteAsync(key!, submission.Version, context, ct);
             Audit(http, operation, form.Resource.Alias, key, member, deletion.Status);
             return Result(deletion);
         }
@@ -214,7 +216,7 @@ public static class FormEndpoints
             var current = await form.Resource.LoadAsync(key, context, ct);
             if (current.Record is null) return Result(current);
             stored = current.Record;
-            if (stored.Version != submission.Version) return Result(FormResult.Conflict());
+            if (stored.Version is { } expected && expected != submission.Version) return Result(FormResult.Conflict());
             // Omission preserves the current value. Explicit null remains a deliberate change.
             var merged = current.Record.Values.Where(p => form.Resource.Fields.Any(f => f.Key == p.Key && !f.ReadOnly)).ToDictionary(p => p.Key, p => p.Value);
             foreach (var value in values.EnumerateObject()) merged[value.Name] = value.Value.Clone();
@@ -228,7 +230,7 @@ public static class FormEndpoints
         if (choiceErrors.Count > 0) return Result(new(422, Errors: choiceErrors));
         if (details is not null) return await SaveWithDetailsAsync(form, key, values, submission.Version, details, context, operation, member, http, ct);
         var result = key is null ? await form.Resource.CreateAsync(values, context, ct)
-            : await form.Resource.UpdateAsync(key, values, submission.Version!, context, ct);
+            : await form.Resource.UpdateAsync(key, values, submission.Version, context, ct);
         Audit(http, operation, form.Resource.Alias, key ?? result.Record?.Key, member, result.Status);
         return Result(result.Record is null ? result : result with { Record = Project(result.Record, form) });
     }
@@ -309,7 +311,7 @@ public static class FormEndpoints
             return Results.Json(new { record = Project(result.Record, form), details = answers });
         }
 
-        result = key is null ? await form.Resource.CreateAsync(values, context, ct) : await form.Resource.UpdateAsync(key, values, version!, context, ct);
+        result = key is null ? await form.Resource.CreateAsync(values, context, ct) : await form.Resource.UpdateAsync(key, values, version, context, ct);
         Audit(http, operation, form.Resource.Alias, key ?? result.Record?.Key, member, result.Status);
         if (result.Status != 200 || result.Record is null) return Result(result);
         var record = Project(result.Record, form);

@@ -130,8 +130,10 @@ public sealed class CodeRecipeTests
     private static FormExecutionContext Caller(string? id) => new(id is null ? new ClaimsPrincipal(new ClaimsIdentity())
         : new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, id)], "Test")), Guid.NewGuid(), Guid.NewGuid(), "1");
 
-    [Fact]
-    public async Task A_generated_SQLite_form_class_runs_its_whole_cycle_once_compiled_at_run_time()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_generated_SQLite_form_class_runs_its_whole_cycle_once_compiled_at_run_time(bool useChecksum)
     {
         var directory = Directory.CreateTempSubdirectory("code-recipe-").FullName;
         var file = Path.Combine(directory, "orders.db");
@@ -164,7 +166,9 @@ public sealed class CodeRecipeTests
         }
         var recipe = Recipe(CodeRecipeKind.FormClass) with { Access = DataSourceAccess.SpecificGroups, ReadMemberGroups = ["Crew"], WriteMemberGroups = ["Buyers"] };
         var compilation = services.GetRequiredService<CodeCompilation>();
-        await compilation.Folder.WriteAsync(CodeRecipes.FilePath(recipe, "Orders"), CodeRecipes.FormClass(recipe, table, SqliteDialect.Instance), create: true, default);
+        var code = CodeRecipes.FormClass(recipe, table, SqliteDialect.Instance);
+        if (useChecksum) code = code.Replace("UseChecksum = false", "UseChecksum = true", StringComparison.Ordinal);
+        await compilation.Folder.WriteAsync(CodeRecipes.FilePath(recipe, "Orders"), code, create: true, default);
         var status = await compilation.CompileAsync("test", default);
         Assert.True(status.Succeeded, string.Join("\n", status.Diagnostics));
         Assert.Empty(status.Diagnostics);
@@ -207,9 +211,21 @@ public sealed class CodeRecipeTests
         Assert.Equal(200, updated.Status);
         Assert.Equal("Runway Ltd", updated.Record!.Values["customer"]);
         Assert.Equal(false, updated.Record.Values["paid"]);
-        Assert.NotEqual(record.Version, updated.Record.Version);
-        Assert.Equal(409, (await form.UpdateAsync("1", Json(new { customer = "Stale", status = "NEW" }), record.Version!, Caller("1001"), default)).Status);
-        Assert.Equal(409, (await form.DeleteAsync("1", record.Version!, Caller("1001"), default)).Status);
+        if (useChecksum)
+        {
+            Assert.NotEqual(record.Version, updated.Record.Version);
+            Assert.Equal(409, (await form.UpdateAsync("1", Json(new { customer = "Stale", status = "NEW" }), record.Version, Caller("1001"), default)).Status);
+            Assert.Equal(409, (await form.DeleteAsync("1", null, Caller("1001"), default)).Status);
+            Assert.Equal(409, (await form.DeleteAsync("1", record.Version, Caller("1001"), default)).Status);
+        }
+        else
+        {
+            Assert.Null(record.Version);
+            Assert.Null(updated.Record.Version);
+            var last = await form.UpdateAsync("1", Json(new { customer = "Last save", status = "NEW" }), null, Caller("1001"), default);
+            Assert.Equal(200, last.Status);
+            Assert.Equal("Last save", last.Record!.Values["customer"]);
+        }
         Assert.Equal(403, (await form.DeleteAsync("1", updated.Record.Version!, Caller("1002"), default)).Status);
         Assert.Equal(204, (await form.DeleteAsync("1", updated.Record.Version!, Caller("1001"), default)).Status);
         Assert.Equal(404, (await form.LoadAsync("1", Caller("1002"), default)).Status);

@@ -58,7 +58,7 @@ public sealed class DataSourceRuntime(IApplicationConnectionFactory connections,
 
     /// <summary>
     /// Everything publishing checks against the database: the connection, the row source, the restriction, the key
-    /// and version columns, every column and bind variable the definition names, and that custom statements compile.
+    /// columns, every column and bind variable the definition names, and that custom statements compile.
     /// </summary>
     public IReadOnlyList<string> Validate(DataSourceDefinition definition)
     {

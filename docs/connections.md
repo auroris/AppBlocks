@@ -20,6 +20,8 @@ This selects the optional `Attachments.sqlite.db` beside Umbraco's SQLite file. 
 
 The reports companion defaults `InteractiveReport:SavedReports:Connection` to `AppBlocksDb`. An explicit `SavedReports:Connection` or `SavedReports:DataSource` takes precedence. See the [companion guide](../src/AppBlocks.InteractiveReports/README.md).
 
+Named applications registered with `AddApplicationDatabase` also get their own SQLite file beside Umbraco's SQLite database by default. The default filename is `<connectionName>.sqlite.db`, or the registration's `defaultFile`. Existing default files under App_Data remain in use until deliberately moved, so upgrading does not substitute an empty database. Explicit named connection settings still win. Without a file-backed SQLite CMS, the fallback is App_Data.
+
 ## Database drivers
 
 AppBlocks ships no database driver. SQLite and SQL Server need nothing more, because Umbraco itself brings `Microsoft.Data.Sqlite` and `Microsoft.Data.SqlClient` into every site. For the other databases, the site installs the driver package and AppBlocks finds it by name at run time, as Interactive Reports does:

@@ -59,7 +59,6 @@ public sealed partial class SqlDataSource
         }
         else if (!TryParseKey(plan, key!, out keys)) return new(FormResult.Missing());
         else if (input.ValueKind != JsonValueKind.Object) return new(FormResult.Invalid("", "Form values must be an object."));
-        else if (string.IsNullOrWhiteSpace(version)) return new(FormResult.Invalid("", "The record's version is required."));
 
         var batches = new List<PreparedBatch>(details.Count);
         for (var i = 0; i < details.Count; i++)
@@ -95,7 +94,7 @@ public sealed partial class SqlDataSource
         var master = await RunAsync(plan, write: true, async (connection, transaction) => {
             var written = creating
                 ? await InsertRecordAsync(plan, user, context, values!, now, connection, transaction!, app, ct, shared)
-                : await UpdateRecordAsync(plan, user, context, key!, keys, input, version!, now, connection, transaction!, null, app, ct, shared);
+                : await UpdateRecordAsync(plan, user, context, key!, keys, input, version, now, connection, transaction!, null, app, ct, shared);
             if (written.Status != 200) return written;
             for (var i = 0; i < batches.Count; i++)
             {

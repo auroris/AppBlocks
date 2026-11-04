@@ -115,7 +115,7 @@ A form class owns its own authorization. On a page with no Public Access, an ano
 
 - Every operation resolves the caller first, and refuses one that may not read or write. An account that no longer resolves is refused, never treated as anonymous.
 - The SQL is written for the connection's database (SQLite, SQL Server, PostgreSQL or Oracle), with quoted names and every value a bound parameter.
-- A record's version is a fingerprint of its values as read. Update and delete read the row again under a lock, compare the fingerprint, and refuse a stale change with a conflict.
+- Last save wins by default. Set `UseChecksum = true` in a generated form class to detect conflicting edits without adding a column. Update and delete then compare the loaded checksum with the current row inside the write transaction and refuse a stale change.
 - Fields follow the columns: their kind, whether they are required, a text column's length (4,000 characters when it has none) and an integer column's range. A computed or database-generated column is read-only, and binary columns are left out.
 
 The table needs a one-column primary or unique key, of a number or text. Choose a SQL data source for a table without one.

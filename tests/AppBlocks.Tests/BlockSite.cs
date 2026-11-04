@@ -211,7 +211,7 @@ internal sealed class BlockSite : IAsyncDisposable
         var lines = contents.Create("Orders lines", sources.Id, DataSourceSchema.SqlAlias);
         lines.SetValue("access", "Public");
         lines.SetValue("alias", "orders.lines"); lines.SetValue("connection", ConnectionCatalog.ApplicationConnection); lines.SetValue("source", "ORDER_LINES"); lines.SetValue("keyColumns", "LINE_ID");
-        lines.SetValue("allowInsert", 1); lines.SetValue("allowUpdate", 1); lines.SetValue("allowDelete", 1); lines.SetValue("concurrency", "VERSION");
+        lines.SetValue("allowInsert", 1); lines.SetValue("allowUpdate", 1); lines.SetValue("allowDelete", 1); lines.SetValue("concurrencyMode", nameof(DataSourceConcurrency.Checksum));
         lines.SetValue("auditColumns", "createdBy = CREATED_BY\ncreatedAt = CREATED_AT\nupdatedBy = UPDATED_BY\nupdatedAt = UPDATED_AT");
         lines.SetValue("insertDefaults", "QUANTITY = 1\nUNIT_PRICE = 0");
         lines.SetValue("mapping", """{ "item": { "maxLength": 200 }, "quantity": { "min": 1, "max": 9999 }, "unitPrice": { "min": 0, "max": 999999.99 }, "notes": { "maxLength": 1000 }, "createdAt": { "kind": "datetime" }, "updatedAt": { "kind": "datetime" } }""");
@@ -349,7 +349,7 @@ internal sealed class OrdersResource(ConnectionCatalog connections) : IFormResou
         return await LoadAsync(id, context, ct);
     }
 
-    public async Task<FormResult> UpdateAsync(string key, JsonElement input, string version, FormExecutionContext context, CancellationToken ct)
+    public async Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct)
     {
         if (context.Member.Identity?.AuthenticationType != IdentityConstants.ApplicationScheme) return FormResult.Denied();
         if (!long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var id)) return FormResult.Missing();
@@ -364,7 +364,7 @@ internal sealed class OrdersResource(ConnectionCatalog connections) : IFormResou
 
     private static string? Customer(JsonElement input)
         => input.TryGetProperty("customer", out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } customer && customer != "Refused" ? customer : null;
-    public Task<FormResult> DeleteAsync(string key, string version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+    public Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
 }
 
 /// <summary>Answers Umbraco's route to a block page with AppBlocks' view component, which a site's own template would wrap.</summary>

@@ -160,7 +160,6 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         if (plan.UpdatedBy is { } updatedBy) row[updatedBy] = user.Name;
         if (plan.CreatedAt is { } createdAt) row[createdAt] = FieldValues.FromValue(now, createdAt.Kind, out _);
         if (plan.UpdatedAt is { } updatedAt) row[updatedAt] = FieldValues.FromValue(now, updatedAt.Kind, out _);
-        if (plan.VersionStyle == VersionStyle.Integer) row[plan.Version!] = 1m;
         // Required and still empty after the defaults, with nothing in the database to fill it.
         var missing = plan.Columns.Where(c => c.Required && c.Target is { HasDefault: false, AutoValue: false, Computed: false }
             && (!row.TryGetValue(c, out var v) || v is null)).ToArray();
@@ -178,7 +177,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         return FormResult.Ok(Record(plan, created, user));
     }
 
-    public async Task<FormResult> UpdateAsync(string key, JsonElement input, string version, FormExecutionContext context, CancellationToken ct)
+    public async Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct)
     {
         if (Ready is not { } plan) return Unavailable();
         if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !definition.AllowUpdate || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
@@ -194,20 +193,20 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     }
 
     /// <summary>
-    /// One update inside the caller's transaction, on the locked row: the version must match, only what differs from
+    /// One update inside the caller's transaction, on the locked row: an enabled version check must pass, only what differs from
     /// the stored record is checked and written, the backing class may change the row or write it itself, a key or a
     /// scope's link field cannot change, and the row is read back through the restriction. A row outside
     /// <paramref name="scope"/> is not found. The caller commits on 200.
     /// </summary>
     /// <param name="details">The detail blocks of a master/detail submission, which the backing class sees with the master.</param>
     private async Task<FormResult> UpdateRecordAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, string key, object?[] keys,
-        JsonElement input, string version, DateTime now, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct,
+        JsonElement input, string? version, DateTime now, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct,
         IReadOnlyList<DataSourceDetail>? details = null)
     {
         var binder = new Binder(plan, user, context, now, null, app);
         await LockAsync(plan, connection, transaction, keys, ct);
         if (await ReadAsync(plan, connection, transaction, keys, binder, ct) is not { } current || !InScope(current, scope)) return FormResult.Missing();
-        if (Token(plan, current) != version) return FormResult.Conflict();
+        if (Token(plan, current) is { } expected && expected != version) return FormResult.Conflict();
         // Only what differs from the stored record is checked and written: the endpoint sends every field back.
         if (Parse(plan, input, current.Values, out var rejected) is not { } values) return rejected!;
         if (plan.Keys.FirstOrDefault(values.ContainsKey) is { } changedKey)
@@ -247,14 +246,14 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
             }
             // Nothing changed, so nothing is written: no new version and no audit entry.
             else if (changes.Length == 0) return FormResult.Ok(Record(plan, current, user));
-            else if (await UpdateRowAsync(plan, connection, transaction, keys, current, changes, user, now, binder, ct) != 1) return FormResult.Conflict();
+            else if (await UpdateRowAsync(plan, connection, transaction, keys, changes, user, now, binder, ct) != 1) return FormResult.Conflict();
         }
         // The row must still be one the caller may see; an update cannot hand it to someone else.
         if (await ReadAsync(plan, connection, transaction, keys, binder, ct) is not { } updated) return FormResult.Denied();
         return FormResult.Ok(Record(plan, updated, user));
     }
 
-    public async Task<FormResult> DeleteAsync(string key, string version, FormExecutionContext context, CancellationToken ct)
+    public async Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct)
     {
         if (Ready is not { } plan) return Unavailable();
         if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !definition.AllowDelete || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
@@ -268,16 +267,16 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     }
 
     /// <summary>
-    /// One delete inside the caller's transaction, on the locked row, with the version check, the backing class and the
+    /// One delete inside the caller's transaction, on the locked row, with any enabled version check, the backing class and the
     /// policies; a row outside <paramref name="scope"/> is not found. The caller commits on 204.
     /// </summary>
     private async Task<FormResult> DeleteRecordAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, string key, object?[] keys,
-        string version, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
+        string? version, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
     {
         var binder = new Binder(plan, user, context, runtime.Now(), null, app);
         await LockAsync(plan, connection, transaction, keys, ct);
         if (await ReadAsync(plan, connection, transaction, keys, binder, ct) is not { } current || !InScope(current, scope)) return FormResult.Missing();
-        if (Token(plan, current) != version) return FormResult.Conflict();
+        if (Token(plan, current) is { } expected && expected != version) return FormResult.Conflict();
         var outcome = DataSourceOutcome.Continue;
         if (Handler is not null)
         {
@@ -295,8 +294,8 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         }
         else
         {
-            var (targetKeys, versionMatch, exists) = Where(plan, parameters, keys, current, binder);
-            if (await CountAsync(plan, parameters, connection, transaction, plan.Dialect.Delete(plan.Target!.Name, targetKeys, versionMatch, exists), ct) != 1)
+            var (targetKeys, exists) = Where(plan, parameters, keys, binder);
+            if (await CountAsync(plan, parameters, connection, transaction, plan.Dialect.Delete(plan.Target!.Name, targetKeys, exists), ct) != 1)
                 return FormResult.Conflict();
         }
         return new FormResult(204);
@@ -414,7 +413,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         {
             var column = plan.Field(alias) ?? throw new DataSourceException($"The backing class set {alias}, which is not a field of the data source.");
             if (before.TryGetValue(column, out var kept) && shown.TryGetValue(alias, out var original) && Equals(original, value)) { row[column] = kept; continue; }
-            if (column.Target is not { Computed: false, RowVersion: false } || column == plan.Version || plan.IsAudit(column))
+            if (column.Target is not { Computed: false, RowVersion: false } || plan.IsAudit(column))
                 throw new DataSourceFieldException(column.Field, "The backing class cannot set this field: the database or the engine fills it.");
             var canonical = Canonical(column, value);
             if (canonical is not null && !FieldValues.Check(canonical, column, out var error)) throw new DataSourceFieldException(column.Field, error!);
@@ -516,12 +515,9 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         return parts.Length == 1 ? parts[0] : string.Join('|', parts.Select(part => part.Replace("%", "%25").Replace("|", "%7C")));
     }
 
-    /// <summary>The concurrency token: the version column's value, the rowversion in hex, or a checksum of every field.</summary>
-    private static string Token(DataSourcePlan plan, Row row) => plan.VersionStyle switch {
-        VersionStyle.Integer => row.Values[plan.Version!] is decimal number ? number.ToString("0", CultureInfo.InvariantCulture) : "",
-        VersionStyle.RowVersion => row.RowVersion is byte[] bytes ? Convert.ToHexString(bytes) : "",
-        _ => FieldValues.Checksum(plan.Columns.Select(c => (c.Column, row.Values[c]))),
-    };
+    /// <summary>No token for last-save-wins; a row checksum when opted in.</summary>
+    private static string? Token(DataSourcePlan plan, Row row) => plan.Definition.Concurrency == DataSourceConcurrency.Checksum
+        ? FieldValues.Checksum(plan.Columns.Select(c => (c.Column, row.Values[c]))) : null;
 
     private FormRecord Record(DataSourcePlan plan, Row row, DataSourceUser user)
     {
@@ -533,7 +529,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     private static Dictionary<string, object?> Json(DataSourcePlan plan, IReadOnlyDictionary<PlanColumn, object?> values)
         => plan.Columns.Where(values.ContainsKey).ToDictionary(c => c.Field, c => FieldValues.ToJson(values[c]), StringComparer.Ordinal);
 
-    private sealed record Row(IReadOnlyDictionary<PlanColumn, object?> Values, object? RowVersion);
+    private sealed record Row(IReadOnlyDictionary<PlanColumn, object?> Values);
 
     /// <summary>Fetches a row by key through the row restriction; reads at most two rows so a key that is not unique is noticed, not guessed.</summary>
     private static async Task<Row?> ReadAsync(DataSourcePlan plan, DbConnection connection, DbTransaction? transaction, object?[] keys, Binder binder, CancellationToken ct)
@@ -554,9 +550,8 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
                 throw new DataSourceException($"The value of {plan.Columns[i].Label} is larger than a form can hold.");
             values[plan.Columns[i]] = value;
         }
-        var rowVersion = plan.RowVersionColumn is null ? null : reader.GetValue(plan.Columns.Count);
         if (await reader.ReadAsync(ct)) throw new DataSourceException("The record key matches more than one row; the data source's key columns must identify one row.");
-        return new Row(values, rowVersion);
+        return new Row(values);
     }
 
     private static object? ToDatabase(DataSourcePlan plan, PlanColumn column, object? value)
@@ -582,37 +577,31 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         return plan.Dialect.CountsRowsBySelect ? Convert.ToInt32(await command.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture) : await command.ExecuteNonQueryAsync(ct);
     }
 
-    /// <summary>The written table's key, the version the caller read, and the row restriction seen through the row source.</summary>
-    private static (IReadOnlyList<(string, string)> Keys, (string, string)? Version, string? Exists) Where(DataSourcePlan plan, SqlParameters parameters,
-        object?[] keys, Row current, Binder binder)
+    /// <summary>The written table's key and the row restriction seen through the row source.</summary>
+    private static (IReadOnlyList<(string, string)> Keys, string? Exists) Where(DataSourcePlan plan, SqlParameters parameters,
+        object?[] keys, Binder binder)
     {
         var markers = plan.Keys.Select((k, i) => parameters.Add(ToDatabase(plan, k, keys[i]))).ToArray();
         var targetKeys = plan.Keys.Select((k, i) => (k.Target!.Name, markers[i])).ToArray();
-        (string, string)? version = plan.VersionStyle switch {
-            VersionStyle.Integer => (plan.Version!.Target!.Name, parameters.Add(ToDatabase(plan, plan.Version, current.Values[plan.Version]))),
-            VersionStyle.RowVersion => (plan.RowVersion!.Name, parameters.Add(new TypedValue(current.RowVersion, DbType.Binary))),
-            _ => null,
-        };
         string? exists = null;
         if (plan.Restriction is { } restriction)
         {
             var from = plan.From(parameters, binder.Value);
             exists = plan.Dialect.Exists(from, plan.Keys.Select((k, i) => (k.Column, markers[i])).ToArray(), restriction.Render(parameters, binder.Value));
         }
-        return (targetKeys, version, exists);
+        return (targetKeys, exists);
     }
 
-    /// <summary>The generated update: changed fields, the next version, the audit columns, and a WHERE that only the read row passes.</summary>
-    private static Task<int> UpdateRowAsync(DataSourcePlan plan, DbConnection connection, DbTransaction transaction, object?[] keys, Row current,
+    /// <summary>The generated update: changed fields, audit columns, and a WHERE that only the read row passes.</summary>
+    private static Task<int> UpdateRowAsync(DataSourcePlan plan, DbConnection connection, DbTransaction transaction, object?[] keys,
         IEnumerable<KeyValuePair<PlanColumn, object?>> changes, DataSourceUser user, DateTime now, Binder binder, CancellationToken ct)
     {
         var parameters = new SqlParameters(plan.Dialect);
         var set = changes.Select(c => (c.Key.Target!.Name, parameters.Add(ToDatabase(plan, c.Key, c.Value)))).ToList();
-        if (plan.VersionStyle == VersionStyle.Integer) set.Add((plan.Version!.Target!.Name, plan.Dialect.Quote(plan.Version.Target.Name) + " + 1"));
         if (plan.UpdatedBy is { } by) set.Add((by.Target!.Name, parameters.Add(ToDatabase(plan, by, user.Name))));
         if (plan.UpdatedAt is { } at) set.Add((at.Target!.Name, parameters.Add(ToDatabase(plan, at, FieldValues.FromValue(now, at.Kind, out _)))));
-        var (targetKeys, version, exists) = Where(plan, parameters, keys, current, binder);
-        return CountAsync(plan, parameters, connection, transaction, plan.Dialect.Update(plan.Target!.Name, set, targetKeys, version, exists), ct);
+        var (targetKeys, exists) = Where(plan, parameters, keys, binder);
+        return CountAsync(plan, parameters, connection, transaction, plan.Dialect.Update(plan.Target!.Name, set, targetKeys, exists), ct);
     }
 
     /// <summary>The generated insert; a key the database assigns comes back through RETURNING or OUTPUT INSERTED.</summary>

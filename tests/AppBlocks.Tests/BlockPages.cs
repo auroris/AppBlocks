@@ -171,6 +171,6 @@ internal sealed class SampleOrdersResource : IFormResource
     public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => throw new NotSupportedException();
     public Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct) => throw new NotSupportedException();
     public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct) => throw new NotSupportedException();
-    public Task<FormResult> UpdateAsync(string key, JsonElement input, string version, FormExecutionContext context, CancellationToken ct) => throw new NotSupportedException();
-    public Task<FormResult> DeleteAsync(string key, string version, FormExecutionContext context, CancellationToken ct) => throw new NotSupportedException();
+    public Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct) => throw new NotSupportedException();
+    public Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct) => throw new NotSupportedException();
 }

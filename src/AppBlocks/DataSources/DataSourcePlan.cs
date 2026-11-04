@@ -15,9 +15,6 @@ internal sealed record PlanColumn(string Field, string Column, string Label, str
     public FormField ToField() => new(Field, Label, Kind, Required, ReadOnly, MaxLength, Minimum, Maximum, Choices, HasServerDefault);
 }
 
-/// <summary>How a stale write is detected: a whole-number version the engine increments, a SQL Server rowversion, or a checksum of the row.</summary>
-internal enum VersionStyle { Checksum, Integer, RowVersion }
-
 internal sealed record InsertValue(PlanColumn Column, BindVariable? Variable, object? Literal);
 
 /// <summary>
@@ -34,10 +31,6 @@ internal sealed class DataSourcePlan
     public required IReadOnlyList<PlanColumn> Columns { get; init; }
     public required IReadOnlyList<PlanColumn> Keys { get; init; }
     public TableSchema? Target { get; init; }
-    public VersionStyle VersionStyle { get; init; }
-    public PlanColumn? Version { get; init; }
-    public TableColumn? RowVersion { get; init; }
-    public string? RowVersionColumn { get; init; }
     public SqlTemplate? Restriction { get; init; }
     public required IReadOnlyList<InsertValue> Defaults { get; init; }
     public PlanColumn? CreatedBy { get; init; }
@@ -59,8 +52,7 @@ internal sealed class DataSourcePlan
         .SelectMany(template => template.Variables).Concat(Defaults.Select(value => value.Variable).OfType<BindVariable>())
         .Any(variable => variable.Kind is BindVariableKind.UserSid or BindVariableKind.UserName or BindVariableKind.UserKey or BindVariableKind.UserEmail or BindVariableKind.UserGroups);
     public PlanColumn? Field(string alias) => Columns.FirstOrDefault(c => c.Field == alias);
-    /// <summary>The columns a fetch reads: every field, and the rowversion when it is the version.</summary>
-    public IEnumerable<string> ReadColumns => RowVersionColumn is null ? Columns.Select(c => c.Column) : Columns.Select(c => c.Column).Append(RowVersionColumn);
+    public IEnumerable<string> ReadColumns => Columns.Select(c => c.Column);
     public string From(SqlParameters parameters, Func<BindVariable, object?> value) => Dialect.From(Table, Query?.Render(parameters, value));
     public bool IsAudit(PlanColumn column) => column == CreatedBy || column == CreatedAt || column == UpdatedBy || column == UpdatedAt;
 }
@@ -79,6 +71,7 @@ internal static class DataSourcePlanner
     {
         var start = errors.Count;
         var d = definition;
+        if (!Enum.IsDefined(d.Concurrency)) errors.Add("Select a valid concurrency mode.");
         TableName? table = null;
         SqlTemplate? query = null;
         if (SqlTemplate.IsQuery(d.Source)) query = SqlTemplate.Parse(d.Source, SqlUse.RowSource, "The row source", errors);
@@ -175,7 +168,6 @@ internal static class DataSourcePlanner
                     : $"No column of the row source matches field {mapping.Alias}; name its column in the mapping.");
             else if (!mapped.TryAdd(column, mapping)) errors.Add($"The mapping maps two fields to column {column.Name}.");
         }
-        var version = d.VersionColumn is { } versionName ? Named(versionName, "version column") : null;
         var audit = new Dictionary<string, SourceColumn>();
         foreach (var (role, name) in new[] { ("createdBy", d.AuditColumns.CreatedBy), ("createdAt", d.AuditColumns.CreatedAt), ("updatedBy", d.AuditColumns.UpdatedBy), ("updatedAt", d.AuditColumns.UpdatedAt) })
             if (name is not null && Named(name, "audit column") is { } column) audit[role] = column;
@@ -183,14 +175,11 @@ internal static class DataSourcePlanner
         var anyWrites = d.AllowInsert || d.AllowUpdate;
 
         var columns = new List<PlanColumn>();
-        TableColumn? rowVersion = null;
-        string? rowVersionColumn = null;
         var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var column in probed)
         {
             var targetColumn = TargetOf(column);
             mapped.TryGetValue(column, out var mapping);
-            if (column == version && targetColumn is { RowVersion: true }) { (rowVersion, rowVersionColumn) = (targetColumn, column.Name); continue; }
             var kind = mapping?.Kind ?? (targetColumn is not null ? dialect.KindOf(targetColumn.StoreType) : dialect.ExpressionKind(column));
             if (kind is null)
             {
@@ -200,7 +189,6 @@ internal static class DataSourcePlanner
             }
             var alias = mapping?.Alias ?? FieldAlias(column.Name);
             if (!DataSourceDefinition.IsFieldAlias(alias)) { errors.Add($"Column {column.Name} needs a field alias in the mapping: '{alias}' is not one."); continue; }
-            var isVersion = column == version;
             var isAudit = audit.ContainsValue(column);
             var generated = targetColumn is null || targetColumn.Computed || targetColumn.RowVersion || targetColumn.AutoValue;
             // A SELECT that returns one table column twice writes it through the first field only. A column it
@@ -209,9 +197,9 @@ internal static class DataSourcePlanner
             var repeated = targetColumn is not null && !claimed.Add(targetColumn.Name);
             var renamed = query is not null && column.BaseColumn is not null && !column.BaseColumn.Equals(column.Name, StringComparison.OrdinalIgnoreCase)
                 && mapping?.ReadOnly != false;
-            var readOnly = !anyWrites || generated || repeated || renamed || isVersion || isAudit || mapping?.ReadOnly == true;
+            var readOnly = !anyWrites || generated || repeated || renamed || isAudit || mapping?.ReadOnly == true;
             var required = !readOnly && (mapping?.Required ?? targetColumn is { Nullable: false });
-            var serverDefault = targetColumn is { HasDefault: true } or { AutoValue: true } or { Computed: true } || isVersion || isAudit || defaulted.Contains(column);
+            var serverDefault = targetColumn is { HasDefault: true } or { AutoValue: true } or { Computed: true } || isAudit || defaulted.Contains(column);
             var range = targetColumn is not null && kind == FieldKinds.Number ? dialect.Range(targetColumn) : (null, null);
             int? maxLength = kind != FieldKinds.Text ? null
                 : Math.Min(mapping?.MaxLength ?? (targetColumn is not null ? targetColumn.Length : column.Size) ?? FieldKinds.DefaultTextLength, FieldKinds.MaxTextLength);
@@ -236,16 +224,6 @@ internal static class DataSourcePlanner
                 errors.Add($"The key columns must be the primary key or a unique key of {target.Name}, so a write changes exactly one row.");
         }
 
-        var style = VersionStyle.Checksum;
-        PlanColumn? versionField = null;
-        if (version is not null)
-        {
-            if (rowVersion is not null) style = VersionStyle.RowVersion;
-            else if ((versionField = Field(version)) is { Target: { Nullable: false } versionTarget } && dialect.IsInteger(versionTarget)) style = VersionStyle.Integer;
-            else errors.Add($"The version column {version.Name} must be a whole-number column of the written table that does not allow NULL"
-                + (dialect.Kind == DatabaseDialect.SqlServer ? ", or a rowversion." : "."));
-        }
-
         PlanColumn? Audit(string role, params string[] kinds)
         {
             if (!audit.TryGetValue(role, out var source)) return null;
@@ -264,7 +242,7 @@ internal static class DataSourcePlanner
         {
             var field = Find(value.Column) is { } source ? Field(source) : null;
             if (field is null) continue;
-            if (field.Target is not { Computed: false, RowVersion: false, AutoValue: false } || field == versionField || field == createdBy || field == createdAt || field == updatedBy || field == updatedAt)
+            if (field.Target is not { Computed: false, RowVersion: false, AutoValue: false } || field == createdBy || field == createdAt || field == updatedBy || field == updatedAt)
             { errors.Add($"The insert default for {value.Column} cannot be written: the database or the engine fills that column."); continue; }
             if (value.Variable is { Kind: BindVariableKind.Field, Name: { } other } && !columns.Any(c => c.Field.Equals(other, StringComparison.OrdinalIgnoreCase)))
             { errors.Add($"The insert default for {value.Column} uses :FIELD.{other}, which is not a field."); continue; }
@@ -293,10 +271,10 @@ internal static class DataSourcePlanner
         var fields = columns.Select(c => c.ToField()).ToArray();
         return new DataSourcePlan {
             Definition = d, Dialect = dialect, Table = table, Query = query, Columns = columns, Keys = keys, Target = target,
-            VersionStyle = style, Version = versionField, RowVersion = rowVersion, RowVersionColumn = rowVersionColumn, Restriction = restriction,
+            Restriction = restriction,
             Defaults = defaults, CreatedBy = createdBy, CreatedAt = createdAt, UpdatedBy = updatedBy, UpdatedAt = updatedAt,
             InsertStatement = insert, UpdateStatement = update, DeleteStatement = delete, Fields = fields,
-            ContractVersion = Contract(d, columns, keys, style, target),
+            ContractVersion = Contract(d, columns, keys, target),
         };
 
         SqlTemplate? Statement(string? text, string label) => text is null ? null : SqlTemplate.Parse(text, SqlUse.Statement, $"The custom {label} statement", errors);
@@ -356,9 +334,9 @@ internal static class DataSourcePlanner
         return words;
     }
 
-    private static string Contract(DataSourceDefinition definition, IEnumerable<PlanColumn> columns, IEnumerable<PlanColumn> keys, VersionStyle style, TableSchema? target)
+    private static string Contract(DataSourceDefinition definition, IEnumerable<PlanColumn> columns, IEnumerable<PlanColumn> keys, TableSchema? target)
     {
-        var text = new StringBuilder(definition.ComputeFingerprint()).Append('|').Append(style).Append('|').Append(target?.Name);
+        var text = new StringBuilder(definition.ComputeFingerprint()).Append('|').Append(target?.Name);
         foreach (var c in columns)
             text.Append('|').AppendJoin(',', c.Field, c.Column, c.Kind, c.ReadOnly, c.Required, c.HasServerDefault, c.MaxLength, c.Minimum, c.Maximum, c.Target?.StoreType)
                 .AppendJoin(',', c.Choices?.Select(x => x.Value) ?? []);

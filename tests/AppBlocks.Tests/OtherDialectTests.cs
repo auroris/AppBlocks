@@ -56,7 +56,7 @@ public sealed class OtherDialectTests
             dialect.Select(dialect.From(Orders, null), ["id"], [("id", ":ds0")], "owner = :ds1", 2));
         Assert.Equal("SELECT 1 FROM \"app\".\"orders\" WHERE \"id\" = :ds0 FOR UPDATE", dialect.Lock(Orders, [("id", ":ds0")]));
         var predicate = dialect.Exists(dialect.From(Orders, null), [("id", ":ds1")], "owner = :ds2");
-        Assert.Contains("WHERE \"id\" = :ds1 AND \"version\" = :ds3 AND EXISTS", dialect.Update(Orders, [("customer", ":ds0")], [("id", ":ds1")], ("version", ":ds3"), predicate));
+        Assert.Contains("WHERE \"id\" = :ds1 AND EXISTS", dialect.Update(Orders, [("customer", ":ds0")], [("id", ":ds1")], predicate));
         Assert.Equal(IsolationLevel.ReadCommitted, dialect.WriteIsolation);
     }
 

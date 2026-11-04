@@ -47,14 +47,14 @@ public sealed class SqlServerDataSourceTests
     }
 
     [Fact]
-    public void Updates_and_deletes_match_key_version_and_restriction()
+    public void Updates_and_deletes_match_key_and_restriction()
     {
         var exists = SqlServer.Exists(SqlServer.From(null, "SELECT o.ORDER_ID AS ID, o.OWNER FROM dbo.ORDERS o"), [("ID", "@ds1")], "OWNER = @ds3");
         Assert.Equal("EXISTS (SELECT 1 FROM (\nSELECT o.ORDER_ID AS ID, o.OWNER FROM dbo.ORDERS o\n) src WHERE src.[ID] = @ds1 AND (\nOWNER = @ds3\n))", exists);
-        Assert.Equal("UPDATE [dbo].[ORDERS] SET [CUSTOMER] = @ds0, [VERSION] = [VERSION] + 1 WHERE [ORDER_ID] = @ds1 AND [VERSION] = @ds2 AND " + exists,
-            SqlServer.Update(Orders, [("CUSTOMER", "@ds0"), ("VERSION", "[VERSION] + 1")], [("ORDER_ID", "@ds1")], ("VERSION", "@ds2"), exists));
+        Assert.Equal("UPDATE [dbo].[ORDERS] SET [CUSTOMER] = @ds0 WHERE [ORDER_ID] = @ds1 AND " + exists,
+            SqlServer.Update(Orders, [("CUSTOMER", "@ds0")], [("ORDER_ID", "@ds1")], exists));
         Assert.Equal("DELETE FROM [dbo].[ORDERS] WHERE [A] = @ds0 AND [B] = @ds1",
-            SqlServer.Delete(Orders, [("A", "@ds0"), ("B", "@ds1")], null, null));
+            SqlServer.Delete(Orders, [("A", "@ds0"), ("B", "@ds1")], null));
         Assert.Equal("SELECT 1 FROM [dbo].[ORDERS] WITH (UPDLOCK, HOLDLOCK, ROWLOCK) WHERE [ORDER_ID] = @ds0", SqlServer.Lock(Orders, [("ORDER_ID", "@ds0")]));
         Assert.Equal("SELECT TOP (2) src.[ORDER_ID], src.[CUSTOMER] FROM [dbo].[ORDERS] src WHERE src.[ORDER_ID] = @ds0 AND (\nOWNER = @ds1\n)",
             SqlServer.Select(SqlServer.From(Orders, null), ["ORDER_ID", "CUSTOMER"], [("ORDER_ID", "@ds0")], "OWNER = @ds1", limit: 2));
@@ -136,7 +136,7 @@ public sealed class SqlServerDataSourceTests
 
         var policy = new CountingPolicy();
         var orders = Source(runtime, user, new() {
-            ["alias"] = "orders", ["access"] = "Public", ["connection"] = "LocalDb", ["source"] = "dbo.ORDERS", ["keyColumns"] = "ORDER_ID", ["concurrency"] = "VERSION",
+            ["alias"] = "orders", ["access"] = "Public", ["connection"] = "LocalDb", ["source"] = "dbo.ORDERS", ["keyColumns"] = "ORDER_ID", ["concurrencyMode"] = DataSourceConcurrency.Checksum,
             ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1", ["rowRestriction"] = "OWNER = :USER_NAME",
             ["insertDefaults"] = "OWNER = :USER_NAME\nORDER_DATE = :NOW", ["auditColumns"] = "updatedBy = UPDATED_BY\nupdatedAt = UPDATED_AT",
         }, policy);
@@ -153,10 +153,10 @@ public sealed class SqlServerDataSourceTests
         Assert.Equal(1, Scalar(connection, "SELECT COUNT(*) FROM dbo.ORDER_AUDIT")); // The trigger ran beside OUTPUT INSERTED.
         var updated = await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { notes = "Through SQL Server", orderDate = "2026-12-24" }), created.Record.Version!, context, default);
         Assert.True(updated.Status == 200, JsonSerializer.Serialize(updated.Errors));
-        Assert.Equal("2", updated.Record!.Version);
+        Assert.NotEqual(created.Record.Version, updated.Record!.Version);
         // The policy read the table through the engine's connection, inside the transaction holding the row.
         Assert.Equal((ConnectionState.Open, true, 1), policy.Updates[0]);
-        var legacy = await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { legacyAt = "1700-01-01T00:00:00Z" }), "2", context, default);
+        var legacy = await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { legacyAt = "1700-01-01T00:00:00Z" }), updated.Record.Version, context, default);
         Assert.Equal(422, legacy.Status);
         Assert.Contains("1753", legacy.Errors!["legacyAt"][0]);
         Assert.Equal("2026-12-24", updated.Record.Values["orderDate"]);
@@ -165,17 +165,17 @@ public sealed class SqlServerDataSourceTests
         Execute(connection, "INSERT INTO dbo.ORDERS (CUSTOMER, ORDER_DATE, OWNER) VALUES ('Someone else', '2026-01-01', 'kjones')");
         Assert.Equal(404, (await orders.LoadAsync("2", context, default)).Status);
         Assert.Equal(403, (await orders.CreateAsync(JsonSerializer.SerializeToElement(new { customer = "Not mine", owner = "kjones" }), context with { SubmissionKey = Guid.NewGuid().ToString() }, default)).Status);
-        Assert.Equal(204, (await orders.DeleteAsync("1", "2", context, default)).Status);
+        Assert.Equal(204, (await orders.DeleteAsync("1", updated.Record.Version, context, default)).Status);
 
         var notes = Source(runtime, user, new() {
-            ["alias"] = "notes", ["access"] = "Public", ["connection"] = "LocalDb", ["source"] = "SELECT ID, BODY, RV FROM dbo.NOTES", ["keyColumns"] = "ID", ["concurrency"] = "RV",
+            ["alias"] = "notes", ["access"] = "Public", ["connection"] = "LocalDb", ["source"] = "SELECT ID, BODY, RV FROM dbo.NOTES", ["keyColumns"] = "ID", ["concurrencyMode"] = DataSourceConcurrency.Checksum,
             ["allowInsert"] = "1", ["allowUpdate"] = "1",
         });
         Assert.True(notes.Problem is null, notes.Problem);
         Assert.DoesNotContain(notes.Fields, f => f.Key == "rv");
         var note = await notes.CreateAsync(JsonSerializer.SerializeToElement(new { body = "First" }), context with { SubmissionKey = Guid.NewGuid().ToString() }, default);
         Assert.True(Guid.TryParse(note.Record!.Key, out _));
-        Assert.Equal(16, note.Record.Version!.Length);
+        Assert.Equal(32, note.Record.Version!.Length);
         var changed = await notes.UpdateAsync(note.Record.Key!, JsonSerializer.SerializeToElement(new { body = "Second" }), note.Record.Version, context, default);
         Assert.Equal(200, changed.Status);
         Assert.NotEqual(note.Record.Version, changed.Record!.Version);

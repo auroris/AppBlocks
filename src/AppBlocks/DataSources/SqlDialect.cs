@@ -176,11 +176,11 @@ public abstract class SqlDialect
     }
 
     public string Update(TableName table, IReadOnlyList<(string Column, string Value)> set, IReadOnlyList<(string Column, string Marker)> keys,
-        (string Column, string Marker)? version, string? exists)
-        => $"UPDATE {Quote(table)} SET {string.Join(", ", set.Select(s => Quote(s.Column) + " = " + s.Value))} WHERE {Where(keys, version, exists)}";
+        string? exists)
+        => $"UPDATE {Quote(table)} SET {string.Join(", ", set.Select(s => Quote(s.Column) + " = " + s.Value))} WHERE {Where(keys, exists)}";
 
-    public string Delete(TableName table, IReadOnlyList<(string Column, string Marker)> keys, (string Column, string Marker)? version, string? exists)
-        => $"DELETE FROM {Quote(table)} WHERE {Where(keys, version, exists)}";
+    public string Delete(TableName table, IReadOnlyList<(string Column, string Marker)> keys, string? exists)
+        => $"DELETE FROM {Quote(table)} WHERE {Where(keys, exists)}";
 
     /// <summary>The row restriction as a condition on the written table: the same row, seen through the row source, passes it.</summary>
     public string Exists(string from, IReadOnlyList<(string Column, string Marker)> sourceKeys, string restriction)
@@ -203,8 +203,8 @@ public abstract class SqlDialect
         var conditions = keys.Select(k => prefix + Quote(k.Column) + " = " + k.Marker).ToArray();
         return conditions.Length == 0 ? "1 = 1" : string.Join(" AND ", conditions);
     }
-    private string Where(IReadOnlyList<(string Column, string Marker)> keys, (string Column, string Marker)? version, string? exists)
-        => Match("", keys) + (version is { } v ? " AND " + Quote(v.Column) + " = " + v.Marker : "") + (exists is null ? "" : " AND " + exists);
+    private string Where(IReadOnlyList<(string Column, string Marker)> keys, string? exists)
+        => Match("", keys) + (exists is null ? "" : " AND " + exists);
     private static string Restrict(string? restriction) => restriction is null ? "" : " AND (\n" + restriction + "\n)";
 
     protected static void Bind(DbCommand command, string name, object? value)

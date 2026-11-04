@@ -29,6 +29,31 @@ public sealed class ApplicationDatabaseResolutionTests : IDisposable
     }
 
     [Fact]
+    public void An_existing_legacy_default_file_is_not_replaced_by_an_empty_database()
+    {
+        var initial = Site();
+        Open(initial.Connections);
+        var site = Site(("ConnectionStrings:umbracoDbDSN", $"Data Source={Path.Combine(root, "cms", "Umbraco.sqlite.db")}"),
+            ("ConnectionStrings:umbracoDbDSN_ProviderName", "Microsoft.Data.Sqlite"));
+        using var connection = (SqliteConnection)site.Connections.CreateConnection(Name);
+        Assert.Equal(DefaultFile, connection.DataSource);
+    }
+
+    [Fact]
+    public void Named_application_files_live_beside_the_configured_Umbraco_SQLite_file()
+    {
+        var folder = Path.Combine(root, "cms", "data");
+        var site = Site(("ConnectionStrings:umbracoDbDSN", $"Data Source={Path.Combine(folder, "Umbraco.sqlite.db")}"),
+            ("ConnectionStrings:umbracoDbDSN_ProviderName", "Microsoft.Data.Sqlite"));
+        using var connection = (SqliteConnection)site.Connections.CreateConnection(Name);
+        Assert.Equal(Path.Combine(folder, Name + ".sqlite.db"), connection.DataSource);
+        connection.Open();
+        Assert.True(HasTables(connection.DataSource));
+        Assert.False(File.Exists(DefaultFile));
+        Assert.False(File.Exists(Path.Combine(folder, "Umbraco.sqlite.db")));
+    }
+
+    [Fact]
     public void A_configured_connection_string_gets_the_schema_once_per_process()
     {
         var site = Site(Configured());

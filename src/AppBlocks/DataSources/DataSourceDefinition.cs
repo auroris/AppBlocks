@@ -41,6 +41,9 @@ public sealed record CustomStatements(string? Insert = null, string? Update = nu
 /// <summary>Who may read a data source. Public access grants reads; anonymous writes need a separate opt-in.</summary>
 public enum DataSourceAccess { NotPublic, Public, SpecificGroups }
 
+/// <summary>How writes handle a row changed since it was loaded.</summary>
+public enum DataSourceConcurrency { LastSaveWins, Checksum }
+
 /// <summary>
 /// A published <c>sqlDataSource</c> node, read once into plain values. Structured properties are line-based
 /// text or JSON so an editor needs no special UI; this reader reports every mistake it finds so publishing can
@@ -67,8 +70,7 @@ public sealed record DataSourceDefinition
     /// <summary>Allows anonymous writes to a Public source, subject to write groups, operation flags and policies. Off by default.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool AllowAnonymousWrites { get; init; }
-    /// <summary>The version column; null compares a checksum of the fetched row instead.</summary>
-    public string? VersionColumn { get; init; }
+    public DataSourceConcurrency Concurrency { get; init; } = DataSourceConcurrency.LastSaveWins;
     public IReadOnlyList<InsertDefault> InsertDefaults { get; init; } = [];
     public AuditColumns AuditColumns { get; init; } = new();
     /// <summary>Who may read. A missing or unknown value is a configuration error, including when groups are set.</summary>
@@ -122,10 +124,10 @@ public sealed record DataSourceDefinition
         else if (source.Length > MaxSourceLength) errors.Add($"The row source is longer than {MaxSourceLength} characters.");
         var restriction = Text("rowRestriction");
         if (restriction.Length > MaxRestrictionLength) errors.Add($"The row restriction is longer than {MaxRestrictionLength} characters.");
-        var concurrency = Text("concurrency");
-        IReadOnlyList<string> versionColumns = concurrency.Length == 0 || concurrency.Equals("checksum", StringComparison.OrdinalIgnoreCase)
-            ? [] : Columns(concurrency, "concurrency", errors);
-        if (versionColumns.Count > 1) errors.Add("Concurrency names one version column, or stays empty to compare a checksum of the row.");
+        var mode = Text("concurrencyMode");
+        var concurrency = DataSourceConcurrency.LastSaveWins;
+        if (mode.Length > 0 && (!Enum.TryParse(mode, true, out concurrency) || !Enum.IsDefined(concurrency)))
+            errors.Add("Select a concurrency mode: LastSaveWins or Checksum.");
         var handler = Text("handler");
         if (handler.Length > 0 && !IsAlias(handler)) errors.Add($"The backing class '{handler}' is not an alias a class can have.");
 
@@ -137,7 +139,7 @@ public sealed record DataSourceDefinition
             Mapping = ReadMapping(Text("mapping"), errors),
             RowRestriction = restriction.Length == 0 ? null : restriction,
             AllowInsert = Flag("allowInsert"), AllowUpdate = Flag("allowUpdate"), AllowDelete = Flag("allowDelete"),
-            VersionColumn = versionColumns.FirstOrDefault(),
+            Concurrency = concurrency,
             InsertDefaults = ReadInsertDefaults(Text("insertDefaults"), errors),
             AuditColumns = ReadAuditColumns(Text("auditColumns"), errors),
             Access = ReadAccess(Text("access")),

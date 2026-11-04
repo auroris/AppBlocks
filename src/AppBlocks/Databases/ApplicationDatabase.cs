@@ -121,11 +121,16 @@ public static class ApplicationDatabase
         return new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file }.ToString());
     }
 
-    /// <summary>Absolute path of a SQLite file under the site's <c>App_Data</c> folder.</summary>
+    /// <summary>A named application's SQLite file beside the CMS SQLite file, or under App_Data without a file-backed SQLite CMS.</summary>
     public static string DataFile(IServiceProvider provider, string fileName)
-        => provider.GetRequiredService<IConfiguration>()["AppBlocks:DataRoot"] is { Length: > 0 } root
-            ? Path.Combine(root, "App_Data", fileName)
-            : DataFile(provider.GetRequiredService<IWebHostEnvironment>(), fileName);
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        var environment = provider.GetRequiredService<IWebHostEnvironment>();
+        var path = LocalDatabaseFiles.PathFor(configuration, environment, fileName);
+        var previous = LocalDatabaseFiles.FallbackPath(configuration, environment, fileName);
+        // Changing the default location must not silently replace an existing application's data with an empty file.
+        return !File.Exists(path) && File.Exists(previous) ? previous : path;
+    }
 
     public static string DataFile(IWebHostEnvironment environment, string fileName)
         => Path.Combine(environment.ContentRootPath, "App_Data", fileName);

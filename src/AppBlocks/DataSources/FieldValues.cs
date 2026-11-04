@@ -210,7 +210,7 @@ internal static class FieldValues
         _ => a.Equals(b),
     };
 
-    /// <summary>A stable hash of a row's values, the lost-update check when a table has no version column.</summary>
+    /// <summary>A stable hash of a row's values for opt-in conflict detection.</summary>
     public static string Checksum(IEnumerable<(string Column, object? Value)> values)
     {
         var text = new StringBuilder();

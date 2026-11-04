@@ -40,7 +40,7 @@ public sealed class CodeRecipeException(string message) : InvalidOperationExcept
 
 /// <summary>
 /// The wizard's recipes. Each writes ordinary C# for the C# folder, which the site compiles at run time: a form class that owns full CRUD
-/// against one table through <see cref="IApplicationConnectionFactory"/>, with parameterized SQL for the table's database and version checking,
+/// against one table through <see cref="IApplicationConnectionFactory"/>, with parameterized SQL and optional checksum checking,
 /// or a backing class for a SQL data source on that table. Both check the caller in every operation, as the access choice says, using the
 /// helpers the business rules guide documents. Unlike <see cref="FormSampleGenerator"/>, which writes an example nobody runs, this is code the
 /// site will run once it is saved.
@@ -294,8 +294,8 @@ public static partial class CodeRecipes
 
         var code = new StringBuilder();
         AppendHeader(code, recipe, table, dialect, "A form class");
-        code.AppendLine($"// It reads and writes {table.Name} through the connection's own SQL, every value a bound parameter, and refuses a change to a");
-        code.AppendLine("// record that changed since it was loaded. Pick it in a form's Form Interface by its alias.");
+        code.AppendLine($"// It reads and writes {table.Name} with bound parameters. Last save wins; set UseChecksum to true to detect conflicting edits.");
+        code.AppendLine("// Pick it in a form's Form Interface by its alias.");
         code.AppendLine("""
             using System.ComponentModel.DataAnnotations;
             using System.Data.Common;
@@ -330,6 +330,7 @@ public static partial class CodeRecipes
         code.AppendLine($"    : FormResource<{input}, {input}>");
         code.AppendLine("{");
         code.AppendLine($"    private const string ConnectionName = {Literal(recipe.Connection)};");
+        code.AppendLine("    private static readonly bool UseChecksum = false;");
         code.Append(SqlConstant("SelectSql", selectSql));
         code.Append(SqlConstant("LockSql", lockSql));
         code.Append(SqlConstant("InsertSql", insertSql));
@@ -393,7 +394,7 @@ public static partial class CodeRecipes
         code.AppendLine("        }, ct);");
         code.AppendLine("    }");
         code.AppendLine();
-        code.AppendLine($"    protected override async Task<FormResult> UpdateAsync(string key, {input} input, string version, FormExecutionContext context, CancellationToken ct)");
+        code.AppendLine($"    protected override async Task<FormResult> UpdateAsync(string key, {input} input, string? version, FormExecutionContext context, CancellationToken ct)");
         code.AppendLine("    {");
         code.AppendLine("        if (await CallerAsync(context, ct) is not { } user || !CanWrite(user)) return FormResult.Denied();");
         code.AppendLine("        if (KeyValue(key) is not { } id) return FormResult.Missing();");
@@ -404,9 +405,9 @@ public static partial class CodeRecipes
         }
         code.AppendLine("        return await RunAsync(async connection => {");
         code.AppendLine("            await using var transaction = await connection.BeginTransactionAsync(ct);");
-        code.AppendLine("            // Read under a lock, so the version compared is the one this change replaces.");
+        code.AppendLine("            // Keep the read and write together, including the checksum check when enabled.");
         code.AppendLine("            if (await ReadAsync(connection, transaction, LockSql, id, user, ct) is not { } current) return FormResult.Missing();");
-        code.AppendLine("            if (current.Version != version) return FormResult.Conflict();");
+        code.AppendLine("            if (current.Version is { } expected && expected != version) return FormResult.Conflict();");
         if (updateSql is not null)
         {
             code.AppendLine("            await using (var command = Command(connection, transaction, UpdateSql))");
@@ -421,14 +422,14 @@ public static partial class CodeRecipes
         code.AppendLine("        }, ct);");
         code.AppendLine("    }");
         code.AppendLine();
-        code.AppendLine("    public override async Task<FormResult> DeleteAsync(string key, string version, FormExecutionContext context, CancellationToken ct)");
+        code.AppendLine("    public override async Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct)");
         code.AppendLine("    {");
         code.AppendLine("        if (await CallerAsync(context, ct) is not { } user || !CanWrite(user)) return FormResult.Denied();");
         code.AppendLine("        if (KeyValue(key) is not { } id) return FormResult.Missing();");
         code.AppendLine("        return await RunAsync(async connection => {");
         code.AppendLine("            await using var transaction = await connection.BeginTransactionAsync(ct);");
         code.AppendLine("            if (await ReadAsync(connection, transaction, LockSql, id, user, ct) is not { } current) return FormResult.Missing();");
-        code.AppendLine("            if (current.Version != version) return FormResult.Conflict();");
+        code.AppendLine("            if (current.Version is { } expected && expected != version) return FormResult.Conflict();");
         code.AppendLine("            await using (var command = Command(connection, transaction, DeleteSql))");
         code.AppendLine("            {");
         code.AppendLine("                Add(command, \"key\", id);");
@@ -502,7 +503,7 @@ public static partial class CodeRecipes
         code.AppendLine("        var values = new Dictionary<string, object?>();");
         foreach (var column in columns)
             code.AppendLine($"        values[{Literal(column.Alias)}] = reader.IsDBNull({column.Index}) ? null : Show(reader.GetValue({column.Index}), {Literal(column.Kind)});");
-        code.AppendLine($"        return new FormRecord(Convert.ToString(values[{Literal(key.Alias)}], CultureInfo.InvariantCulture), Version(values), values, Capabilities(user));");
+        code.AppendLine($"        return new FormRecord(Convert.ToString(values[{Literal(key.Alias)}], CultureInfo.InvariantCulture), UseChecksum ? Version(values) : null, values, Capabilities(user));");
         code.AppendLine("    }");
         code.AppendLine();
         code.AppendLine("    /// <summary>A database value in the form's JSON shape: text, a number, true or false, or ISO dates and times.</summary>");

@@ -78,7 +78,7 @@ public sealed class TabularHttpTests
         Assert.Equal(2, saved.Rows.Count);
         Assert.Equal(Key(first), Key(saved.Rows[0]));
         Assert.Equal(7m, Number(saved.Rows[0], "quantity"));
-        Assert.Equal("2", Version(saved.Rows[0]));
+        Assert.NotEqual(Version(first), Version(saved.Rows[0]));
         var created = saved.Rows[1];
         Assert.Equal("Gasket", created.GetProperty("values").GetProperty("item").GetString());
         Assert.Equal(0.5m, Number(created, "unitPrice"));
@@ -94,7 +94,7 @@ public sealed class TabularHttpTests
         var count = Sample(site, "SELECT COUNT(*) FROM ORDER_LINES");
         var invalid = await lines.SaveAsync([
             new("create", Values: new { item = "Never written" }),
-            new("update", Key(first), "2", new { quantity = "0" }),
+            new("update", Key(first), Version(saved.Rows[0]), new { quantity = "0" }),
         ], "id=4");
         Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.Response.StatusCode);
         Assert.Equal(1, invalid.Index);
@@ -103,19 +103,19 @@ public sealed class TabularHttpTests
         Assert.Equal(count, Sample(site, "SELECT COUNT(*) FROM ORDER_LINES"));
 
         // A stale version is a conflict at its index; another order's line is not found here, at its index too.
-        var stale = await lines.SaveAsync([new("update", Key(first), "1", new { quantity = "8" })], "id=4");
+        var stale = await lines.SaveAsync([new("update", Key(first), Version(first), new { quantity = "8" })], "id=4");
         Assert.Equal(HttpStatusCode.Conflict, stale.Response.StatusCode);
         Assert.Equal(0, stale.Index);
         Assert.Contains(stale.Errors[""], e => e.Contains("changed"));
         var foreign = Keys(site, 5)[0];
         var outside = await lines.SaveAsync([
             new("create", Values: new { item = "Never written" }),
-            new("update", foreign, Sample(site, $"SELECT VERSION FROM ORDER_LINES WHERE LINE_ID = {foreign}")!.ToString(), new { quantity = "2" }),
+            new("update", foreign, null, new { quantity = "2" }),
         ], "id=4");
         Assert.Equal(HttpStatusCode.NotFound, outside.Response.StatusCode);
         Assert.Equal(1, outside.Index);
         Assert.Equal(0L, Sample(site, "SELECT COUNT(*) FROM ORDER_LINES WHERE ITEM = 'Never written'"));
-        Assert.Equal(HttpStatusCode.NotFound, (await lines.SaveAsync([new("delete", foreign, "1")], "id=4")).Response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await lines.SaveAsync([new("delete", foreign)], "id=4")).Response.StatusCode);
         Assert.Equal(1L, Sample(site, $"SELECT COUNT(*) FROM ORDER_LINES WHERE LINE_ID = {foreign}"));
 
         // Only the block's columns can be sent: the link field is the server's and is dropped, any other field is refused.
@@ -134,12 +134,12 @@ public sealed class TabularHttpTests
         var once = await lines.SaveAsync(retried, "id=4", retryKey);
         Assert.True(once.IsSuccess, once.Body.ToString());
         var rowsAfterOnce = Sample(site, "SELECT COUNT(*) FROM ORDER_LINES");
-        var versionAfterOnce = Sample(site, $"SELECT VERSION FROM ORDER_LINES WHERE LINE_ID = {Key(first)}");
+        var versionAfterOnce = Version(once.Rows.Single(row => Key(row) == Key(first)));
         var twice = await lines.SaveAsync(retried, "id=4", retryKey);
         Assert.True(twice.IsSuccess, twice.Body.ToString());
         Assert.Equal(once.Rows.Select(Key), twice.Rows.Select(Key));
         Assert.Equal(rowsAfterOnce, Sample(site, "SELECT COUNT(*) FROM ORDER_LINES"));
-        Assert.Equal(versionAfterOnce, Sample(site, $"SELECT VERSION FROM ORDER_LINES WHERE LINE_ID = {Key(first)}"));
+        Assert.Equal(versionAfterOnce, Version((await lines.ListAsync("id=4")).Rows.Single(row => Key(row) == Key(first))));
         Assert.Equal(1L, Sample(site, "SELECT COUNT(*) FROM ORDER_LINES WHERE ITEM = 'Pulley' AND CREATED_BY = 'lines'"));
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await lines.SaveAsync([new("create", Values: new { item = "Other" })], "id=4", retryKey)).Response.StatusCode);
 

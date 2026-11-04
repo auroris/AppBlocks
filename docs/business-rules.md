@@ -525,8 +525,8 @@ Every hook passes through by default, so a class implements only the ones it nee
 | `InitializeAsync` | A new record's starting values, after the insert defaults | Change what the form starts with, or refuse |
 | `LoadAsync` | A record read by key through the row restriction | Change what the form shows, or refuse |
 | `CreateAsync` | A new row, once the submitted values are parsed and the defaults filled | Change what is written, write the row itself, or refuse |
-| `UpdateAsync` | A changed row, locked, after the version check | The same, with the stored row beside the row as it would be stored |
-| `DeleteAsync` | A row about to be deleted, locked, after the version check | Delete it its own way, such as marking it cancelled, or refuse |
+| `UpdateAsync` | A changed row, locked, after any enabled version check | The same, with the stored row beside the row as it would be stored |
+| `DeleteAsync` | A row about to be deleted, locked, after any enabled version check | Delete it its own way, such as marking it cancelled, or refuse |
 | `ListAsync` | The rows a Tabular form block shows for one record, once read | Change what the rows show, or refuse |
 | `QueryAsync` | A report, list of values, schedule or paper report about to read | Refuse |
 
@@ -789,9 +789,11 @@ A hidden field, a disabled control, a query parameter (`FormExecutionContext.Par
 
 ## Concurrency and duplicate submissions
 
-The generated sample returns an ID and version from its read. An upsert uses that version and returns `false` when the stored version no longer matches. Show a conflict and let the user reload rather than silently overwriting the newer record. A stale update must not recreate a deleted record.
+Last save wins by default. A SQL data source's **Concurrency** choices map to the `DataSourceConcurrency` enum: `LastSaveWins` and `Checksum`. Select `Checksum` to detect conflicting edits without adding a table column. Existing sources that selected version-column protection are upgraded to `Checksum`. These modes apply to individual records, tabular batches and master/detail saves.
 
-The built-in engine handles optimistic concurrency and create receipts. Custom resources should make creation idempotent when a retry could create a duplicate; `FormExecutionContext.SubmissionKey` is available for that purpose. Persist the receipt and the new record together.
+For a C# form resource, return `FormRecord.Version = null` for last-save-wins. Returning a checksum or version opts into conflict detection; the resource must compare it and perform the update or delete in the same transaction. A missing token cannot bypass that check. Generated form classes use last-save-wins; set their `UseChecksum` field to `true` to opt in. The downloadable repository sample demonstrates explicit version-column protection. Updates must not recreate deleted records.
+
+The built-in engine also handles create receipts. Custom resources should make creation idempotent when a retry could create a duplicate; `FormExecutionContext.SubmissionKey` is available for that purpose. Persist the receipt and the new record together.
 
 ## Wiring a custom resource
 

@@ -18,5 +18,7 @@ public sealed class AppBlocksMigrationPlan() : AppBlocksPackagePlan("AppBlocks",
         To<UseSingleBlockFormInterface>("2026-11-02-single-block-form-interface");
         // API endpoint nodes under Data sources.
         To<AddApiEndpoints>("2026-11-03-api-endpoints");
+        To<AddDataSourceConcurrency>("2026-11-04-data-source-concurrency");
+        To<AddDataSourceConcurrency>("2026-11-04-checksum-concurrency");
     }
 }

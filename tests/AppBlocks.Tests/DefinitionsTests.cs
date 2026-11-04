@@ -225,6 +225,61 @@ public sealed class DefinitionsTests
         Assert.Equal(declared, Assert.Single(again.GetProperty("packages").EnumerateArray()).GetProperty("installed").GetInt32());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Concurrency_upgrade_removes_version_columns_and_preserves_explicit_choices(bool hasMode)
+    {
+        await using var site = await BlockSite.StartAsync();
+        using var scope = site.CreateScope();
+        var services = scope.ServiceProvider;
+        var types = services.GetRequiredService<IContentTypeService>();
+        var dataTypes = services.GetRequiredService<IDataTypeService>();
+        var type = types.Get(DataSourceSchema.SqlAlias)!;
+        var mode = type.PropertyTypes.Single(p => p.Alias == "concurrencyMode");
+        var picker = (await dataTypes.GetAsync(mode.DataTypeKey))!;
+        Assert.Equal("Umbraco.RadioButtonList", picker.EditorAlias);
+        var options = JsonSerializer.SerializeToElement(picker.ConfigurationData).GetProperty("items").EnumerateArray().Select(v => v.GetString()).ToArray();
+        Assert.Equal(Enum.GetNames<DataSourceConcurrency>(), options);
+        var contents = services.GetRequiredService<IContentService>();
+        var source = Assert.Single(contents.GetPagedOfTypes([type.Id], 0, 10, out _, null));
+        Assert.False(type.PropertyTypeExists("concurrency"));
+
+        // Recreate either the original text field or the three-choice preview schema.
+        var strings = services.GetRequiredService<IShortStringHelper>();
+        var textType = (await dataTypes.GetAsync(new Guid("90cb2487-adcb-2ec5-c4a0-840175ba5424")))!;
+        type.AddPropertyType(new PropertyType(strings, textType) { Alias = "concurrency", Name = "Version column" }, "writes");
+        if (!hasMode) type.RemovePropertyType("concurrencyMode");
+        Assert.True((await types.UpdateAsync(type, Constants.Security.SuperUserKey)).Success);
+        source = contents.GetById(source.Id)!;
+        source.SetValue("concurrency", "VERSION");
+        if (hasMode)
+        {
+            source.SetValue("concurrencyMode", "VersionColumn");
+            picker.ConfigurationData = new Dictionary<string, object> { ["items"] = new[] { "LastSaveWins", "Checksum", "VersionColumn" } };
+            Assert.True((await dataTypes.UpdateAsync(picker, Constants.Security.SuperUserKey)).Success);
+        }
+        else Assert.True((await dataTypes.DeleteAsync(picker.Key, Constants.Security.SuperUserKey)).Success);
+        contents.Save(source);
+        var lastSaveWins = contents.Create("Last save wins", source.ParentId, DataSourceSchema.SqlAlias);
+        lastSaveWins.SetValue("concurrency", hasMode ? "VERSION" : "");
+        if (hasMode) lastSaveWins.SetValue("concurrencyMode", nameof(DataSourceConcurrency.LastSaveWins));
+        contents.Save(lastSaveWins);
+        services.GetRequiredService<IKeyValueService>().SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks",
+            hasMode ? "2026-11-04-data-source-concurrency" : "2026-11-03-api-endpoints");
+        await RunPlanAsync(services);
+        type = types.Get(DataSourceSchema.SqlAlias)!;
+        Assert.Single(type.PropertyTypes, p => p.Alias == "concurrencyMode");
+        Assert.False(type.PropertyTypeExists("concurrency"));
+        Assert.Equal(nameof(DataSourceConcurrency.Checksum), contents.GetById(source.Id)!.GetValue<string>("concurrencyMode"));
+        Assert.Equal(hasMode ? nameof(DataSourceConcurrency.LastSaveWins) : null, contents.GetById(lastSaveWins.Id)!.GetValue<string>("concurrencyMode"));
+        picker = (await dataTypes.GetAsync(mode.DataTypeKey))!;
+        options = JsonSerializer.SerializeToElement(picker.ConfigurationData).GetProperty("items").EnumerateArray().Select(v => v.GetString()).ToArray();
+        Assert.Equal(Enum.GetNames<DataSourceConcurrency>(), options);
+        await RunPlanAsync(services);
+        Assert.Single(types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes, p => p.Alias == "concurrencyMode");
+    }
+
     [Fact]
     public async Task The_backing_class_step_gives_an_existing_site_what_a_fresh_install_has_and_skips_a_site_without_the_type()
     {
