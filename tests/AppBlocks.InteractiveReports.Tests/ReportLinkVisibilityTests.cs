@@ -86,13 +86,14 @@ public sealed class ReportLinkVisibilityTests
         Assert.True(Has(await Schema(reading, PublicSite.LinkReport("create", "")), "createLink"));
         Assert.True(Has(await Schema(reading, PublicSite.LinkReport("open", "")), "editLink"));
 
-        // A form class decides through the new record its Initialize returns: this one refuses anyone not signed in, and offers
-        // everyone else a record to add but not the right to change one.
+        // A form class decides through its Initialize: this one refuses anyone not signed in, so they get neither link. Everyone
+        // else gets a new record that allows Create, so the button, and the open link, since the class answers them at all and
+        // decides about each record as it loads, although that new record does not allow Update.
         var refusedSchema = await Schema(visitor, PublicSite.RefusingLinks);
         Assert.False(Has(refusedSchema, "createLink") || Has(refusedSchema, "editLink"));
         var signedInSchema = await Schema(reading, PublicSite.RefusingLinks);
         Assert.True(Has(signedInSchema, "createLink"));
-        Assert.False(Has(signedInSchema, "editLink"));
+        Assert.True(Has(signedInSchema, "editLink"));
 
         await An_existing_site_gains_the_settings(site);
     }

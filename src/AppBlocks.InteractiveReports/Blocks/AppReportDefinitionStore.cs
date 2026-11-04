@@ -180,14 +180,16 @@ public sealed class AppReportDefinitionStore(
         if (form.ViewOnly) return false;
         // A data source answers from its own settings: the allow flag, the write groups, anonymous writes and :USER_ bindings in its writes.
         if (form.Resource is SqlDataSource source) return (update ? source.Definition.AllowUpdate : source.Definition.AllowInsert) && await source.MayWriteAsync(caller, ct);
-        // A form class answers through the capabilities of the new record its Initialize returns, which the form page asks for too
-        // and which must be safe to repeat. It is asked with no query parameters, as the create button opens the page without any.
-        // A class that fails keeps the link, as the page then reports what happened.
+        // A form class is asked through its Initialize, which the form page asks too and which must be safe to repeat, with no query
+        // parameters, as the create button opens the page without any. For the create button, the new record it returns must allow
+        // Create. That record says nothing about changing an existing one, which the class decides for each record as it loads, so the
+        // open link shows to anyone Initialize answers at all: they reach the form, and loading the record then allows or refuses the
+        // edit. A class that fails keeps the link, as the page then reports what happened.
         try
         {
             var context = new FormExecutionContext(caller, form.Page.Key, form.Block.ContentKey, form.Revision);
-            var capabilities = (await form.Resource.InitializeAsync(context, ct)).Record?.Capabilities;
-            return (update ? capabilities?.Update : capabilities?.Create) == true;
+            var initialized = await form.Resource.InitializeAsync(context, ct);
+            return update ? initialized.Status == 200 : initialized.Record?.Capabilities.Create == true;
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
