@@ -58,7 +58,8 @@ internal sealed class DataSourcePlan
     public bool WritesBindUser => new[] { InsertStatement, UpdateStatement, DeleteStatement }.OfType<SqlTemplate>()
         .SelectMany(template => template.Variables).Concat(Defaults.Select(value => value.Variable).OfType<BindVariable>())
         .Any(variable => variable.Kind is BindVariableKind.UserSid or BindVariableKind.UserName or BindVariableKind.UserKey or BindVariableKind.UserEmail or BindVariableKind.UserGroups);
-    public PlanColumn? Field(string alias) => Columns.FirstOrDefault(c => c.Field == alias);
+    /// <summary>The column of a field alias in any letter case, as every other alias lookup; the planner refuses aliases that differ only in case.</summary>
+    public PlanColumn? Field(string alias) => Columns.FirstOrDefault(c => c.Field.Equals(alias, StringComparison.OrdinalIgnoreCase));
     /// <summary>The columns a fetch reads: every field, and the rowversion when it is the version.</summary>
     public IEnumerable<string> ReadColumns => RowVersionColumn is null ? Columns.Select(c => c.Column) : Columns.Select(c => c.Column).Append(RowVersionColumn);
     public string From(SqlParameters parameters, Func<BindVariable, object?> value) => Dialect.From(Table, Query?.Render(parameters, value));

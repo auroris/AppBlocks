@@ -106,6 +106,25 @@ public sealed class DataSourceHandlerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_class_may_name_a_field_in_any_letter_case()
+    {
+        var handler = new Handler {
+            Initialize = async operation => { operation.Values!["Customer"] = "Typed"; return DataSourceOutcome.Continue; },
+            Create = async operation => { operation.Values!["TOTAL"] = 9m; return DataSourceOutcome.Continue; },
+        };
+        var source = Orders(handler);
+        var context = Context(Owner);
+
+        var initialized = await source.InitializeAsync(context, default);
+        Assert.Equal(200, initialized.Status);
+        Assert.Equal("Typed", initialized.Record!.Values["customer"]);
+
+        var created = await source.CreateAsync(Json(new { customer = "Case Co" }), context, default);
+        Assert.Equal(200, created.Status);
+        Assert.Equal("9", created.Record!.Values["total"]);
+    }
+
+    [Fact]
     public async Task A_class_that_handles_a_write_runs_its_own_statements_in_the_engines_transaction()
     {
         var handler = new Handler {
