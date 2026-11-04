@@ -51,6 +51,26 @@ public sealed class FormsTests
         report["contentData"]![0]!["values"]!.AsArray().First(p => p!["alias"]!.GetValue<string>() == "pageSize")!["value"] = 5000;
         Assert.Contains(validator.Validate(report.ToJsonString()), e => e.Contains("cannot be larger than"));
         Assert.NotEmpty(validator.Validate("{bad"));
+        // Every open link but a hidden one needs the record key column; the create button needs none.
+        foreach (var (choice, needsKey) in new[] { ("", true), ("Public", true), ("Form page decides", true), ("Hidden", false) })
+        {
+            var linked = ReportBlockSupport.OrdersReport();
+            var block = linked["contentData"]![0]!;
+            block["values"]!.AsArray().Remove(block["values"]!.AsArray().First(p => p!["alias"]!.GetValue<string>() == "keyColumn"));
+            if (choice.Length > 0) BlockPages.SetValue(block, "openVisibility", choice);
+            BlockPages.SetValue(block, "createVisibility", "Public");
+            Assert.True(needsKey == validator.Validate(linked.ToJsonString()).Contains("Select the record key column for the form link."), choice);
+        }
+        // Groups shows a link to the selected groups, so it needs one.
+        foreach (var (link, words) in new[] { ("create", "Create button"), ("open", "Open link") })
+        {
+            var grouped = ReportBlockSupport.OrdersReport();
+            var block = grouped["contentData"]![0]!;
+            BlockPages.SetValue(block, link + "Visibility", "Groups");
+            Assert.Contains($"Select at least one group for the {words}.", validator.Validate(grouped.ToJsonString()));
+            BlockPages.SetValue(block, link + "UserGroups", "editor");
+            Assert.Empty(validator.Validate(grouped.ToJsonString()));
+        }
         // A form binds a registered C# class: neither an unknown name nor a published data source will do.
         foreach (var resource in new[] { "no-such-source", "orders" })
             Assert.Contains(validator.Validate(BlockPages.OrdersForm(resource).ToJsonString()),

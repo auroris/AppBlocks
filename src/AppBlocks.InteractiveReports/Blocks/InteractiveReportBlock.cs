@@ -6,6 +6,7 @@ using AppBlocks.Blocks;
 using AppBlocks.InteractiveReports.DataSources;
 using AppBlocks.DataSources;
 using AppBlocks.DocumentOutput;
+using AppBlocks.InteractiveReports.Blocks;
 
 namespace AppBlocks.InteractiveReports;
 
@@ -29,7 +30,13 @@ public sealed class InteractiveReportBlock(ReportDefinitionCompiler compiler,
         }
         // Control names are Interactive Reports' feature tokens, as for a report definition node.
         if (Text(block, "controls").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Any(c => ReportFeatures.Canonical(c) is null)) errors.Add("The report contains an unknown control name.");
-        if (Text(block, "formPage").Length > 0 && Text(block, "keyColumn").Length == 0) errors.Add("Select the record key column for the form link.");
+        if (Text(block, "formPage").Length > 0) {
+            var open = ReportLinkRule.Read(ReportLinkRule.Open, alias => Text(block, alias));
+            var create = ReportLinkRule.Read(ReportLinkRule.Create, alias => Text(block, alias));
+            if (open.Visibility != ReportLinkVisibility.Hidden && Text(block, "keyColumn").Length == 0) errors.Add("Select the record key column for the form link.");
+            if (create.Visibility == ReportLinkVisibility.Groups && !create.HasGroups) errors.Add("Select at least one group for the Create button.");
+            if (open.Visibility == ReportLinkVisibility.Groups && !open.HasGroups) errors.Add("Select at least one group for the Open link.");
+        }
         if (Text(block, "paperReport") is { Length: > 0 } paper) {
             PaperReport(paper, errors);
             // Row print actions read the record key from this column, so a column the report lacks prints nothing.

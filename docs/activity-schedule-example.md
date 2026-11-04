@@ -68,7 +68,7 @@ Both tables carry the tenant. Categories take a database-generated key, since th
 
 Three nodes under **Data sources**, each on the `AppBlocksDb` connection. Their aliases start with `wing.` so the policy below recognises them. Every one has the same row restriction, `TENANT_ID = :APP.tenant`, which keeps every read and every write inside the tenant of the page, whatever the SQL or a submitted row says.
 
-**`wing.categories`**, the table a unit's editors maintain through the Categories report, whose form page is Category and key column `ID`, and the Category form, whose resource is this node:
+**`wing.categories`**, the table a unit's editors maintain through the Categories report, whose form page is Category and key column `ID`, with its create button and open link left at Form page decides, and the Category form, whose resource is this node:
 
 | Setting | Value |
 | --- | --- |
