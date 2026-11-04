@@ -47,6 +47,52 @@ public sealed class WebPageBlocksTests
     }
 
     [Fact]
+    public void A_date_with_an_offset_is_reported_and_validated_in_utc()
+    {
+        // After the process's deployment stamp, which the validators never fall below.
+        var page = new DateTimeOffset(DateTime.UtcNow.AddDays(1).Ticks, TimeSpan.Zero).ToOffset(TimeSpan.FromHours(5));
+        var context = new DefaultHttpContext();
+        context.RegisterPageUpdateDate(page);
+        var reported = context.GetPageUpdateDate(DateTime.MinValue);
+        Assert.Equal(DateTimeKind.Utc, reported.Kind);
+        Assert.Equal(page.UtcDateTime, reported);
+        Assert.False(context.ApplyCacheHeaders(reported));
+        Assert.Equal(page.UtcDateTime.ToString("R"), context.Response.Headers.LastModified.ToString());
+    }
+
+    [Fact]
+    public void Conditional_requests_compare_whole_tags_and_read_dates_in_any_culture()
+    {
+        var date = DateTime.UtcNow.AddDays(1);
+        var first = new DefaultHttpContext();
+        first.ApplyCacheHeaders(date);
+        var etag = first.Response.Headers.ETag.ToString();
+        var lastModified = first.Response.Headers.LastModified.ToString();
+
+        var listed = new DefaultHttpContext();
+        listed.Request.Headers.IfNoneMatch = $"\"other\", W/{etag}";
+        Assert.True(listed.ApplyCacheHeaders(date));
+
+        // A tag that only contains the current one is another representation; If-Modified-Since is then ignored.
+        var longer = new DefaultHttpContext();
+        longer.Request.Headers.IfNoneMatch = $"\"0{etag.Trim('"')}\"";
+        longer.Request.Headers.IfModifiedSince = lastModified;
+        Assert.False(longer.ApplyCacheHeaders(date));
+        Assert.Equal(200, longer.Response.StatusCode);
+
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("fr-FR");
+            var since = new DefaultHttpContext();
+            since.Request.Headers.IfModifiedSince = lastModified;
+            Assert.True(since.ApplyCacheHeaders(date));
+            Assert.Equal(304, since.Response.StatusCode);
+        }
+        finally { System.Globalization.CultureInfo.CurrentCulture = culture; }
+    }
+
+    [Fact]
     public void An_inherited_date_moves_the_cache_validators_but_not_the_date_the_page_reports()
     {
         // Dates after the process's deployment stamp, which the validators never fall below.
