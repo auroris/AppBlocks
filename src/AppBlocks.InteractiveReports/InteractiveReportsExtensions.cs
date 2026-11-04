@@ -41,7 +41,6 @@ public static class InteractiveReportsExtensions
             return builder;
         }
 
-        services.AddOptions<AppBlocksOptions>().Bind(builder.Config.GetSection(AppBlocksOptions.Section));
         services.TryAddScoped<IReportAccessPolicy, DefaultReportAccessPolicy>();
         services.AddControllersWithViews().AddApplicationPart(typeof(InteractiveReportsExtensions).Assembly);
         services.AddSingleton(new AppBlocksSchema(typeof(InteractiveReportsExtensions).Assembly));

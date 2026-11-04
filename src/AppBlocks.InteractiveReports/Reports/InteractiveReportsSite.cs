@@ -87,7 +87,8 @@ public static class InteractiveReportsSite
                 request.RequestServices.GetRequiredService<IReportAccessPolicy>().AuthorizeAsync(request, cancellationToken));
         configure?.Invoke(reports);
 
-        if (configuration.GetValue("AppBlocks:IncludeBackOfficeReports", false)) services.AddBuiltInReports(configuration);
+        services.AddOptions<AppBlocksOptions>().Bind(configuration.GetSection(AppBlocksOptions.Section));
+        services.AddBuiltInReports(configuration);
         services.AddInteractiveReportJson();
         services.AddInteractiveReportFileDownload();
         services.AddScoped<RecentPagesReport>();
@@ -113,9 +114,11 @@ public static class InteractiveReportsSite
     /// section of appsettings.json. A site's own definition of the same name wins, so a site can
     /// adjust or replace them there.
     /// </summary>
+    /// <summary>The built-in audit reports, when <see cref="AppBlocksOptions.IncludeBackOfficeReports"/> asks for them, from configuration or code.</summary>
     private static void AddBuiltInReports(this IServiceCollection services, IConfiguration configuration)
-        => services.Configure<InteractiveReportOptions>(options =>
+        => services.AddOptions<InteractiveReportOptions>().Configure<IOptions<AppBlocksOptions>>((options, appBlocks) =>
         {
+            if (!appBlocks.Value.IncludeBackOfficeReports) return;
             using var stream = typeof(InteractiveReportsSite).Assembly.GetManifestResourceStream(BuiltInReportsResource)
                 ?? throw new InvalidOperationException($"Embedded resource {BuiltInReportsResource} is missing.");
             var builtIn = new InteractiveReportOptions();
