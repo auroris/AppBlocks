@@ -103,9 +103,15 @@ public sealed class DataSourceRuntime(IApplicationConnectionFactory connections,
     {
         DatabaseDialect? dialect;
         try { dialect = connections.Dialect(connection); }
-        catch (InvalidOperationException)
+        catch (ConnectionNotRegisteredException)
         {
             errors.Add($"The connection {connection} is not registered. Choose a managed connection or register it with AddAppBlocks.");
+            return null;
+        }
+        catch (InvalidOperationException error)
+        {
+            // A driver the site has not installed, or a provider AppBlocks does not know: the reason is the message.
+            errors.Add($"Connection {connection} cannot be used: {error.Message}");
             return null;
         }
         if (dialect is { } known && SqlDialect.For(known) is { } result) return result;

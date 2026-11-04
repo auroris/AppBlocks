@@ -659,6 +659,24 @@ public sealed class DataSourceTests : IDisposable
     }
 
     [Fact]
+    public void A_connection_whose_driver_is_missing_says_so_rather_than_that_it_is_not_registered()
+    {
+        var collection = new ServiceCollection();
+        collection.AddLogging();
+        collection.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+        collection.AddTestConnections(connections => connections.AddConnection("OracleDb",
+            _ => throw new AppBlocks.Connections.DatabaseDrivers.MissingDriverException("No Oracle driver is installed. Add the Oracle.ManagedDataAccess.Core package.")));
+        collection.AddSingleton<DataSourceRuntime>();
+        using var provider = collection.BuildServiceProvider();
+        var runtime = provider.GetRequiredService<DataSourceRuntime>();
+
+        var missingDriver = runtime.Validate(Definition(Tasks(("connection", "OracleDb"))));
+        Assert.Contains(missingDriver, e => e.Contains("No Oracle driver is installed"));
+        Assert.DoesNotContain(missingDriver, e => e.Contains("not registered"));
+        Assert.Contains(runtime.Validate(Definition(Tasks(("connection", "NoSuchDb")))), e => e.Contains("is not registered"));
+    }
+
+    [Fact]
     public void A_renamed_column_of_the_written_table_is_read_only_unless_the_mapping_opts_in()
     {
         Execute("CREATE TABLE PEOPLE (ID INTEGER PRIMARY KEY, NAME TEXT NOT NULL, PARENT_ID INTEGER NULL)");
