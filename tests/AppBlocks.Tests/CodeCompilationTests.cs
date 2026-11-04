@@ -211,6 +211,24 @@ public sealed class CodeCompilationTests : IDisposable
     }
 
     [Fact]
+    public async Task A_cancelled_compile_does_not_hide_the_folder_from_the_next_one()
+    {
+        // Large enough that the compile, not the read, is running when the request goes away.
+        var methods = string.Concat(Enumerable.Range(0, 4000).Select(i => $"    public static int M{i}(int x) => x * {i} + (x > {i} ? {i} : -x);\n"));
+        await Write("Rules.cs", "namespace Site.Code;\npublic sealed class Rules : AppBlocks.DataSources.IDataSourceHandler { public string Alias => \"orders.rules\"; }\n"
+            + "public static class Many\n{\n" + methods + "}\n");
+        var compilation = Site().GetRequiredService<CodeCompilation>();
+
+        using var request = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => compilation.CompileAsync("save", request.Token));
+        Assert.Equal(0, compilation.Serving.Number);
+
+        var next = await compilation.CompileAsync("file change", default);
+        Assert.True(next.Succeeded);
+        Assert.Equal(1, next.Generation);
+    }
+
+    [Fact]
     public async Task Without_a_compiler_the_folder_is_never_compiled_or_created()
     {
         var site = Site(compiler: false);
