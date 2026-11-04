@@ -23,7 +23,8 @@ public sealed class AppReportDefinitionStore(
     PublishedReportCatalog catalog, DataSourceReportBindings bindings, ConnectionCatalog? managed = null,
     AppBlocks.DocumentOutput.IAppDocumentLinks? documents = null,
     ReportSourcePreviews? previews = null, IHttpContextAccessor? http = null, SavedViewStore? savedViews = null, AppPageAccess? pages = null,
-    FormResourceRegistry? formResources = null, PublishedDataCatalog? dataCatalog = null, ILogger<AppReportDefinitionStore>? logger = null)
+    FormResourceRegistry? formResources = null, PublishedDataCatalog? dataCatalog = null, ILogger<AppReportDefinitionStore>? logger = null,
+    IDataSourceUserResolver? users = null, Umbraco.Cms.Core.Services.IMemberGroupService? memberGroups = null)
     : IReportDefinitionStore, IReportDefinitionAuthorizationStore
 {
     private bool CallerIsAnonymous => http?.HttpContext is { } context && context.User.Identity?.IsAuthenticated != true;
@@ -112,14 +113,15 @@ public sealed class AppReportDefinitionStore(
         }
         if (block.Value<IPublishedContent>("formPage") is { } formPage) {
             var url = formPage.Url(culture: instance.Culture);
-            var links = ReportRecordLinkChoices.Parse(block.Value<string>(ReportRecordLinkChoices.Property));
-            if (links.Opens()) {
+            var open = ReportLinkRule.Read(ReportLinkRule.Open, block);
+            if (open.Visibility != ReportLinkVisibility.Hidden) {
                 var column = block.Value<string>("keyColumn");
                 var parameter = block.Value<string>("keyParameter") is { Length: > 0 } key ? key : "id";
                 if (string.IsNullOrWhiteSpace(column)) throw new InvalidOperationException("A report that opens records on a form page requires its record key column.");
-                result.EditLink = new ReportEditLink { UrlTemplate = url + "?" + Uri.EscapeDataString(parameter) + "={" + column + "}", Label = Label(block, "editLabel") };
+                if (await ShowsAsync(open, instance.Page, formPage, instance.Culture, update: true, ct))
+                    result.EditLink = new ReportEditLink { UrlTemplate = url + "?" + Uri.EscapeDataString(parameter) + "={" + column + "}", Label = Label(block, "editLabel") };
             }
-            if (links.Creates() && await MayCreateAsync(formPage, instance.Culture, ct))
+            if (await ShowsAsync(ReportLinkRule.Read(ReportLinkRule.Create, block), instance.Page, formPage, instance.Culture, update: false, ct))
                 result.CreateLink = new ReportCreateLink { Url = url, Label = Label(block, "createLabel") };
         }
         // A paper report always renders for a person, so it is no action to offer someone anonymous.
@@ -128,13 +130,38 @@ public sealed class AppReportDefinitionStore(
         return compiler.CompileManaged(name, result, managed);
     }
     /// <summary>
-    /// Whether this caller could create a record on the form page, so the create button is not offered to someone the form would
-    /// refuse. Hiding it is a convenience, not a rule: the form refuses the write whatever the button showed. The answer depends on
-    /// who asks, so it is worked out for every request and never kept. The caller is who the form page takes them for, as the form's
-    /// own endpoints do. When no form on the page resolves, or the services to ask are missing, the button stays, as it always did;
-    /// with several forms, one that would create is enough.
+    /// Whether this caller sees a link to the form page: the open link on each row (<paramref name="update"/>) or the create button.
+    /// Hiding a link is a convenience, not a rule: the form refuses what its resource refuses whatever the report showed. The answer
+    /// depends on who asks, so it is worked out for every request and never kept.
     /// </summary>
-    private async Task<bool> MayCreateAsync(IPublishedContent formPage, string? culture, CancellationToken ct)
+    private async Task<bool> ShowsAsync(ReportLinkRule rule, IPublishedContent page, IPublishedContent formPage, string? culture, bool update, CancellationToken ct)
+        => rule.Visibility switch {
+            ReportLinkVisibility.Public => true,
+            ReportLinkVisibility.Hidden => false,
+            ReportLinkVisibility.Groups => await InGroupsAsync(rule, page, ct),
+            _ => await FormPageAllowsAsync(formPage, culture, update, ct),
+        };
+
+    /// <summary>Whether the caller, as the report's page takes them, is in one of the rule's backoffice user groups or member groups.</summary>
+    private async Task<bool> InGroupsAsync(ReportLinkRule rule, IPublishedContent page, CancellationToken ct)
+    {
+        if (!rule.HasGroups || pages is null || users is null || await pages.VisitorAsync(page) is not { } caller
+            || await DataSourceQueries.ResolveReaderAsync(users, caller, ct) is not { IsAnonymous: false } user) return false;
+        if (rule.UserGroups.Any(user.IsInUserGroup)) return true;
+        if (rule.MemberGroups.Length == 0 || memberGroups is null) return false;
+        // The picker stores group ids or keys; a group deleted since it was picked shows the link to nobody.
+        var all = (await memberGroups.GetAllAsync()).ToArray();
+        return rule.MemberGroups.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(item => int.TryParse(item, out var id) ? all.FirstOrDefault(g => g.Id == id) : Guid.TryParse(item, out var groupKey) ? all.FirstOrDefault(g => g.Key == groupKey) : null)
+            .Any(group => group?.Name is { } name && user.IsInMemberGroup(name));
+    }
+
+    /// <summary>
+    /// Whether the form page would let this caller add a record, or change one when <paramref name="update"/>. The caller is who the
+    /// form page takes them for, as the form's own endpoints do. When no form on the page resolves, or the services to ask are missing,
+    /// the link stays, as it always did; with several forms, one that would allow it is enough.
+    /// </summary>
+    private async Task<bool> FormPageAllowsAsync(IPublishedContent formPage, string? culture, bool update, CancellationToken ct)
     {
         if (formResources is null || pages is null) return true;
         var forms = new List<FormDefinition>();
@@ -144,26 +171,27 @@ public sealed class AppReportDefinitionStore(
         // The form page refuses this caller altogether, as its Public Access does someone not signed in.
         if (await pages.VisitorAsync(formPage) is not { } caller) return false;
         foreach (var form in forms)
-            if (await CreatesAsync(form, caller, ct)) return true;
+            if (await AllowsAsync(form, caller, update, ct)) return true;
         return false;
     }
 
-    private async Task<bool> CreatesAsync(FormDefinition form, System.Security.Claims.ClaimsPrincipal caller, CancellationToken ct)
+    private async Task<bool> AllowsAsync(FormDefinition form, System.Security.Claims.ClaimsPrincipal caller, bool update, CancellationToken ct)
     {
         if (form.ViewOnly) return false;
         // A data source answers from its own settings: the allow flag, the write groups, anonymous writes and :USER_ bindings in its writes.
-        if (form.Resource is SqlDataSource source) return source.Definition.AllowInsert && await source.MayWriteAsync(caller, ct);
-        // A C# class says in its Initialize, which the form page asks too before every new record and which must be safe to repeat.
-        // It is asked with no query parameters, as the create button opens the page without any. A class that fails keeps the
-        // button, as the page then reports what happened.
+        if (form.Resource is SqlDataSource source) return (update ? source.Definition.AllowUpdate : source.Definition.AllowInsert) && await source.MayWriteAsync(caller, ct);
+        // A form class answers through the capabilities of the new record its Initialize returns, which the form page asks for too
+        // and which must be safe to repeat. It is asked with no query parameters, as the create button opens the page without any.
+        // A class that fails keeps the link, as the page then reports what happened.
         try
         {
             var context = new FormExecutionContext(caller, form.Page.Key, form.Block.ContentKey, form.Revision);
-            return (await form.Resource.InitializeAsync(context, ct)).Record?.Capabilities.Create == true;
+            var capabilities = (await form.Resource.InitializeAsync(context, ct)).Record?.Capabilities;
+            return (update ? capabilities?.Update : capabilities?.Create) == true;
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
-            logger?.LogWarning(error, "Form resource {Resource} failed while a report decided whether to offer creating a record.", form.Resource.Alias);
+            logger?.LogWarning(error, "Form resource {Resource} failed while a report decided whether to link to its form page.", form.Resource.Alias);
             return true;
         }
     }

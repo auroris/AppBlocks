@@ -64,11 +64,16 @@ internal sealed class PublicSite : IAsyncDisposable
     public static readonly Guid DataPage = Key("data"), Rows = Key("rows"), Schedule = Key("schedule");
     public static readonly Guid OrderPage = Key("order"), OrderForm = Key("order-form"), OrderLines = Key("order-lines");
     public static readonly Guid MembersPage = Key("members"), ProtectedPage = Key("protected"), ProtectedForm = Key("protected-form"), ProtectedReport = Key("protected-report"), ProtectedFiles = Key("protected-files");
-    /// <summary>A form page only the Writers member group may create records on, and reports linking to it with each Record links choice.</summary>
+    /// <summary>
+    /// A form page on which only the Writers member group may add and change records, and reports linking to it: one for each choice of
+    /// each link, the other link Hidden, plus one linking to the refusing class with no choice made. Groups means the Reviewers member
+    /// group and the backoffice Editors group.
+    /// </summary>
     public static readonly Guid WritersPage = Key("writers"), WritersForm = Key("writers-form"), LinksPage = Key("links"), RefusingLinks = Key("links:refusing");
-    public static readonly IReadOnlyDictionary<string, Guid> LinkReports = new[] { "", "Open and create", "Open only", "Create only", "None" }
-        .ToDictionary(choice => choice, choice => Key("links:" + choice));
-    public const string WritersGroup = "Writers";
+    public static readonly string[] LinkChoices = ["", "Public", "Form page decides", "Groups", "Hidden"];
+    /// <param name="link"><c>create</c> or <c>open</c>.</param>
+    public static Guid LinkReport(string link, string choice) => Key("links:" + link + ":" + choice);
+    public const string WritersGroup = "Writers", ReviewersGroup = "Reviewers", ReviewingUserGroup = "editor";
     public const string AdminEmail = "public.admin@example.test";
 
     private readonly WebApplication app;
@@ -276,9 +281,15 @@ internal sealed class PublicSite : IAsyncDisposable
         Page("Data", DataPage, home.Id, Container(
             Block(Rows, AppBlockSchema.TabularAlias, ("dataSource", "public.engine"), ("linkField", "owner"), ("ownerResource", "public.closed"), ("ownerKey", "1")),
             Block(Schedule, AppBlockSchema.ScheduleAlias, ("rowsSource", "public.schedule.rows"), ("barsSource", "public.schedule.bars"), ("daysBefore", "1"), ("daysAfter", "1"), ("columns", "Days"))));
-        Assert.True((await services.GetRequiredService<IMemberGroupService>().CreateAsync(new MemberGroup { Name = WritersGroup })).Success);
+        var memberGroups = services.GetRequiredService<IMemberGroupService>();
+        Assert.True((await memberGroups.CreateAsync(new MemberGroup { Name = WritersGroup })).Success);
+        var reviewers = await memberGroups.CreateAsync(new MemberGroup { Name = ReviewersGroup });
+        Assert.True(reviewers.Success);
         Page("Writers", WritersPage, home.Id, Container(FormBlock(WritersForm, "public.writers", Field("title", "Entry title"))));
-        Page("Links", LinksPage, home.Id, LinkedReports([.. LinkReports.Select(link => (link.Value, WritersPage, link.Key)), (RefusingLinks, RefusingPage, "")]));
+        Page("Links", LinksPage, home.Id, LinkedReports(reviewers.Result!.Key, [
+            .. from link in new[] { "create", "open" } from choice in LinkChoices
+               select (LinkReport(link, choice), WritersPage, link == "create" ? choice : "Hidden", link == "open" ? choice : "Hidden"),
+            (RefusingLinks, RefusingPage, "", "")]));
         var members = Page("Members", MembersPage, home.Id);
         var inside = Reports((ProtectedReport, Source("table", "PUBLIC_ROWS")));
         Merge(inside, Container(FormBlock(ProtectedForm, "public.contact", Field("name", "Your name")), Attachments(ProtectedFiles, "public.open")));
@@ -342,15 +353,26 @@ internal sealed class PublicSite : IAsyncDisposable
         return body;
     }
 
-    /// <summary>Reports over PUBLIC_ROWS linking to a form page by their id column, each with its Record links choice; an empty choice saves no value.</summary>
-    private static JsonObject LinkedReports(params (Guid Key, Guid FormPage, string Choice)[] reports)
+    /// <summary>
+    /// Reports over PUBLIC_ROWS linking to a form page by their id column, each with its choice for the create button and the open link.
+    /// An empty choice saves no value; Groups picks the backoffice Editors group and <paramref name="memberGroup"/>.
+    /// </summary>
+    private static JsonObject LinkedReports(Guid memberGroup, params (Guid Key, Guid FormPage, string Create, string Open)[] reports)
     {
         var body = Set("Umbraco.BlockList");
-        foreach (var (key, formPage, choice) in reports)
+        foreach (var (key, formPage, create, open) in reports)
             Add(body, "Umbraco.BlockList", key, AppBlockSchema.Key("appReport"), [("heading", JsonValue.Create("Linked rows")), ("dataSource", JsonValue.Create(Source("table", "PUBLIC_ROWS"))),
                 ("formPage", JsonValue.Create("umb://document/" + formPage.ToString("N"))), ("keyColumn", JsonValue.Create("id")), ("createLabel", JsonValue.Create("New row")),
-                .. choice.Length == 0 ? [] : new (string, JsonNode?)[] { ("recordLinks", JsonValue.Create(choice)) }]);
+                .. Choice("create", create), .. Choice("open", open)]);
         return body;
+
+        IEnumerable<(string, JsonNode?)> Choice(string link, string choice)
+        {
+            if (choice.Length > 0) yield return (link + "Visibility", JsonValue.Create(choice));
+            if (choice != "Groups") yield break;
+            yield return (link + "UserGroups", JsonValue.Create(ReviewingUserGroup));
+            yield return (link + "MemberGroups", JsonValue.Create(memberGroup.ToString()));
+        }
     }
 
     private static void Merge(JsonObject into, JsonObject from)
