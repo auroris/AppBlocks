@@ -149,6 +149,9 @@ public sealed class ApiEndpointHttpTests
             Assert.Equal("/api/data", (await settings.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("basePath").GetString());
         using (var untested = await editor.PostAsJsonAsync("/umbraco/management/api/v1/api-endpoints/test", new { key = order.Key, values = new { alias = "order", route = "orders/:id", access = "Public", sql = "ORDERS" } }))
             Assert.Contains("Enter a sample value for :id.", (await untested.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors").EnumerateArray().Select(e => e.GetString()));
+        // A body without values is refused before the controller reads them: the values are required, so it is not a server error.
+        using (var valueless = await editor.PostAsJsonAsync("/umbraco/management/api/v1/api-endpoints/test", new { key = order.Key }))
+            Assert.Equal(HttpStatusCode.BadRequest, valueless.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsJsonAsync("/umbraco/management/api/v1/api-endpoints/test", new { key = order.Key, values = new { } })).StatusCode);
 
         // Unpublishing takes the route away from the next request; the literal route beside it stays.
