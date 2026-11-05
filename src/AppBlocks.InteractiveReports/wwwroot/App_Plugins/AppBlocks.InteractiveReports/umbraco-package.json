@@ -4,6 +4,10 @@
   "version": "0.1.0-alpha.1",
   "extensions": [
     {
+      "type": "appEntryPoint", "alias": "AppBlocks.Reports.NestedPreview", "name": "Nested report preview",
+      "js": "/App_Plugins/AppBlocks.InteractiveReports/block-preview-entrypoint.js"
+    },
+    {
       "type": "condition", "alias": "AppBlocks.InteractiveReports.Administrator", "name": "Interactive Reports administrator access",
       "api": "/App_Plugins/AppBlocks.InteractiveReports/administrator-condition.js"
     },
@@ -69,6 +73,14 @@
         "group": "Application",
         "propertyEditorSchemaAlias": "Umbraco.TextArea"
       }
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Reports.Preview.appReport",
+      "name": "appReport preview",
+      "element": "/App_Plugins/AppBlocks.InteractiveReports/block-preview.js",
+      "forContentTypeAlias": "appReport",
+      "forBlockEditor": "Umbraco.BlockGrid"
     }
   ]
 }

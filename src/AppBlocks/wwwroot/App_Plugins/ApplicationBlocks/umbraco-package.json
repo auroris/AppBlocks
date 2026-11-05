@@ -84,6 +84,222 @@
         "icon": "icon-database"
       },
       "name": "Published SQL data source"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appActions",
+      "name": "Form actions preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appActions",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appAntiSpam",
+      "name": "Anti-spam preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appAntiSpam",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appAttachments",
+      "name": "Attachments preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appAttachments",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appCheckbox",
+      "name": "Checkbox preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appCheckbox",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appColor",
+      "name": "Color picker preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appColor",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appColumns",
+      "name": "Two columns preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appColumns",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appCss",
+      "name": "CSS preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appCss",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appDate",
+      "name": "Date preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appDate",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appDateTime",
+      "name": "Date and time preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appDateTime",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appDisplay",
+      "name": "Display value preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appDisplay",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appFieldset",
+      "name": "Fieldset preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appFieldset",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appForm",
+      "name": "Form preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appForm",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appFormInterface",
+      "name": "Form Interface preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appFormInterface",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appFormInterface.Single",
+      "name": "Form Interface preview in a single block",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appFormInterface",
+      "forBlockEditor": "Umbraco.SingleBlock"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appFormsContainer",
+      "name": "Forms container preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appFormsContainer",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appHtml",
+      "name": "HTML preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appHtml",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appNumber",
+      "name": "Number preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appNumber",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appRegion",
+      "name": "Region preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appRegion",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appRichText",
+      "name": "Rich text preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appRichText",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appSchedule",
+      "name": "Schedule preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appSchedule",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appScript",
+      "name": "JavaScript preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appScript",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appSelect",
+      "name": "Select preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appSelect",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appShuttle",
+      "name": "Shuttle preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appShuttle",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appTabular",
+      "name": "Tabular form preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appTabular",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appText",
+      "name": "Text box preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appText",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appTextArea",
+      "name": "Text area preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appTextArea",
+      "forBlockEditor": "Umbraco.BlockGrid"
+    },
+    {
+      "type": "blockEditorCustomView",
+      "alias": "AppBlocks.Preview.appTime",
+      "name": "Time preview",
+      "element": "/App_Plugins/ApplicationBlocks/block-preview.js",
+      "forContentTypeAlias": "appTime",
+      "forBlockEditor": "Umbraco.BlockGrid"
     }
   ]
 }

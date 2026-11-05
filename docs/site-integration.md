@@ -32,6 +32,68 @@ Beside the stylesheet, two runtime modules are public for a site's own scripts. 
 
 A form whose **Label position** is `left` puts its labels in a column beside the inputs. A field narrower than about 26rem, and every field on a phone, stacks its label above the input again.
 
+## Previews in the backoffice
+
+In a block grid, every AppBlocks block shows a preview in place of Umbraco's default card, except Full width and Three columns, which keep Umbraco's card and their areas. A preview keeps Umbraco's own header, with the block's icon, label, **Not published** tag and edit link, and draws the block's authoring content beneath it, then the block's areas. A Form's form interface shows the same preview inside its single-block property, under Umbraco's single-block header. Fields appear as disabled controls with their label, placeholder, default value and help text. Rich text and HTML appear as authored, CSS and JavaScript as code, and forms, tabular forms, schedules, attachments and the anti-spam check as representative markup that names the form class or data source they use. A Forms container shows the forms inside it. With Interactive Reports installed, a report shows its heading, buttons and the columns of its starting view.
+
+Nothing in a preview executes. No form class, SQL, data source, report action or page script runs, and authored HTML is sanitized and drawn in a sandboxed frame that allows no scripts, forms or requests to other origins. The only requests a preview makes are for the stylesheets below, for images, and for the media items behind a picked image. Images and stylesheets on another origin, such as a CDN, do not load in a preview.
+
+Each preview is a `blockEditorCustomView` extension with the alias `AppBlocks.Preview.<content type alias>`, for example `AppBlocks.Preview.appHtml`, registered for `Umbraco.BlockGrid` (the form interface's single-block preview is `AppBlocks.Preview.appFormInterface.Single`, and the report preview is `AppBlocks.Reports.Preview.appReport`). AppBlocks leaves their `weight` unset, which is 0. A block editor shows the one custom view with the highest weight for a block, so a site replaces a preview by registering its own view for the same `forContentTypeAlias` and `forBlockEditor` with a higher weight:
+
+```json
+{
+  "type": "blockEditorCustomView",
+  "alias": "MySite.Preview.appHtml",
+  "name": "HTML preview",
+  "element": "/App_Plugins/MySite/html-preview.js",
+  "forContentTypeAlias": "appHtml",
+  "forBlockEditor": "Umbraco.BlockGrid",
+  "weight": 100
+}
+```
+
+Naming `AppBlocks.Preview.appHtml` in the view's `overwrites` removes AppBlocks' view outright instead. To go back to Umbraco's default card for a block, an `appEntryPoint` excludes the preview: its `onInit(host, extensionRegistry)` calls `extensionRegistry.exclude("AppBlocks.Preview.appHtml")`.
+
+A site makes previews look like its pages from an `appEntryPoint`. `App_Plugins/ApplicationBlocks/block-preview.js` exports two arrays that every preview reads when it draws. `previewStylesheets` holds stylesheet URLs, and starts with AppBlocks' runtime stylesheet; a site adds its own frontend stylesheet. `previewStyles` holds CSS text that comes after the stylesheets and the preview's own rules; a site adds preview-only overrides, such as showing every panel of a component its pages reveal with script, which never runs in a preview. Relative URLs resolve against the site root, path base included:
+
+```js
+// App_Plugins/MySite/preview-styles.js, registered as an appEntryPoint
+import { previewStylesheets, previewStyles } from "../ApplicationBlocks/block-preview.js";
+
+export function onInit() {
+    previewStylesheets.push("css/site.css");
+    previewStyles.push(".tab-panel{display:block}.carousel-controls{display:none}");
+}
+```
+
+Another package previews its own blocks by extending `BlockPreview` from the same module, so they get the same header, frame, sanitizer and areas. A subclass overrides `renderContent(alias, content, settings)`, which receives the block's content and settings values by property alias and returns markup as a string, or an empty string to show the header and areas alone. `App_Plugins/ApplicationBlocks/preview-model.js` has the helpers the AppBlocks previews use, such as `escape`, `heading`, `note`, `button` and `table`, and `this.mediaImage(value)` draws a media picker's image. The package defines its element and registers manifests for its own content type aliases only, never for AppBlocks':
+
+```js
+// App_Plugins/MyPackage/block-preview.js
+import { BlockPreview } from "../ApplicationBlocks/block-preview.js";
+import { heading, note, escape } from "../ApplicationBlocks/preview-model.js";
+
+export default class QuotePreview extends BlockPreview {
+    renderContent(alias, content, settings) {
+        return heading(content.title) + `<blockquote>${escape(content.quote)}</blockquote>` + note(content.author || "Add an author.");
+    }
+}
+customElements.define("my-package-block-preview", QuotePreview);
+```
+
+```json
+{
+  "type": "blockEditorCustomView",
+  "alias": "MyPackage.Preview.myQuote",
+  "name": "Quote preview",
+  "element": "/App_Plugins/MyPackage/block-preview.js",
+  "forContentTypeAlias": "myQuote",
+  "forBlockEditor": "Umbraco.BlockGrid"
+}
+```
+
+The header follows the manifest's `forBlockEditor`: `Umbraco.BlockList` and `Umbraco.SingleBlock` get those editors' headers and no areas, and anything else gets the grid's. A package whose blocks can sit inside a Forms container also registers how to draw them there, from an `appEntryPoint`, by content type key: `nestedBlockPreviews.set("<key>", (content, settings) => markup)`, with `nestedBlockPreviews` imported from the same module.
+
 ## Access and caching
 
 The native blocks include their required assets and inherit ordinary site typography. Public page content stays visible. On a page without Public Access an anonymous visitor reaches its interactive blocks, and whatever is behind each block decides: a C# form class with no check of its own is public. SQL data sources offer **Public**, **Not public**, and **Specific groups** access; a new one starts with Public, which follows the page, and an empty value is an error. Public sources allow anonymous reads through forms, lists of values, tabular forms, schedules and [API endpoints](api-endpoints.md); writes require sign-in unless that source explicitly enables **Allow anonymous writes**. A tabular form also checks its owning record, and a schedule needs both sources to be Public. Queries and row restrictions using `:USER_*` values still require sign-in. Paper report downloads require a signed-in account. Interactive blocks also work for an authenticated Umbraco Member or backoffice User. `IDataSourceUserResolver` exposes the account type and current groups; the application decides who may read or change its data. Backoffice administrators receive no automatic application permissions. Umbraco Public Access protects Member pages for everyone, a backoffice User without a Member session included. A host that wants to admit someone Umbraco refuses, such as the page's editors, registers an `IProtectedPageAdmission`, and the page and its block endpoints follow the same answer. Configured data-source Member Groups and application policies still apply to API requests. See the [identity and access examples](business-rules.md#group-membership) and the Public contact form recipe there.

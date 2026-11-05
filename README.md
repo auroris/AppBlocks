@@ -49,7 +49,7 @@ Sites using Umbraco's conventional `blockgrid/Components` or `blocklist/Componen
 
 | Guide | What it covers |
 | --- | --- |
-| [Adding AppBlocks to a site](docs/site-integration.md) | Installation, rendering, access and caching |
+| [Adding AppBlocks to a site](docs/site-integration.md) | Installation, rendering, styling, backoffice previews, access and caching |
 | [Business rules](docs/business-rules.md) | Identity, groups, ownership, validation, and authorization scenarios. Also under **Settings → AppBlocks → Business rules** |
 | [The C# section](docs/csharp-editor.md) | Writing form classes and backing classes in the backoffice on a development site, compiled while it runs, and the wizard that writes them for a table |
 | [Connections](docs/connections.md) | The default database, extra connections, upload storage and Oracle modes |
