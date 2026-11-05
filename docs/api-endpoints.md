@@ -69,6 +69,36 @@ Endpoints answer below `/api/data` unless `AppBlocks:ApiBasePath` says otherwise
 
 The catalogue of endpoints is read from Umbraco's published content on each request, so publishing, unpublishing or deleting an endpoint takes effect on the next request.
 
+## Calling endpoints from a page
+
+`App_Plugins/ApplicationBlocks/data-api.js` is a small ES module for a site's own pages, public or not, that read endpoints. It is the transport the blocks' runtime uses for its own requests, so it needs no backoffice session and imports nothing else.
+
+| Export | What it does |
+| --- | --- |
+| `request(url, { method, body, headers, signal })` | Sends one request with the visitor's cookies (`credentials: "same-origin"`) and `cache: "no-store"`, and resolves with the answer's JSON, or `null` for an answer without a body such as 204. A body that is `FormData`, `URLSearchParams`, a `Blob` or a string is sent as it is; any other body is sent as JSON. `method` is GET by default. |
+| `ApiError` | What `request` rejects with when the endpoint refuses: `status` is the HTTP status, and `problem` the endpoint's JSON body, such as `{ status, title }`, or `{}` when it had none. A request that gets no answer rejects as `fetch` does, with a `TypeError`, and an aborted one with an `AbortError`. |
+| `errorText(error, fallback)` | The text to show a reader: the problem's `detail`, `title` or first field error, or the fallback, `The request could not be completed.` unless given, when there is none or the request got no answer. |
+| `withQuery(url, query)` | The address with each of the query's values set, leaving out `null` and `undefined` and repeating the name for an array. |
+| `siteUrl(url)`, `pathBase` | A path starting with `/` is from the site's root and takes the site's path base, read from where the module is served, so a site at `/intranet` asks `/intranet/api/data/...`. A `URL` object or an absolute address is used as it is. |
+
+With an endpoint whose route is `orders` and `status` under Query parameters, a page lists the open orders like this:
+
+```html
+<ul id="orders" aria-live="polite"></ul>
+<script type="module">
+    import { request, withQuery, errorText } from "/App_Plugins/ApplicationBlocks/data-api.js";
+    const list = document.getElementById("orders");
+    try {
+        const { items } = await request(withQuery("/api/data/orders", { status: "open" }));
+        list.replaceChildren(...items.map(order => Object.assign(document.createElement("li"), { textContent: `${order.orderId}: ${order.customer}` })));
+    } catch (error) {
+        list.replaceChildren(Object.assign(document.createElement("li"), { textContent: errorText(error, "The orders could not be loaded.") }));
+    }
+</script>
+```
+
+On a site with a path base the script's own `src` and `import` carry it, as every other address on the page does; the addresses passed to `request` do not. When `AppBlocks:ApiBasePath` is set, use that base path in place of `/api/data`. A refusal of a visitor without an account is a 401, which a page can answer with a sign-in link.
+
 ## Caching and CORS
 
 AppBlocks sends `no-store` and adds no CORS policy. Caching the answers, or calling them from a page on another origin, is the site's decision: a site that does configures ASP.NET Core's output caching or CORS middleware for the base path, keeping in mind that the answer depends on who asks.

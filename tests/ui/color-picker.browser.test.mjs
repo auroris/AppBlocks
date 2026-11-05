@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runtimeAsset } from './runtime-assets.mjs';
 import { test, before, after } from 'node:test';
 import { createRequire } from 'node:module';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -9,7 +10,6 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const require = createRequire(resolve(process.env.INTERACTIVE_REPORTS_ROOT || resolve(root, '../Interactive-Reports'), 'package.json'));
 const { chromium } = require('playwright');
-const runtime = await readFile(resolve(root, 'src/AppBlocks/wwwroot/App_Plugins/ApplicationBlocks/runtime.js'), 'utf8');
 const styles = await readFile(resolve(root, 'src/AppBlocks/wwwroot/App_Plugins/ApplicationBlocks/runtime.css'), 'utf8');
 let browser;
 before(async () => { browser = await chromium.launch({ headless: true, ...(existsSync(chromium.executablePath()) ? {} : { executablePath: process.env.BROWSER_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe' }) }); });
@@ -23,7 +23,7 @@ async function mount({ value = null, key = null, defaultValue, required = false,
     const record = values => ({ key, version: '1', values, capabilities: { create: writable, update: writable } });
     await page.route('**/*', async route => {
         const url = new URL(route.request().url());
-        if (url.pathname.endsWith('/runtime.js')) return route.fulfill({ contentType: 'text/javascript', body: runtime });
+        const asset = await runtimeAsset(url.pathname); if (asset) return route.fulfill(asset);
         if (url.pathname.startsWith('/api/forms/')) {
             if (route.request().method() === 'GET') return route.fulfill({ json: { record: record({ color: value }), definitionVersion: '1', antiforgeryToken: 'token' } });
             posted.push(route.request().postDataJSON());

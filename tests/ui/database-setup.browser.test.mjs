@@ -1,4 +1,5 @@
 import { backofficeRoute } from "./backoffice-harness.mjs";
+import { runtimeAsset } from './runtime-assets.mjs';
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
 import { createRequire } from 'node:module';
@@ -141,7 +142,7 @@ async function mountBlock(answer) {
             <div class="app-attachments-message" role="status"></div><div class="app-attachments-errors" role="alert" hidden></div><ul class="app-attachments-list" aria-busy="true"></ul>
             <div class="app-attachments-upload" hidden><input type="file" data-attachment-file><button type="button" data-attachment-upload>Upload</button></div></section>
             <script type="module" src="/App_Plugins/ApplicationBlocks/runtime.js"></script>`});
-        if (path.endsWith('/runtime.js')) return route.fulfill({contentType:'text/javascript', body:await readFile(resolve(root, 'src/AppBlocks/wwwroot/App_Plugins/ApplicationBlocks/runtime.js'), 'utf8')});
+        const asset = await runtimeAsset(path); if (asset) return route.fulfill(asset);
         if (path.startsWith('/api/attachments')) return route.fulfill({contentType:'application/json', body:JSON.stringify(answer)});
         return route.fulfill({status:404, body:''});
     });

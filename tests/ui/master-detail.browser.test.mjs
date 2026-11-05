@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runtimeAsset } from './runtime-assets.mjs';
 import { test, before, after } from 'node:test';
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
@@ -11,8 +12,6 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const require = createRequire(resolve(process.env.INTERACTIVE_REPORTS_ROOT || resolve(root, '../Interactive-Reports'), 'package.json'));
 const { chromium } = require('playwright');
-const runtime = await readFile(resolve(root, 'src/AppBlocks/wwwroot/App_Plugins/ApplicationBlocks/runtime.js'), 'utf8');
-const styles = await readFile(resolve(root, 'src/AppBlocks/wwwroot/App_Plugins/ApplicationBlocks/runtime.css'), 'utf8');
 let browser;
 before(async () => { browser = await chromium.launch({ headless: true, ...(existsSync(chromium.executablePath()) ? {} : { executablePath: process.env.BROWSER_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe' }) }); });
 after(async () => browser?.close());
@@ -38,8 +37,7 @@ async function mount({ record = { key: null, version: null, values: { customer: 
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', async route => {
         const request = route.request(), url = new URL(request.url()), path = url.pathname;
-        if (path.endsWith('runtime.js')) return route.fulfill({ contentType: 'text/javascript', body: runtime });
-        if (path.endsWith('runtime.css')) return route.fulfill({ contentType: 'text/css', body: styles });
+        const asset = await runtimeAsset(path); if (asset) return route.fulfill(asset);
         if (path.startsWith('/api/')) {
             requests.push({ method: request.method(), path, search: url.search, body: request.postDataJSON?.() ?? null });
             if (path === `/api/tabular/page/${block}/new`) return route.fulfill({ json: list([]) });

@@ -1,4 +1,5 @@
-const pathBase = new URL(import.meta.url).pathname.split("/App_Plugins/")[0];
+import { ApiError, errorText, request } from "./data-api.js";
+import { mountSchedule } from "./schedule.js";
 
 // Nothing to show, so a new record's default may fill it.
 const blank = value => value === undefined || value === null || value === "";
@@ -302,15 +303,15 @@ function mountForm(form) {
     async function load() {
         message.textContent = "Loading…";
         try {
-            const url = requestUrl();
-            const response = await fetch(url, { credentials: "same-origin", cache: "no-store" });
-            // The page normally knows this already; a class can still change its mind between rendering and this load.
-            if (response.status === 403 && anonymous) { form.replaceWith(signInNotice("Sign in to use this form.")); return; }
-            if (!response.ok) throw new Error(response.status === 403 ? "You do not have access to this form." : response.status === 404 ? "The record was not found." : "The form could not be loaded.");
-            state = await response.json(); display(state.record); message.textContent = "";
+            state = await request(requestUrl()); display(state.record); message.textContent = "";
             // Blocks that follow the record, such as Attachments, learn which record is shown.
             form.dispatchEvent(new CustomEvent("app-form:loaded", { bubbles: true, detail: { record: state.record, definitionVersion: state.definitionVersion } }));
-        } catch (error) { showErrors({ "": [error.message] }); message.textContent = ""; }
+        } catch (error) {
+            const status = error instanceof ApiError ? error.status : 0;
+            // The page normally knows this already; a class can still change its mind between rendering and this load.
+            if (status === 403 && anonymous) { form.replaceWith(signInNotice("Sign in to use this form.")); return; }
+            showErrors({ "": [status === 403 ? "You do not have access to this form." : status === 404 ? "The record was not found." : "The form could not be loaded."] }); message.textContent = "";
+        }
     }
     async function submit(remove = false) {
         if (!state || busy) return;
@@ -345,31 +346,21 @@ function mountForm(form) {
         const formData = otherControls(form);
         body.disabled = true; showErrors(null); message.textContent = remove ? "Deleting…" : "Saving…";
         try {
-            const response = await fetch(requestUrl(state.record.key), {
-                method: remove ? "DELETE" : state.record.key ? "PUT" : "POST", credentials: "same-origin",
-                headers: { "Content-Type": "application/json", RequestVerificationToken: state.antiforgeryToken },
-                body: JSON.stringify({ values, definitionVersion: state.definitionVersion, version: state.record.version, submissionKey, formData, ...(details.length ? { details } : {}) }),
-            });
-            if (response.status === 204) { location.assign(form.dataset.return); return; }
-            // A class refusing someone anonymous means they need to sign in; what they entered stays in the form.
-            if (response.status === 403 && anonymous) { message.replaceChildren(signInNotice("Sign in to use this form.")); return; }
-            // Some refusals have no body, such as an expired antiforgery token.
-            const result = await response.json().catch(() => ({}));
-            // A block's rows were refused: the block marks the row, and every value stays. When the record could not share their
-            // transaction it was saved before them, so the form now shows it and its next save is an update.
-            if (!response.ok && result.block) {
-                if (result.record) keep(result.record);
-                for (const detail of formDetails.get(form) ?? []) {
-                    if (result.record?.key) detail.keyed(result.record);
-                    // A block saved before the one that failed shows its rows as saved, so they are not sent again.
-                    const list = result.details?.find(saved => saved.block === detail.block)?.list;
-                    if (list) detail.saved(list);
-                    if (detail.block === result.block) detail.refused(result);
-                }
-                showErrors({ "": [result.record ? "The record was saved, but its rows were not. Correct the rows marked below and save again." : "Nothing was saved. Correct the rows marked below and save again."] });
-                message.textContent = ""; return;
+            let result;
+            try {
+                result = await request(requestUrl(state.record.key), {
+                    method: remove ? "DELETE" : state.record.key ? "PUT" : "POST",
+                    headers: { RequestVerificationToken: state.antiforgeryToken },
+                    body: { values, definitionVersion: state.definitionVersion, version: state.record.version, submissionKey, formData, ...(details.length ? { details } : {}) },
+                });
+            } catch (error) {
+                if (!(error instanceof ApiError)) throw error;
+                // A class refusing someone anonymous means they need to sign in; what they entered stays in the form.
+                if (error.status === 403 && anonymous) { message.replaceChildren(signInNotice("Sign in to use this form.")); return; }
+                refusal(error.status, error.problem); return;
             }
-            if (!response.ok) { showErrors(result.errors ?? { "": [response.status === 403 ? "This operation is not permitted." : response.status === 413 ? "This is too much to send at once. Shorten what you entered and try again." : response.status === 429 ? "That was too many tries. Wait a minute and try again." : "The operation failed. Reload the page if the record has changed."] }); message.textContent = ""; return; }
+            // No content: the record is gone, or a public form keeps nothing to come back to.
+            if (result === null) { location.assign(form.dataset.return); return; }
             keep(result.record); message.textContent = "Saved.";
             // Blocks that saved with the record take their rows from the answer; the others reload.
             form.dispatchEvent(new CustomEvent("app-form:saved", { bubbles: true, detail: { record: result.record, definitionVersion: state.definitionVersion, details: result.details ?? [] } }));
@@ -379,6 +370,25 @@ function mountForm(form) {
             // Whatever the answer was, the server has seen this token and it will not work again.
             if (!remove) for (const widget of antiSpam) widget.reset();
         }
+    }
+    // A refused save. Some refusals have no body, such as an expired antiforgery token.
+    function refusal(status, result) {
+        message.textContent = "";
+        // A block's rows were refused: the block marks the row, and every value stays. When the record could not share their
+        // transaction it was saved before them, so the form now shows it and its next save is an update.
+        if (result.block) {
+            if (result.record) keep(result.record);
+            for (const detail of formDetails.get(form) ?? []) {
+                if (result.record?.key) detail.keyed(result.record);
+                // A block saved before the one that failed shows its rows as saved, so they are not sent again.
+                const list = result.details?.find(saved => saved.block === detail.block)?.list;
+                if (list) detail.saved(list);
+                if (detail.block === result.block) detail.refused(result);
+            }
+            showErrors({ "": [result.record ? "The record was saved, but its rows were not. Correct the rows marked below and save again." : "Nothing was saved. Correct the rows marked below and save again."] });
+            return;
+        }
+        showErrors(result.errors ?? { "": [status === 403 ? "This operation is not permitted." : status === 413 ? "This is too much to send at once. Shorten what you entered and try again." : status === 429 ? "That was too many tries. Wait a minute and try again." : "The operation failed. Reload the page if the record has changed."] });
     }
     // A saved record: shown, a new key for the next submission, and its key on the address.
     function keep(record) {
@@ -485,19 +495,15 @@ function mountAttachments(root) {
             list.append(row);
         }
     }
-    async function problem(response, fallback) {
-        try { const body = await response.json(); return body.detail || body.title || fallback; } catch { return fallback; }
-    }
     async function load() {
         clear();
         if (form && !recordKey) { state = null; render(); return; }
         list.setAttribute("aria-busy", "true");
-        try {
-            const response = await fetch(requestUrl(), { credentials: "same-origin", cache: "no-store" });
-            if (response.status === 403 && root.dataset.anonymous === "true") { root.replaceWith(signInNotice("Sign in to see the files.")); return; }
-            if (!response.ok) { state = null; render(); fail(await problem(response, "The files could not be loaded.")); return; }
-            state = await response.json(); render();
-        } catch { state = null; render(); fail("The files could not be loaded."); }
+        try { state = await request(requestUrl()); render(); }
+        catch (error) {
+            if (error instanceof ApiError && error.status === 403 && root.dataset.anonymous === "true") { root.replaceWith(signInNotice("Sign in to see the files.")); return; }
+            state = null; render(); fail(errorText(error, "The files could not be loaded."));
+        }
     }
     // An upload (no id), a replacement or new details for a file (an id), or a removal (DELETE).
     async function send(id, parts, method = null) {
@@ -511,11 +517,15 @@ function mountAttachments(root) {
         for (const field of ["purpose", "label", "notes"]) if (parts && parts[field] !== undefined) body.append(field, parts[field]);
         busy = true; message.textContent = method === "DELETE" ? "Removing…" : "Uploading…";
         try {
-            const response = await fetch(requestUrl(id), {
-                method: method ?? (id === null ? "POST" : "PUT"), credentials: "same-origin",
-                headers: { RequestVerificationToken: state.antiforgeryToken }, body: method === "DELETE" ? undefined : body,
-            });
-            if (!response.ok) { fail(await problem(response, "The operation failed.")); message.textContent = ""; return; }
+            try {
+                await request(requestUrl(id), {
+                    method: method ?? (id === null ? "POST" : "PUT"),
+                    headers: { RequestVerificationToken: state.antiforgeryToken }, body: method === "DELETE" ? undefined : body,
+                });
+            } catch (error) {
+                if (!(error instanceof ApiError)) throw error;
+                fail(errorText(error, "The operation failed.")); message.textContent = ""; return;
+            }
             if (upload) for (const field of upload.querySelectorAll("input, select")) field.value = "";
             await load();
             root.dispatchEvent(new CustomEvent("app-attachments:changed", { bubbles: true, detail: { id, operation: method === "DELETE" ? "remove" : id === null ? "upload" : "replace" } }));
@@ -727,19 +737,13 @@ function mountTabular(root) {
         if (saveButton) saveButton.disabled = value;
         limit();
     }
-    // A refusal is a problem response, or the engine's errors when the data source itself refused, such as too many rows.
-    async function problem(response, fallback) {
-        try { const body = await response.json(); return body.detail || body.title || Object.values(body.errors ?? {}).flat()[0] || fallback; } catch { return fallback; }
-    }
     async function load() {
         clear();
         if (form && !recordKey && !withForm) { render(); return; }
         tbody.setAttribute("aria-busy", "true");
-        try {
-            const response = await fetch(requestUrl(form && !recordKey), { credentials: "same-origin", cache: "no-store" });
-            if (!response.ok) { state = null; render(); fail([await problem(response, "The rows could not be loaded.")]); return; }
-            state = await response.json(); submissionKey = newSubmissionKey(); render();
-        } catch { state = null; render(); fail(["The rows could not be loaded."]); }
+        // A refusal is a problem response, or the engine's errors when the data source itself refused, such as too many rows.
+        try { state = await request(requestUrl(form && !recordKey)); submissionKey = newSubmissionKey(); render(); }
+        catch (error) { state = null; render(); fail([errorText(error, "The rows could not be loaded.")]); }
     }
     // The batch: every new row whole, the changed cells of every other row, and every row marked for deletion.
     function changes() {
@@ -782,18 +786,20 @@ function mountTabular(root) {
         for (const [row] of sent) if (!row.deleted) for (const control of row.inputs.values()) if (!control.reportValidity()) return;
         setBusy(true); message.textContent = "Saving…";
         try {
-            const response = await fetch(requestUrl(), {
-                method: "POST", credentials: "same-origin",
-                headers: { "Content-Type": "application/json", RequestVerificationToken: state.antiforgeryToken },
-                body: JSON.stringify({ submissionKey, changes: sent.map(([, change]) => change) }),
-            });
-            const result = await response.json().catch(() => null);
-            message.textContent = "";
-            if (!response.ok) {
-                if (typeof result?.index === "number") refused(result, sent);
-                else fail([result?.detail || result?.title || (response.status === 400 ? "The rows could not be saved. Reload the page and try again." : "The rows could not be saved.")]);
+            let result;
+            try {
+                result = await request(requestUrl(), {
+                    method: "POST", headers: { RequestVerificationToken: state.antiforgeryToken },
+                    body: { submissionKey, changes: sent.map(([, change]) => change) },
+                });
+            } catch (error) {
+                if (!(error instanceof ApiError)) throw error;
+                message.textContent = "";
+                if (typeof error.problem.index === "number") refused(error.problem, sent);
+                else fail([error.problem.detail || error.problem.title || (error.status === 400 ? "The rows could not be saved. Reload the page and try again." : "The rows could not be saved.")]);
                 return;
             }
+            message.textContent = "";
             state = result; submissionKey = newSubmissionKey(); render(); message.textContent = "Saved.";
             root.dispatchEvent(new CustomEvent("app-tabular:saved", { bubbles: true, detail: { rows: result.rows } }));
         } catch { message.textContent = ""; fail(["The request could not be completed. Your entered values have been retained."]); }
@@ -845,59 +851,6 @@ function mountTabular(root) {
         });
         render();
     } else load();
-}
-// A schedule: the server laid the whole table out, so the runtime only brings today's column into view and shows
-// a bar's details, which sit inside the bar for screen readers, as a tooltip on hover and focus, and places the
-// popover a bar with a description opens.
-let scheduleTooltips = 0;
-function mountSchedule(root) {
-    const scroller = root.querySelector(".app-schedule-scroll");
-    const today = root.querySelector("thead .app-schedule-col--today");
-    if (scroller && today) {
-        // Today lands just right of the sticky label column, with two columns of context before it.
-        const labels = root.querySelector(".app-schedule-corner");
-        scroller.scrollLeft = Math.max(0, today.offsetLeft - (labels ? labels.offsetWidth : 0) - today.offsetWidth * 2);
-    }
-    const tooltip = document.createElement("div");
-    tooltip.className = "app-schedule-tooltip";
-    tooltip.id = `app-schedule-tooltip-${++scheduleTooltips}`;
-    tooltip.setAttribute("aria-hidden", "true");
-    tooltip.hidden = true;
-    root.append(tooltip);
-    let active = null;
-    const barOf = target => target instanceof Element ? target.closest(".app-schedule-bar") : null;
-    function show(bar) {
-        if (!bar || bar === active) return;
-        active = bar;
-        tooltip.textContent = bar.textContent;
-        tooltip.hidden = false;
-        const bounds = bar.getBoundingClientRect(), frame = root.getBoundingClientRect();
-        tooltip.style.left = `${Math.max(0, Math.min(bounds.left - frame.left, root.clientWidth - tooltip.offsetWidth))}px`;
-        tooltip.style.top = `${bounds.bottom - frame.top + 4}px`;
-    }
-    function hide() { active = null; tooltip.hidden = true; }
-    root.addEventListener("mouseover", event => show(barOf(event.target)));
-    root.addEventListener("mouseout", event => { if (active && barOf(event.target) === active && barOf(event.relatedTarget) !== active) hide(); });
-    root.addEventListener("focusin", event => show(barOf(event.target)));
-    root.addEventListener("focusout", event => { if (active && barOf(event.target) === active) hide(); });
-    root.addEventListener("keydown", event => { if (event.key === "Escape") hide(); });
-    scroller?.addEventListener("scroll", hide, { passive: true });
-    // A bar with a description opens the browser's own popover. The browser centres it; here it goes under its bar,
-    // kept inside the viewport, and the tooltip steps aside for it.
-    root.querySelectorAll(".app-schedule-popover").forEach(popover => popover.addEventListener("toggle", event => {
-        if (event.newState !== "open") return;
-        hide();
-        const opener = root.querySelector(`[popovertarget="${CSS.escape(popover.id)}"]:not(.app-schedule-popover__close)`);
-        if (!opener) return;
-        const bounds = opener.getBoundingClientRect(), gap = 8;
-        popover.style.margin = "0";
-        popover.style.inset = "auto";
-        const left = Math.max(gap, Math.min(bounds.left, window.innerWidth - popover.offsetWidth - gap));
-        let top = bounds.bottom + 4;
-        if (top + popover.offsetHeight > window.innerHeight - gap) top = Math.max(gap, bounds.top - popover.offsetHeight - 4);
-        popover.style.left = `${left}px`;
-        popover.style.top = `${top}px`;
-    }));
 }
 // Attachments and tabular forms listen for their form's record, so they mount before the forms start loading.
 document.querySelectorAll("[data-app-attachments]").forEach(mountAttachments);

@@ -72,6 +72,56 @@ Bars without a colour of their own take their kind's colour, `--ah-schedule-kind
 
 Every bar renders `data-key` and `data-kind`, and a vertical row's bars carry `app-schedule-bar--vertical`, so a JavaScript block on the page can attach any behaviour the block itself does not offer.
 
+## A schedule of your own
+
+A page can lay out a schedule table itself, from rows it loads with the [data API client](api-endpoints.md#calling-endpoints-from-a-page) or from anywhere else, and still look and behave like the block: the same bars, tooltip and popovers. The page links `runtime.css` and imports `App_Plugins/ApplicationBlocks/schedule.js`, which exports three functions. Importing the module mounts nothing; the block's own pages load it through `runtime.js`.
+
+```html
+<link rel="stylesheet" href="/App_Plugins/ApplicationBlocks/runtime.css">
+<div class="application-blocks"><section class="app-schedule" id="rooms"></section></div>
+<script type="module">
+    import { mountSchedule, scheduleBar, scheduleRowLabel } from "/App_Plugins/ApplicationBlocks/schedule.js";
+    const root = document.getElementById("rooms");
+    // ...build the table below, appending scheduleRowLabel(row) to each tr and scheduleBar(bar) to the cell where a bar starts...
+    const dispose = mountSchedule(root);
+</script>
+```
+
+`scheduleBar(bar)` returns a fragment to append to the cell of the column where the bar starts: the bar, and after it its popover when it has a description. Every property is optional except `label`.
+
+| Property | What it does |
+| --- | --- |
+| `label` | The text on the bar. |
+| `details` | Text after the label, read by screen readers and shown in the tooltip, such as `: Room 1, 3 Nov 2026 to 5 Nov 2026, Course`. The block writes the row, the dates and the kind. |
+| `span`, `lane` | The number of columns the bar covers, 1 by default, and the lane of its row it sits in, from 0. The row's `--ah-lanes` says how many lanes it has. |
+| `kindIndex` | 1 to 8 colours the bar with `--ah-schedule-kind-1` to `-8`, and higher numbers wrap around. |
+| `color`, `textColor` | The bar's own background and text colour. Only a hex value or a colour name is used, as with the block's columns; a colour of its own replaces the kind's. |
+| `openEnded`, `clippedStart`, `clippedEnd` | The bar runs on past the window's end with an arrow, or is cut and dotted at the window's start or end. |
+| `vertical` | The bar is a marker in a vertical row. |
+| `key`, `kind` | Rendered as `data-key` and `data-kind`. |
+| `link` | Where the bar leads. A bar with neither a link nor a description is a focusable `span`. |
+| `description` | Text, or nodes the page built, for the bar's popover. It makes the bar a button that opens the popover, which also shows `when` and the link. |
+| `when`, `linkText` | The popover's line under its title, and the text of its link, `Open link` by default. |
+
+`scheduleRowLabel(row)` returns the `th` that starts a row, from `label`, `color`, `textColor` and `description`; a description makes the label a button that opens it.
+
+`mountSchedule(root)` scrolls today's column into view, shows a bar's `textContent` as a tooltip on hover and keyboard focus, hides it on Escape and when anything scrolls, and places a popover under the bar or label that opened it, inside the viewport. It finds bars and popovers inside the root as they are used, so the page can draw the table again, for another window or new data, without mounting again. It returns a function that removes its listeners and tooltip. Mounting the same root again replaces the earlier mount, so mounting after every redraw is also fine.
+
+The table follows the block's own markup, which `runtime.css` styles. Class names not listed here are the block's own and may change.
+
+| Element | Class and attributes |
+| --- | --- |
+| The root | `section.app-schedule`, inside an element with `application-blocks` for the site's `--app-` tokens. The tooltip is placed inside it. |
+| The scroller | `div.app-schedule-scroll`, the root's child that scrolls the table and keeps its header and labels in place. |
+| The table | `table.app-schedule-table`, with `app-schedule-table--days` or `app-schedule-table--hours` for the column width. A `caption.app-schedule-caption` is read by screen readers only. |
+| The header | A `thead` whose first cell is `th.app-schedule-corner` holding an empty `span.app-schedule-label`, then one `th.app-schedule-col` per column. A two-row header puts `th.app-schedule-period` cells with `colspan` in the first row and gives the corner `rowspan="2"`. A column's `span.app-schedule-day` and `span.app-schedule-weekday` stack its number and weekday. |
+| Column states | `app-schedule-col--today` on today's header and body cells, which the mount scrolls to; `app-schedule-col--weekend` for shading; `app-schedule-col--marked` with `--ah-mark` or a `app-schedule-kind-N` class for a column under a marker. |
+| A group | `tbody.app-schedule-group`, optionally starting with `tr.app-schedule-group-title` whose `th` spans the table and holds a `span.app-schedule-label`. |
+| A row | `tr.app-schedule-row` with `style="--ah-lanes: N"`, `app-schedule-row--vertical` for a band of markers, then `scheduleRowLabel(row)` and one `td.app-schedule-cell` per column. |
+| A bar | `scheduleBar(bar)` in the cell where it starts. Its parts are `.app-schedule-bar`, `.app-schedule-bar__label`, `.app-schedule-bar__details` and, for a description, `.app-schedule-popover` opened by `popovertarget`. |
+
+The block also draws a toolbar, an empty message and a legend: `.app-schedule-toolbar`, `.app-schedule-empty`, and `ul.app-schedule-legend` whose items start with `span.app-schedule-swatch` and a kind class.
+
 ## Access
 
 The sources are read through the data source engine, so each source's Access setting, read groups, row restriction and policies decide what each reader sees. On a page without Public Access an anonymous visitor can see a schedule when both sources are Public and neither query nor row restriction uses `:USER_*` binds. Otherwise they see a sign-in notice, as the [site integration guide](site-integration.md) describes. A source whose data cannot be read shows a short message in place of the table and never fails the page.

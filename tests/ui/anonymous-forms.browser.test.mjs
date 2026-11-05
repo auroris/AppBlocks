@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runtimeAsset } from './runtime-assets.mjs';
 import { test, before, after } from 'node:test';
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
@@ -9,7 +10,6 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const require = createRequire(resolve(process.env.INTERACTIVE_REPORTS_ROOT || resolve(root, '../Interactive-Reports'), 'package.json'));
 const { chromium } = require('playwright');
-const runtime = await readFile(resolve(root, 'src/AppBlocks/wwwroot/App_Plugins/ApplicationBlocks/runtime.js'), 'utf8');
 let browser;
 before(async () => { browser = await chromium.launch({ headless: true, ...(existsSync(chromium.executablePath()) ? {} : { executablePath: process.env.BROWSER_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe' }) }); });
 after(async () => browser?.close());
@@ -26,7 +26,7 @@ async function mount({ anonymous = true, loadStatus = 200, submit = () => ({ sta
     await page.route('**/*', async route => {
         const request = route.request();
         const url = new URL(request.url());
-        if (url.pathname.endsWith('/runtime.js')) return route.fulfill({ contentType: 'text/javascript', body: runtime });
+        const asset = await runtimeAsset(url.pathname); if (asset) return route.fulfill(asset);
         if (url.pathname === '/contact/') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><title>Contact</title>
             <form class="app-form" data-app-form data-api="${api}" data-key-parameter="id" data-return="/thanks/" ${anonymous ? 'data-anonymous="true"' : ''} novalidate>
                 <div class="app-form-message" role="status" aria-live="polite"></div>
@@ -200,7 +200,7 @@ test('an Attachments block whose record refuses an anonymous visitor shows the n
     const page = await browser.newPage();
     await page.route('**/*', async route => {
         const url = new URL(route.request().url());
-        if (url.pathname.endsWith('/runtime.js')) return route.fulfill({ contentType: 'text/javascript', body: runtime });
+        const asset = await runtimeAsset(url.pathname); if (asset) return route.fulfill(asset);
         if (url.pathname === '/files/') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><title>Files</title>
             <section class="app-attachments" data-app-attachments data-api="/api/attachments/page/block" data-owner="page" data-key-parameter="id" data-read-only="false" data-anonymous="true">
                 <div class="app-attachments-message" role="status"></div><div class="app-attachments-errors" role="alert" hidden></div><ul class="app-attachments-list"></ul>

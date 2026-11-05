@@ -28,6 +28,8 @@ The runtime stylesheet, `App_Plugins/ApplicationBlocks/runtime.css`, gives forms
 
 The full list is at the top of the stylesheet: the surfaces (`--app-surface`, `--app-surface-2`, `--app-surface-3`), borders, text (`--app-text`, `--app-muted`), the danger colours for errors and the Delete button, `--app-shadow` and `--app-focus`. A schedule's bar colours are `--ah-schedule-kind-1` to `--ah-schedule-kind-8`, and `--ah-schedule-marker-height` is the height of its marker bands; the [Schedule block guide](schedule.md) has the columns that colour rows and bars from the data. The `ah-*` hooks (`ah-grid`, `ah-layout`, `ah-region`, and each block's title and help) are left to the site's theme; the native rendering styles them itself inside `.appblocks-native`, so a site without a theme still gets a grid, column layouts and framed regions.
 
+Beside the stylesheet, two runtime modules are public for a site's own scripts. `App_Plugins/ApplicationBlocks/data-api.js` sends requests to AppBlocks' endpoints with the visitor's cookies and the site's path base, and turns a refusal into text to show; the [API endpoints guide](api-endpoints.md#calling-endpoints-from-a-page) has an example. `App_Plugins/ApplicationBlocks/schedule.js` builds a schedule's bars and row labels and mounts its tooltip and popovers on a table the page lays out itself; the [Schedule block guide](schedule.md#a-schedule-of-your-own) describes the markup. Neither mounts anything when imported. `runtime.js` itself is what the blocks load, and mounts every block on the page.
+
 A form whose **Label position** is `left` puts its labels in a column beside the inputs. A field narrower than about 26rem, and every field on a phone, stacks its label above the input again.
 
 ## Access and caching
