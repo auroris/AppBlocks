@@ -6,6 +6,8 @@ import { UmbMediaDetailRepository } from "@umbraco-cms/backoffice/media";
 import { escape, json, values, note, renderAppBlock } from "./preview-model.js";
 import { appBlockTypes } from "./block-types.js";
 import "@umbraco-cms/backoffice/block-grid";
+import { UMB_BLOCK_LIST } from "@umbraco-cms/backoffice/block-list";
+import { UMB_BLOCK_SINGLE } from "@umbraco-cms/backoffice/block-single";
 import "@umbraco-cms/backoffice/ufm";
 
 // The site root under any path base: this module lives at <root>/App_Plugins/ApplicationBlocks/.
@@ -95,7 +97,7 @@ html,body{margin:0;padding:0;background:white;color:#24323d;font:14px/1.5 system
         const markup = this.renderContent(this.alias, this.content ?? {}, this.settings ?? {});
         const edit = this.config?.showContentEdit ? this.config.editContentPath : undefined;
         const split = this.alias === "appColumns" ? ({ "4/8": "1fr 2fr", "8/4": "2fr 1fr" }[this.settings?.split] ?? "1fr 1fr") : undefined;
-        const grid = !["Umbraco.BlockList", "Umbraco.SingleBlock"].includes(this.manifest?.forBlockEditor);
+        const grid = ![UMB_BLOCK_LIST, UMB_BLOCK_SINGLE].includes(this.manifest?.forBlockEditor);
         return html`<div class="block">
             ${this.#header(edit)}
             ${markup ? html`<div class="preview"><iframe title="Block content preview" sandbox="allow-same-origin" inert tabindex="-1" .srcdoc=${this.previewDocument(markup)} @load=${this.#loaded}></iframe>${edit ? html`<a class="edit-preview" href=${edit} draggable="false" aria-label="Edit block content"></a>` : nothing}</div>` : nothing}
@@ -106,10 +108,10 @@ html,body{margin:0;padding:0;background:white;color:#24323d;font:14px/1.5 system
     #header(edit) {
         const value = { ...this.content, $settings: this.settings, $index: this.index };
         switch (this.manifest?.forBlockEditor) {
-            case "Umbraco.BlockList": return html`<umb-ref-list-block .icon=${this.icon} .index=${this.index} .unpublished=${this.unpublished} .config=${this.config} .content=${this.content} .settings=${this.settings}>
+            case UMB_BLOCK_LIST: return html`<umb-ref-list-block .icon=${this.icon} .index=${this.index} .unpublished=${this.unpublished} .config=${this.config} .content=${this.content} .settings=${this.settings}>
                 <umb-ufm-render slot="name" inline .markdown=${this.label} .value=${value}></umb-ufm-render>
             </umb-ref-list-block>`;
-            case "Umbraco.SingleBlock": return html`<umb-ref-single-block .label=${this.label} .icon=${this.icon} .index=${this.index} .unpublished=${this.unpublished} .config=${this.config} .content=${this.content} .settings=${this.settings}></umb-ref-single-block>`;
+            case UMB_BLOCK_SINGLE: return html`<umb-ref-single-block .label=${this.label} .icon=${this.icon} .index=${this.index} .unpublished=${this.unpublished} .config=${this.config} .content=${this.content} .settings=${this.settings}></umb-ref-single-block>`;
             default: return html`<umb-ref-grid-block standalone .readonly=${!edit} .href=${edit}>
                 <umb-icon slot="icon" .name=${this.icon}></umb-icon>
                 <umb-ufm-render slot="name" inline .markdown=${this.label} .value=${value}></umb-ufm-render>

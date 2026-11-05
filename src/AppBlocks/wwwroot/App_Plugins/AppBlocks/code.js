@@ -12,7 +12,7 @@ const accessChoices = [["public", "Public", "Anyone the page admits may read, wi
     ["notPublic", "Not public", "Any signed-in Member or backoffice User may read."],
     ["specificGroups", "Specific groups", "Only Members and Users in the read or write groups below may read."]];
 
-/** The C# section: the site's C# folder, its compiler messages, and the New file wizard. */
+/** Backing Classes: the site's C# folder, its compiler messages, and the New file wizard. */
 export default class CodeWorkspace extends UmbLitElement {
     static properties = {
         state: { state: true }, loading: { state: true }, busy: { state: true }, error: { state: true }, message: { state: true },
@@ -272,7 +272,7 @@ export default class CodeWorkspace extends UmbLitElement {
         </section>`;
     }
     render() {
-        return html`<umb-body-layout headline="C#">
+        return html`<umb-body-layout headline="Backing Classes">
             <div aria-live="polite">${this.error ? html`<div class="error" role="alert">${this.error}</div>` : ""}${this.message ? html`<div class="notice" role="status">${this.message}</div>` : ""}</div>
             ${this.loading ? html`<p role="status">Loading the C# folder…</p>` : !this.state ? "" : html`
                 ${this.state.canEdit ? html`<p>C# here is compiled into the site while it runs, the way development mode compiles views. Classes implementing IFormResource, IDataSourceHandler, IDataSourcePolicy or IBindVariableProvider are used beside the site's own; the site's own keep an alias they share. Code saved here runs with the site's full rights.</p>`

@@ -1,6 +1,6 @@
-# The C# section
+# Backing Classes
 
-**Settings → C#** edits a folder of C# that the site compiles while it runs, the way Umbraco's development mode compiles Razor views. A class in the folder that implements one of AppBlocks' extension points is used beside the classes compiled into the site, without a build or a restart:
+**Settings → AppBlocks → Backing Classes** edits a folder of C# that the site compiles while it runs, the way Umbraco's development mode compiles Razor views. A class in the folder that implements one of AppBlocks' extension points is used beside the classes compiled into the site, without a build or a restart:
 
 | Extension point | What it is for |
 | --- | --- |

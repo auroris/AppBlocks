@@ -38,7 +38,7 @@ In a block grid, every AppBlocks block shows a preview in place of Umbraco's def
 
 Nothing in a preview executes. No form class, SQL, data source, report action or page script runs, and authored HTML is sanitized and drawn in a sandboxed frame that allows no scripts, forms or requests to other origins. The only requests a preview makes are for the stylesheets below, for images, and for the media items behind a picked image. Images and stylesheets on another origin, such as a CDN, do not load in a preview.
 
-Each preview is a `blockEditorCustomView` extension with the alias `AppBlocks.Preview.<content type alias>`, for example `AppBlocks.Preview.appHtml`, registered for `Umbraco.BlockGrid` (the form interface's single-block preview is `AppBlocks.Preview.appFormInterface.Single`, and the report preview is `AppBlocks.Reports.Preview.appReport`). AppBlocks leaves their `weight` unset, which is 0. A block editor shows the one custom view with the highest weight for a block, so a site replaces a preview by registering its own view for the same `forContentTypeAlias` and `forBlockEditor` with a higher weight:
+Each preview is a `blockEditorCustomView` extension with the alias `AppBlocks.Preview.<content type alias>`, for example `AppBlocks.Preview.appHtml`, registered for `block-grid` (the form interface's single-block preview is `AppBlocks.Preview.appFormInterface.Single`, and the report preview is `AppBlocks.Reports.Preview.appReport`). AppBlocks leaves their `weight` unset, which is 0. A block editor shows the one custom view with the highest weight for a block, so a site replaces a preview by registering its own view for the same `forContentTypeAlias` and `forBlockEditor` with a higher weight:
 
 ```json
 {
@@ -47,7 +47,7 @@ Each preview is a `blockEditorCustomView` extension with the alias `AppBlocks.Pr
   "name": "HTML preview",
   "element": "/App_Plugins/MySite/html-preview.js",
   "forContentTypeAlias": "appHtml",
-  "forBlockEditor": "Umbraco.BlockGrid",
+  "forBlockEditor": "block-grid",
   "weight": 100
 }
 ```
@@ -88,11 +88,11 @@ customElements.define("my-package-block-preview", QuotePreview);
   "name": "Quote preview",
   "element": "/App_Plugins/MyPackage/block-preview.js",
   "forContentTypeAlias": "myQuote",
-  "forBlockEditor": "Umbraco.BlockGrid"
+  "forBlockEditor": "block-grid"
 }
 ```
 
-The header follows the manifest's `forBlockEditor`: `Umbraco.BlockList` and `Umbraco.SingleBlock` get those editors' headers and no areas, and anything else gets the grid's. A package whose blocks can sit inside a Forms container also registers how to draw them there, from an `appEntryPoint`, by content type key: `nestedBlockPreviews.set("<key>", (content, settings) => markup)`, with `nestedBlockPreviews` imported from the same module.
+The header follows the manifest's `forBlockEditor`: `block-list` and `block-single` get those editors' headers and no areas, and anything else gets the grid's. These identifiers are Umbraco's `UMB_BLOCK_GRID`, `UMB_BLOCK_LIST` and `UMB_BLOCK_SINGLE` values, distinct from the property-editor aliases such as `Umbraco.BlockGrid` used in stored block layouts. A package whose blocks can sit inside a Forms container also registers how to draw them there, from an `appEntryPoint`, by content type key: `nestedBlockPreviews.set("<key>", (content, settings) => markup)`, with `nestedBlockPreviews` imported from the same module.
 
 ## Access and caching
 

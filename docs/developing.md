@@ -41,7 +41,7 @@ dotnet run --project tests/AppBlocks.InteractiveReports.Tests -- -noLogo
 
 The seed and HTTP test are intended only for this disposable local demo. The local settings file is excluded from publishing. The test uses the unattended demo account from that file.
 
-The demo also references `Umbraco.Cms.DevelopmentMode.Backoffice`, so **Settings → C#** edits and compiles its `AppBlocks/Code` folder, which git ignores; remove the package to see the [C# section](csharp-editor.md) read-only. The browser tests in `tests/ui` run with `node --test tests/ui/`, using Playwright from the Interactive Reports checkout (`INTERACTIVE_REPORTS_ROOT` when it is not `../Interactive-Reports`).
+The demo also references `Umbraco.Cms.DevelopmentMode.Backoffice`, so **Settings → AppBlocks → Backing Classes** edits and compiles its `AppBlocks/Code` folder, which git ignores; remove the package to see [Backing Classes](csharp-editor.md) read-only. The browser tests in `tests/ui` run with `node --test tests/ui/`, using Playwright from the Interactive Reports checkout (`INTERACTIVE_REPORTS_ROOT` when it is not `../Interactive-Reports`).
 
 The [clean-install acceptance test](../tests/clean-install/README.md) builds actual NuGet packages, installs them into fresh official Umbraco sites without uSync or other CMS plugins, and verifies installation, browser editing, data operations and restart behavior. Each run uses empty databases and its own package cache.
 

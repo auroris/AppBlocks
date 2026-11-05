@@ -12,20 +12,9 @@
       "api": "/App_Plugins/AppBlocks.InteractiveReports/administrator-condition.js"
     },
     {
-      "type": "menu", "alias": "AppBlocks.InteractiveReports.Menu", "name": "Interactive Reports menu"
-    },
-    {
-      "type": "sectionSidebarApp", "kind": "menu", "alias": "AppBlocks.InteractiveReports.Sidebar", "name": "Interactive Reports sidebar",
-      "weight": 130,
-      "meta": { "label": "Interactive Reports", "menu": "AppBlocks.InteractiveReports.Menu" },
-      "conditions": [
-        { "alias": "Umb.Condition.SectionAlias", "match": "Umb.Section.Settings" },
-        { "alias": "AppBlocks.InteractiveReports.Administrator" }
-      ]
-    },
-    {
       "type": "menuItem", "alias": "AppBlocks.InteractiveReports.Administration", "name": "Interactive Reports Administration menu item",
-      "meta": { "label": "Administration", "icon": "icon-table", "entityType": "appblocks-report-administration", "menus": ["AppBlocks.InteractiveReports.Menu"] },
+      "weight": 90,
+      "meta": { "label": "Interactive Reports", "icon": "icon-table", "entityType": "appblocks-report-administration", "menus": ["AppBlocks.Menu"] },
       "conditions": [{ "alias": "AppBlocks.InteractiveReports.Administrator" }]
     },
     {
@@ -80,7 +69,7 @@
       "name": "appReport preview",
       "element": "/App_Plugins/AppBlocks.InteractiveReports/block-preview.js",
       "forContentTypeAlias": "appReport",
-      "forBlockEditor": "Umbraco.BlockGrid"
+      "forBlockEditor": "block-grid"
     }
   ]
 }
