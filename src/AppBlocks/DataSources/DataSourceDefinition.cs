@@ -86,8 +86,7 @@ public sealed record DataSourceDefinition
 
     /// <summary>
     /// The alias of the <see cref="IDataSourceHandler"/>, the backing class, that runs around each operation; null for none. A class that is
-    /// not registered makes the data source unavailable, never unguarded. Left out of the fingerprint while null, so adding the setting
-    /// changed no existing definition's contract.
+    /// not registered makes the data source unavailable, never unguarded.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Handler { get; init; }
@@ -104,8 +103,15 @@ public sealed record DataSourceDefinition
         return names.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    /// <summary>A hash of every setting, so a changed definition gets a new plan and invalidates loaded forms.</summary>
-    public string ComputeFingerprint() => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(this)));
+    /// <summary>
+    /// A hash of every setting the plan and the form contract depend on, so a changed definition gets a new plan and invalidates loaded
+    /// forms. The node's name is left out: renaming a data source changes neither, so open forms stay current. The key and alias stay in,
+    /// because the plan cache and the logs name a definition by them.
+    /// </summary>
+    public string ComputeFingerprint() => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {
+        Key, Alias, Connection, Source, KeyColumns, KeySequences, Mapping, RowRestriction, AllowInsert, AllowUpdate, AllowDelete, AllowAnonymousWrites,
+        Concurrency, InsertDefaults, AuditColumns, Access, ReadGroups, WriteGroups, CustomStatements, Handler,
+    })));
 
     public const int MaxSourceLength = 20_000;
     public const int MaxRestrictionLength = 4_000;

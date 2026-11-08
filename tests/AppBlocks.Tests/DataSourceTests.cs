@@ -359,6 +359,53 @@ public sealed class DataSourceTests : IDisposable
         public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
     }
 
+    [Fact]
+    public async Task Concurrent_lookups_build_a_plan_once_and_rebuild_an_expired_one_once_while_it_serves()
+    {
+        var clock = new MovableTime(Now);
+        var factory = new CountingConnections($"Data Source={file};Pooling=False") { Delay = TimeSpan.FromMilliseconds(500) };
+        var counted = new DataSourceRuntime(factory, services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DataSourceRuntime>>(), clock);
+        var definition = Definition(Tasks());
+        Task<DataSourceRuntime.PlanEntry[]> Many() => Task.WhenAll(Enumerable.Range(0, 20).Select(_ => Task.Run(() => counted.Plan(definition))));
+        // Twenty requests for a definition with no plan yet wait for one build and share it.
+        var first = await Many();
+        Assert.Equal(1, factory.Created);
+        Assert.NotNull(first[0].Plan);
+        Assert.All(first, entry => Assert.Same(first[0], entry));
+        // Past its minute the plan keeps serving, at once, while one rebuild reads the schema in the background.
+        clock.Now += TimeSpan.FromMinutes(2);
+        Assert.All(await Many(), entry => Assert.Same(first[0], entry));
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (ReferenceEquals(counted.Plan(definition), first[0]) && waited.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(20);
+        var rebuilt = counted.Plan(definition);
+        Assert.NotSame(first[0], rebuilt);
+        Assert.True(rebuilt.Expires > clock.GetUtcNow());
+        Assert.Equal(2, factory.Created);
+    }
+
+    private sealed class MovableTime(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = now;
+        public override DateTimeOffset GetUtcNow() => Now;
+        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
+    }
+
+    /// <summary>SQLite connections that count how many a caller made, each after a delay, so concurrent callers overlap.</summary>
+    private sealed class CountingConnections(string connectionString) : AppBlocks.Connections.IApplicationConnectionFactory
+    {
+        private int created;
+        public int Created => Volatile.Read(ref created);
+        public TimeSpan Delay { get; init; }
+        public System.Data.Common.DbConnection CreateConnection(string name)
+        {
+            Interlocked.Increment(ref created);
+            Thread.Sleep(Delay);
+            return new SqliteConnection(connectionString);
+        }
+        public AppBlocks.Connections.DatabaseDialect Dialect(string name) => AppBlocks.Connections.DatabaseDialect.Sqlite;
+        public void SetDetectedDialect(string name, AppBlocks.Connections.DatabaseDialect dialect) { }
+    }
+
     [Theory]
     [InlineData("members", true, false, false)]
     [InlineData("users", false, true, true)]
@@ -380,22 +427,66 @@ public sealed class DataSourceTests : IDisposable
     }
 
     [Fact]
-    public async Task Application_values_are_resolved_once_per_operation_and_once_per_batch_of_rows()
+    public async Task Application_values_are_resolved_once_per_request_for_every_operation_and_row()
     {
         var provider = new CountingProvider("editor");
-        var source = new SqlDataSource(Definition(Tasks(("insertDefaults", "OWNER_SID = :APP.owner"))), runtime, new TestUsers(), [], new BindVariableProviders([provider]));
+        var providers = new BindVariableProviders([provider]);
+        var source = new SqlDataSource(Definition(Tasks(("insertDefaults", "OWNER_SID = :APP.owner"))), runtime, new TestUsers(), [], providers);
         var context = Context(Editor) with { SubmissionKey = Guid.NewGuid().ToString() };
         var created = await source.CreateAsync(Json(new { title = "From a provider", projectId = "1" }), context, default);
         Assert.Equal(200, created.Status);
         Assert.Equal(1, provider.Calls);
         Assert.Equal("editor", Scalar($"SELECT OWNER_SID FROM TASKS WHERE TASK_ID = {created.Record!.Key}"));
-        // Three rows in one save ask once, so a time- or database-dependent answer cannot differ between the rows.
+        // Three rows in one save, in the same request, take the same answer, so a time- or database-dependent one cannot differ between them.
         var batch = await source.SaveRowsAsync(new DataSourceScope("projectId", "1"), [
             new(RowOperation.Create, null, null, Json(new { title = "First of three" })), new(RowOperation.Create, null, null, Json(new { title = "Second" })),
             new(RowOperation.Update, created.Record.Key, created.Record.Checksum, Json(new { title = "Third, changed" }))],
             context with { SubmissionKey = Guid.NewGuid().ToString() }, 100, default);
         Assert.Equal(200, batch.Status);
+        Assert.Equal(1, provider.Calls);
+        // Other parameters, another form or another request ask again.
+        await providers.ResolveAsync(context with { Parameters = new Dictionary<string, string> { ["tag"] = "Crew" } }, default);
         Assert.Equal(2, provider.Calls);
+        await providers.ResolveAsync(context with { FormKey = Guid.NewGuid() }, default);
+        Assert.Equal(3, provider.Calls);
+        await new BindVariableProviders([provider]).ResolveAsync(context, default);
+        Assert.Equal(4, provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_form_update_reads_the_signed_in_account_once()
+    {
+        // The request's resolver over Umbraco's member store, counting how often the store is read.
+        var reads = 0;
+        var member = new Umbraco.Cms.Core.Security.MemberIdentityUser { Key = Guid.NewGuid(), IsApproved = true, UserName = Owner.Name, Email = Owner.Email };
+        Task<Umbraco.Cms.Core.Security.MemberIdentityUser?> Read() { reads++; return Task.FromResult<Umbraco.Cms.Core.Security.MemberIdentityUser?>(member); }
+        var members = ServiceStub.Of<Umbraco.Cms.Core.Security.IMemberManager>((method, _) => method.Name switch {
+            "FindByIdAsync" => Read(), "GetRolesAsync" => Task.FromResult<IList<string>>(["Planners"]), _ => throw new NotImplementedException(method.Name),
+        });
+        var logins = ServiceStub.Of<Umbraco.Cms.Core.Services.IExternalLoginWithKeyService>((method, _) => Array.CreateInstance(method.ReturnType.GenericTypeArguments[0], 0));
+        var nobody = ServiceStub.Of<Umbraco.Cms.Core.Services.IUserService>((method, _) => throw new NotImplementedException(method.Name));
+        var users = new UmbracoDataSourceUsers(members, new AppBlocks.Authentication.ApplicationAccessPolicy(nobody), logins);
+        var policy = new Policy(_ => true);
+        var source = new SqlDataSource(Definition(Tasks()), runtime, users, [policy]);
+        var context = Context(Owner);
+        // The form endpoint loads the record before it saves the change; the policy is asked on both, and each one sees the account.
+        var loaded = await source.LoadAsync("1", context, default);
+        var updated = await source.UpdateAsync("1", Json(new { title = "Paint the hangar again" }), loaded.Record!.Checksum, context, default);
+        Assert.Equal(200, updated.Status);
+        Assert.All(policy.Requests, request => Assert.True(request.User.IsInMemberGroup("Planners")));
+        Assert.Equal(1, reads);
+    }
+
+    public class ServiceStub : System.Reflection.DispatchProxy
+    {
+        private Func<System.Reflection.MethodInfo, object?[]?, object?> call = null!;
+        public static T Of<T>(Func<System.Reflection.MethodInfo, object?[]?, object?> call) where T : class
+        {
+            var proxy = Create<T, ServiceStub>();
+            ((ServiceStub)(object)proxy).call = call;
+            return proxy;
+        }
+        protected override object? Invoke(System.Reflection.MethodInfo? method, object?[]? args) => call(method!, args);
     }
 
     private sealed class CountingProvider(string owner) : IBindVariableProvider
@@ -546,20 +637,43 @@ public sealed class DataSourceTests : IDisposable
             source.Fields.Select(f => f.Key));
         Assert.True(fields["taskId"] is { ReadOnly: true, HasServerDefault: true, Kind: "number" });
         Assert.True(fields["title"] is { Required: true, ReadOnly: false, MaxLength: 100, Kind: "text", Label: "Title" });
-        Assert.True(fields["ownerSid"] is { Required: true, HasServerDefault: true });
-        Assert.True(fields["priority"] is { Kind: "number", Required: true, HasServerDefault: true });
+        // A NOT NULL column that an insert default or the database fills is optional on the form.
+        Assert.True(fields["ownerSid"] is { Required: false, HasServerDefault: true });
+        Assert.True(fields["priority"] is { Kind: "number", Required: false, HasServerDefault: true });
         Assert.True(fields["dueDate"] is { Kind: "date", Required: false, Label: "Due date" });
         Assert.True(fields["done"] is { Kind: "checkbox", HasServerDefault: true });
         Assert.True(fields["tag"] is { Kind: "text", MaxLength: FieldKinds.DefaultTextLength });
-        Assert.True(fields["version"] is { ReadOnly: false, Required: true, HasServerDefault: true });
+        Assert.True(fields["version"] is { ReadOnly: false, Required: false, HasServerDefault: true });
+        Assert.True(Working(Tasks(("mapping", """{ "version": { "required": true } }"""))).Fields.Single(f => f.Key == "version").Required);
         Assert.True(fields["createdBy"] is { ReadOnly: true } && fields["updatedAt"] is { ReadOnly: true, Kind: "datetime" });
         Assert.StartsWith("ds-", source.ContractVersion);
         Assert.Equal(source.ContractVersion, new SqlDataSource(source.Definition, runtime, new TestUsers(), []).ContractVersion);
         Assert.NotEqual(source.ContractVersion, new SqlDataSource(source.Definition with { AllowDelete = false }, runtime, new TestUsers(), []).ContractVersion);
+        // Renaming the node is no change to the contract, so the forms already open on it stay current.
+        Assert.Equal(source.Definition.ComputeFingerprint(), (source.Definition with { Name = "Renamed tasks" }).ComputeFingerprint());
+        Assert.Equal(source.ContractVersion, new SqlDataSource(source.Definition with { Name = "Renamed tasks" }, runtime, new TestUsers(), []).ContractVersion);
+        Assert.NotEqual(source.Definition.ComputeFingerprint(), (source.Definition with { Alias = "renamed" }).ComputeFingerprint());
 
         // Neither inserts nor updates: every field is read only, so no page has to make one editable.
         Assert.All(Working(Tasks(("allowInsert", "0"), ("allowUpdate", "0"), ("allowDelete", "0"))).Fields, f => Assert.True(f.ReadOnly));
         Assert.Equal("client", Working(Tasks(("mapping", """{ "client": "TITLE" }"""))).Fields[1].Key);
+    }
+
+    [Fact]
+    public async Task A_blank_for_a_defaulted_NOT_NULL_column_takes_the_default_on_insert_and_is_refused_on_update()
+    {
+        var source = Working(Tasks(("insertDefaults", "OWNER_SID = :USER_SID")));
+        // PRIORITY and VERSION are NOT NULL with database defaults, OWNER_SID has an insert default: a blank leaves each to its default.
+        var created = await source.CreateAsync(Json(new { title = "Blank defaults", priority = (string?)null, version = "", ownerSid = " " }), Context(Owner), default);
+        Assert.Equal(200, created.Status);
+        Assert.Equal(("3", "1", "S-1-5-21-1"), (created.Record!.Values["priority"], created.Record.Values["version"], created.Record.Values["ownerSid"]));
+        // TITLE has no default, so the form must supply it.
+        Assert.Equal(["A value is required."], (await source.CreateAsync(Json(new { title = "" }), Context(Owner), default)).Errors!["title"]);
+        // An update has no default to fall back on, so a blank for a NOT NULL column is refused by name rather than by the database.
+        var updated = await source.UpdateAsync(created.Record.Key!, Json(new { priority = (string?)null }), created.Record.Checksum, Context(Owner), default);
+        Assert.Equal(422, updated.Status);
+        Assert.Equal(["A value is required."], updated.Errors!["priority"]);
+        Assert.Equal(200, (await source.UpdateAsync(created.Record.Key!, Json(new { tag = (string?)null }), created.Record.Checksum, Context(Owner), default)).Status);
     }
 
     [Fact]
@@ -1041,6 +1155,10 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal("2026-10-24", defaults.Record!.Values["dueDate"]);
         Assert.Equal("2026-10-24T05:30:00Z", defaults.Record.Values["tag"]);
         Assert.Contains(":NOW_UTC", Source(Tasks(("rowRestriction", ":NOW_UTCX IS NULL"))).Problem);
+        // A date-time field holds the server's local time, so a UTC default for one is refused; a text field keeps the UTC stamp.
+        var dateTime = Source(Tasks(("mapping", """{ "dueDate": { "kind": "datetime" } }"""), ("insertDefaults", "OWNER_SID = :USER_SID\nDUE_DATE = :NOW_UTC")));
+        Assert.Contains("cannot use :NOW_UTC: a date-time field holds the web server's local time. Use :NOW", dateTime.Problem);
+        Assert.True(Source(Tasks(("mapping", """{ "dueDate": { "kind": "datetime" } }"""), ("insertDefaults", "OWNER_SID = :USER_SID\nDUE_DATE = :NOW"))).Problem is null);
     }
 
     private sealed class ZonedTime(DateTimeOffset now, TimeZoneInfo zone) : TimeProvider

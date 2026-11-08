@@ -76,6 +76,23 @@ public sealed class AppBindVariableTests
         Assert.Equal("sales", nowhere.Resolve(":PARAM.topic", "text"));
     }
 
+    [Fact]
+    public void Field_defaults_read_the_clock_and_the_person_with_the_names_the_data_sources_use()
+    {
+        var query = new QueryCollection(new Dictionary<string, StringValues> { ["topic"] = "sales" });
+        var variables = new AppBindVariables("1001", "S-1-5-21-1", "pilot", null, new DateTimeOffset(2026, 10, 23, 23, 30, 0, TimeSpan.FromHours(-6)), query);
+        Assert.Equal(("1001", "S-1-5-21-1", "pilot", null), (variables.Resolve(":USER_KEY", "text"), variables.Resolve(":user_sid", "text"), variables.Resolve(" :USER_NAME ", "text"), variables.Resolve(":USER_EMAIL", "text")));
+        Assert.Equal("2026-10-23T23:30:00-06:00", variables.Resolve(":NOW", "datetime"));
+        Assert.Equal("2026-10-24", variables.Resolve(":NOW_UTC", "date"));
+        Assert.Equal("2026-10-24T05:30:00Z", variables.Resolve(":NOW_UTC", "text"));
+        // A date-time field holds the server's local time; publishing refuses :NOW_UTC for one, and nothing comes of it here.
+        Assert.Null(variables.Resolve(":NOW_UTC", "datetime"));
+        Assert.Null(variables.Resolve(":NOW", "number"));
+        // What is not a variable a default can name stays the text it is.
+        foreach (var text in new[] { ":USER_GROUPS", ":FIELD.topic", ":ARG.topic", ":NOT_A_VARIABLE", ":PARAM.", "plain text" })
+            Assert.Equal(text, variables.Resolve(text, "text"));
+    }
+
     private sealed class Provider(IReadOnlyDictionary<string, object?>? values) : IBindVariableProvider
     {
         public int Calls { get; private set; }

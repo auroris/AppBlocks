@@ -16,11 +16,20 @@ namespace AppBlocks.Authentication;
 /// on a mapped endpoint. The policy reads Umbraco's Member cookie and admits a Member whose account is approved and not locked out, read
 /// afresh on every request. On an API-style request it answers 401 to a caller with no Member session and 403 to a Member it refuses,
 /// where Umbraco's Member cookie would redirect to the login page; other requests keep that redirect.
+/// <see cref="AdministratorPolicy"/> does the same for a backoffice management controller that only administrators may use.
 /// </summary>
 public static class AppBlocksAuthorization
 {
     /// <summary>The policy name: a signed-in, approved, unlocked Umbraco Member.</summary>
     public const string MemberPolicy = "AppBlocks.Member";
+
+    /// <summary>
+    /// The policy name for a backoffice management controller or action that only administrators may use: an approved, unlocked
+    /// backoffice User in Umbraco's Administrators group, read afresh through <see cref="ApplicationAccessPolicy.ActiveUserAsync"/> on
+    /// every request, so a User removed from the group or locked out is refused at once. It adds to the backoffice access that every
+    /// management controller already requires, and answers 403 to anyone else.
+    /// </summary>
+    public const string AdministratorPolicy = "AppBlocks.Administrator";
 
     /// <summary>The authentication scheme the policy uses: Umbraco's Member cookie, with 401 and 403 for API-style requests.</summary>
     public const string MemberScheme = "AppBlocks.Member";
@@ -43,9 +52,14 @@ public static class AppBlocksAuthorization
     internal static void Add(IServiceCollection services)
     {
         services.AddAuthentication().AddScheme<AuthenticationSchemeOptions, MemberAuthenticationHandler>(MemberScheme, null);
-        services.AddAuthorization(options => options.AddPolicy(MemberPolicy, policy => policy
-            .AddAuthenticationSchemes(MemberScheme).RequireAuthenticatedUser().AddRequirements(new SignedInMemberRequirement())));
+        services.AddAuthorization(options => {
+            options.AddPolicy(MemberPolicy, policy => policy
+                .AddAuthenticationSchemes(MemberScheme).RequireAuthenticatedUser().AddRequirements(new SignedInMemberRequirement()));
+            // No scheme of its own: the management API's backoffice scheme, which its controllers require, authenticates the User.
+            options.AddPolicy(AdministratorPolicy, policy => policy.RequireAuthenticatedUser().AddRequirements(new BackOfficeAdministratorRequirement()));
+        });
         services.AddSingleton<IAuthorizationHandler, SignedInMemberHandler>();
+        services.AddSingleton<IAuthorizationHandler, BackOfficeAdministratorHandler>();
     }
 
     /// <summary>
@@ -72,6 +86,20 @@ internal sealed class SignedInMemberHandler(IHttpContextAccessor accessor) : Aut
         var http = context.Resource as HttpContext ?? accessor.HttpContext;
         if (http?.RequestServices.GetService<IDataSourceUserResolver>() is not { } users) return;
         if (await users.ResolveAsync(new ClaimsPrincipal(identity), http.RequestAborted) is { IsMember: true }) context.Succeed(requirement);
+    }
+}
+
+/// <summary>An approved, unlocked backoffice User in Umbraco's Administrators group.</summary>
+public sealed class BackOfficeAdministratorRequirement : IAuthorizationRequirement;
+
+/// <summary>Reads the User afresh through <see cref="ApplicationAccessPolicy.IsBackOfficeAdministratorAsync"/>, so the group and the account's standing count now, not when the token was issued.</summary>
+internal sealed class BackOfficeAdministratorHandler(IHttpContextAccessor accessor) : AuthorizationHandler<BackOfficeAdministratorRequirement>
+{
+    protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context, BackOfficeAdministratorRequirement requirement)
+    {
+        var http = context.Resource as HttpContext ?? accessor.HttpContext;
+        if (http?.RequestServices.GetService<ApplicationAccessPolicy>() is not { } access) return;
+        if (await access.IsBackOfficeAdministratorAsync(context.User)) context.Succeed(requirement);
     }
 }
 

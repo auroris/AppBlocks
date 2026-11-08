@@ -55,7 +55,7 @@ public sealed class InteractiveReportBlock(ReportDefinitionCompiler compiler,
     private void PaperReport(string picked, List<string> errors)
     {
         if (contents is null || PaperReportLinks.PickedKey(picked) is not { } key || contents.GetById(key) is not { } node) return;
-        if (node.ContentType.Alias != "paperReport") errors.Add($"Select a Paper report node for Paper report; {node.Name} is not one.");
+        if (node.ContentType.Alias != PaperReportLinks.ContentTypeAlias) errors.Add($"Select a Paper report node for Paper report; {node.Name} is not one.");
     }
 
 

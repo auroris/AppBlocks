@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Umbraco.Cms.Api.Management.Controllers;
 using Umbraco.Cms.Api.Management.Routing;
-using Umbraco.Cms.Core.Security;
+using AppBlocks.Authentication;
 using Umbraco.Cms.Web.Common.Authorization;
 
 namespace AppBlocks.Management;
@@ -13,14 +13,12 @@ namespace AppBlocks.Management;
 [ApiVersion("1.0")]
 [VersionedApiBackOfficeRoute("appblocks")]
 [ApiExplorerSettings(GroupName = "AppBlocks")]
-public sealed class DefinitionsController(SchemaInstaller installer, IBackOfficeSecurityAccessor security) : ManagementApiControllerBase
+[Authorize(Policy = AppBlocksAuthorization.AdministratorPolicy)]
+public sealed class DefinitionsController(SchemaInstaller installer) : ManagementApiControllerBase
 {
-    private bool Admin => security.BackOfficeSecurity?.CurrentUser?.IsAdmin() == true;
-
     [HttpGet("definitions")]
     public async Task<IActionResult> Status(CancellationToken ct)
     {
-        if (!Admin) return Forbid();
         Response.Headers.CacheControl = "no-store";
         return Ok(await installer.StatusAsync(ct));
     }
@@ -29,7 +27,6 @@ public sealed class DefinitionsController(SchemaInstaller installer, IBackOffice
     [Authorize(Policy = AuthorizationPolicies.SectionAccessSettings)]
     public async Task<IActionResult> Reinstall(CancellationToken ct)
     {
-        if (!Admin) return Forbid();
         Response.Headers.CacheControl = "no-store";
         try { return Ok(await installer.ReinstallAsync(ct)); }
         catch (InvalidOperationException error) { return Problem(error.Message, statusCode: 422); }
@@ -39,7 +36,6 @@ public sealed class DefinitionsController(SchemaInstaller installer, IBackOffice
     [Authorize(Policy = AuthorizationPolicies.SectionAccessSettings)]
     public async Task<IActionResult> Uninstall(CancellationToken ct)
     {
-        if (!Admin) return Forbid();
         Response.Headers.CacheControl = "no-store";
         try { return Ok(await installer.UninstallAsync(ct)); }
         catch (InvalidOperationException error) { return Problem(error.Message, statusCode: 422); }

@@ -171,6 +171,14 @@ public sealed class AntiSpamSiteTests
         object Body(params (string Name, string Value)[] controls) => new {
             values = new { name = "Pat" }, definitionVersion = form.GetProperty("definitionVersion").GetString(), checksum = "1", formData = controls.ToDictionary(c => c.Name, c => c.Value),
         };
+        // A form loaded under another definition is refused before anything else, and the answer's status agrees with the response's.
+        using (var stale = await Json(visitor, HttpMethod.Put, Standin + "/1", form, new { values = new { name = "Pat" }, definitionVersion = "stale", checksum = "1" }))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+            var body = await stale.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(409, body.GetProperty("status").GetInt32());
+            Assert.Equal("This form has changed. Reload the page before saving.", body.GetProperty("errors").GetProperty("").EnumerateArray().Single().GetString());
+        }
         using (var missing = await Json(visitor, HttpMethod.Put, Standin + "/1", form, Body()))
         {
             Assert.Equal(HttpStatusCode.UnprocessableEntity, missing.StatusCode);

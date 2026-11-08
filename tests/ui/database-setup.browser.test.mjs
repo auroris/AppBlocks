@@ -17,18 +17,18 @@ before(async () => { browser = await chromium.launch({ headless: true, ...(exist
 after(async () => browser?.close());
 
 const uploads = {
-    alias: 'uploads', title: 'File uploads', connection: 'AppBlocks database (AppBlocksDb)', provider: 'sqlServer', state: 'action',
+    alias: 'uploads', title: 'File uploads', connection: 'AppBlocks database (AppBlocksDb)', provider: 'sqlServer', databaseType: 'SQL Server', state: 'action',
     summary: 'The tables are missing and this account is not allowed to create them.', lost: 'Without them, Attachments blocks show a notice.',
     tables: [{ name: 'APP_ATTACHMENT', state: 'missing', required: true }, { name: 'APP_ATTACHMENT_LINK', state: 'missing', required: true }],
     grantText: 'Run this in the database as its owner.', grantSql: 'GRANT CREATE TABLE TO [site];\n', hasScript: true,
 };
 const saved = {
-    alias: 'saved-views', title: 'Saved report views', connection: 'AppBlocks database (AppBlocksDb)', provider: 'sqlServer', state: 'ready',
+    alias: 'saved-views', title: 'Saved report views', connection: 'AppBlocks database (AppBlocksDb)', provider: 'sqlServer', databaseType: 'SQL Server', state: 'ready',
     summary: 'The tables are in place and this account can use them.', lost: 'Without them, people cannot save views.',
     tables: [{ name: 'IR_SAVED_REPORTS', state: 'ready', required: true }, { name: 'IR_ADMINISTRATORS', state: 'missing', required: false }],
     grantText: 'Run this in the database as its owner.', grantSql: 'GRANT CREATE TABLE TO [site];\n', hasScript: true,
 };
-const unsupported = { ...uploads, provider: 'postgres', state: 'unsupported', summary: 'File uploads run on SQLite and SQL Server only. Set Attachments:Connection.', grantText: null, grantSql: null, hasScript: false };
+const unsupported = { ...uploads, provider: 'postgres', databaseType: 'PostgreSQL', state: 'unsupported', summary: 'File uploads run on SQLite and SQL Server only. Set Attachments:Connection.', grantText: null, grantSql: null, hasScript: false };
 
 async function mountDashboard({ features = [uploads, saved], search = '', forbidden = false } = {}) {
     const page = await browser.newPage();

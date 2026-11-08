@@ -9,9 +9,16 @@ namespace AppBlocks.DataSources;
 /// <summary>A column of the row source as a form field: its alias and presentation, its rules, and the table column it writes.</summary>
 /// <param name="Column">The row source's name for it, which reads use.</param>
 /// <param name="Target">The column of the written table, whose catalog name writes use; null for a column nothing writes.</param>
+/// <param name="Required">Whether the form must supply a value: a writable NOT NULL column that neither the database nor an insert default fills, unless the mapping says otherwise.</param>
 internal sealed record PlanColumn(string Field, string Column, string Label, string Kind, bool ReadOnly, bool Required, bool HasServerDefault,
     int? MaxLength, decimal? Minimum, decimal? Maximum, IReadOnlyList<FormChoice>? Choices, TableColumn? Target)
 {
+    /// <summary>
+    /// Whether the column must always hold a value: a writable NOT NULL column, unless the mapping says otherwise. An insert leaves a blank
+    /// one to its insert default or the database's default, and an update refuses a blank for one.
+    /// </summary>
+    public bool NeedsValue { get; init; } = Required;
+
     public FormField ToField() => new(Field, Label, Kind, Required, ReadOnly, MaxLength, Minimum, Maximum, Choices, HasServerDefault);
 }
 
@@ -199,15 +206,17 @@ internal static class DataSourcePlanner
             var renamed = query is not null && column.BaseColumn is not null && !column.BaseColumn.Equals(column.Name, StringComparison.OrdinalIgnoreCase)
                 && mapping?.ReadOnly != false;
             var readOnly = !anyWrites || generated || repeated || renamed || isAudit || mapping?.ReadOnly == true;
-            var required = !readOnly && (mapping?.Required ?? targetColumn is { Nullable: false });
             var serverDefault = targetColumn is { HasDefault: true } or { AutoValue: true } or { Computed: true } || isAudit || defaulted.Contains(column);
+            // A NOT NULL column must always hold a value; the form must supply it only when neither the database nor an insert default can.
+            var needsValue = !readOnly && (mapping?.Required ?? targetColumn is { Nullable: false });
+            var required = !readOnly && (mapping?.Required ?? (targetColumn is { Nullable: false } && !serverDefault));
             var range = targetColumn is not null && kind == FieldKinds.Number ? dialect.Range(targetColumn) : (null, null);
             int? maxLength = kind != FieldKinds.Text ? null
                 : Math.Min(mapping?.MaxLength ?? (targetColumn is not null ? targetColumn.Length : column.Size) ?? FieldKinds.DefaultTextLength, FieldKinds.MaxTextLength);
             var minimum = kind == FieldKinds.Number ? mapping?.Minimum ?? range.Min : null;
             var maximum = kind == FieldKinds.Number ? mapping?.Maximum ?? range.Max : null;
             columns.Add(new PlanColumn(alias, column.Name, mapping?.Label ?? Label(column.Name), kind, readOnly, required, serverDefault,
-                maxLength, minimum, maximum, mapping?.Choices, targetColumn));
+                maxLength, minimum, maximum, mapping?.Choices, targetColumn) { NeedsValue = needsValue });
         }
         foreach (var duplicate in columns.GroupBy(c => c.Field, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1))
             errors.Add($"Columns {string.Join(" and ", duplicate.Select(c => c.Column))} both become field {duplicate.Key}; rename one in the mapping.");
@@ -247,6 +256,9 @@ internal static class DataSourcePlanner
             { errors.Add($"The insert default for {value.Column} cannot be written: the database or the engine fills that column."); continue; }
             if (value.Variable is { Kind: BindVariableKind.Field, Name: { } other } && !columns.Any(c => c.Field.Equals(other, StringComparison.OrdinalIgnoreCase)))
             { errors.Add($"The insert default for {value.Column} uses :FIELD.{other}, which is not a field."); continue; }
+            // A date-time field holds the web server's local time, as :NOW and the audit columns write it; a UTC stamp needs a text column.
+            if (value.Variable is { Kind: BindVariableKind.NowUtc } && field.Kind == FieldKinds.DateTime)
+            { errors.Add($"The insert default for {value.Column} cannot use :NOW_UTC: a date-time field holds the web server's local time. Use :NOW, or map the column as a text field to store a UTC stamp."); continue; }
             object? literal = null;
             if (value.Literal is not null)
             {
@@ -339,7 +351,7 @@ internal static class DataSourcePlanner
     {
         var text = new StringBuilder(definition.ComputeFingerprint()).Append('|').Append(target?.Name);
         foreach (var c in columns)
-            text.Append('|').AppendJoin(',', c.Field, c.Column, c.Kind, c.ReadOnly, c.Required, c.HasServerDefault, c.MaxLength, c.Minimum, c.Maximum, c.Target?.StoreType)
+            text.Append('|').AppendJoin(',', c.Field, c.Column, c.Kind, c.ReadOnly, c.Required, c.NeedsValue, c.HasServerDefault, c.MaxLength, c.Minimum, c.Maximum, c.Target?.StoreType)
                 .AppendJoin(',', c.Choices?.Select(x => x.Value) ?? []);
         text.Append('|').AppendJoin(',', keys.Select(k => k.Field));
         return "ds-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())))[..16];

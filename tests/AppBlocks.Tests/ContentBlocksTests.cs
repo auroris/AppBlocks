@@ -38,8 +38,7 @@ public sealed class ContentBlocksTests
     // The same moment in UTC: 14:05 at -06:00 is 20:05Z.
     [InlineData(":NOW_UTC", "date", "2026-10-23")]
     [InlineData(":NOW_UTC", "time", "20:05")]
-    [InlineData(":now_utc", "datetime", "2026-10-23T20:05:09Z")]
-    [InlineData(":NOW_UTC", "text", "2026-10-23T20:05:09Z")]
+    [InlineData(":now_utc", "text", "2026-10-23T20:05:09Z")]
     [InlineData("NEW", "text", "NEW")]
     [InlineData("true", "checkbox", "true")]
     [InlineData("12.50", "number", "12.50")]
@@ -59,6 +58,8 @@ public sealed class ContentBlocksTests
     [InlineData(":NOW", "number")]
     [InlineData(":NOW", "checkbox")]
     [InlineData(":NOW_UTC", "number")]
+    // A date-time field holds the server's local time, so publishing refuses :NOW_UTC for one.
+    [InlineData(":NOW_UTC", "datetime")]
     public void A_default_without_a_value_leaves_the_field_to_the_resource(string? value, string kind)
         => Assert.Null(Variables().Resolve(value, kind));
 
@@ -67,7 +68,7 @@ public sealed class ContentBlocksTests
     {
         var evening = Variables() with { Now = new DateTimeOffset(2026, 11, 1, 19, 30, 0, TimeSpan.FromHours(-6)) };
         Assert.Equal("2026-11-02", evening.Resolve(":NOW_UTC", "date"));
-        Assert.Equal("2026-11-02T01:30:00Z", evening.Resolve(":NOW_UTC", "datetime"));
+        Assert.Equal("2026-11-02T01:30:00Z", evening.Resolve(":NOW_UTC", "text"));
     }
 
     [Fact]

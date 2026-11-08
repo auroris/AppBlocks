@@ -127,13 +127,17 @@ public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMembe
 }
 
 /// <summary>
-/// Gives data source and API endpoint nodes a URL segment of their own key, so a node named like a page ("Orders") can never
-/// take that page's URL. The nodes have no template, so their own URLs show nothing.
+/// Gives data source, list of values and API endpoint nodes, and the companions' definition nodes they register with
+/// <see cref="Connections.AppBlocksBuilder.AddKeySegmentContentType"/>, a URL segment of their own key, so a node named like a page
+/// ("Orders") can never take that page's URL. The nodes have no template, so their own URLs show nothing.
 /// </summary>
-public sealed class DataSourceUrlSegmentProvider : IUrlSegmentProvider
+public sealed class DataSourceUrlSegmentProvider(Connections.AppBlocksBuilder? builder = null) : IUrlSegmentProvider
 {
+    private static readonly string[] Aliases = [DataSourceSchema.RootAlias, DataSourceSchema.SqlAlias, PublishedDataCatalog.ListAlias, Api.ApiEndpointCatalog.RootAlias, Api.ApiEndpointCatalog.Alias];
+
     public string? GetUrlSegment(IContentBase content, string? culture = null)
-        => content.ContentType.Alias is DataSourceSchema.RootAlias or DataSourceSchema.SqlAlias or "reportDefinition" or PublishedDataCatalog.ListAlias or Api.ApiEndpointCatalog.RootAlias or Api.ApiEndpointCatalog.Alias ? "data-source-" + content.Key.ToString("N") : null;
+        => Aliases.Contains(content.ContentType.Alias) || builder?.KeySegmentContentTypes.Contains(content.ContentType.Alias) == true
+            ? "data-source-" + content.Key.ToString("N") : null;
 }
 
 public static class DataSourceExtensions
@@ -150,6 +154,7 @@ public static class DataSourceExtensions
         builder.Services.TryAddScoped<IDataSourceUserResolver, UmbracoDataSourceUsers>();
         builder.Services.TryAddScoped<BindVariableProviders>();
         builder.Services.TryAddScoped<DataSourceHandlers>();
+        builder.Services.AddHostedService<DataSourceHandlerValidation>();
         builder.Services.AddScoped<DataSourceCatalog>();
         builder.Services.AddScoped<IFormResourceProvider>(services => services.GetRequiredService<DataSourceCatalog>());
         builder.AddNotificationAsyncHandler<ContentPublishingNotification, DataSourcePublishValidator>();

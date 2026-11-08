@@ -5,14 +5,13 @@ import "@umbraco-cms/backoffice/components";
 import { request, download, pathBase } from "./api.js";
 import "./business-rules.js";
 
-const providers = { sqlite: "SQLite", sqlServer: "SQL Server", postgres: "PostgreSQL", oracle11g: "Oracle 11.2", oracle: "Oracle 12+", unknown: "Unknown" };
 const featureStates = { ready: "Ready", automatic: "Created on first use", action: "Needs setup", unsupported: "Not supported here", unreachable: "Cannot connect", siteManaged: "Managed by the site" };
 const tableStates = { ready: "In place", missing: "Not found", noAccess: "No read and write access" };
 const secretStates = { none: "Not set", configuration: "Set in site configuration", saved: "Set here, encrypted", unreadable: "Saved, but cannot be read" };
 
 export default class AppBlocksDashboard extends UmbLitElement {
     static properties = {
-        tab: { state: true }, forms: { state: true }, connections: { state: true }, issues: { state: true },
+        tab: { state: true }, forms: { state: true }, connections: { state: true }, kinds: { state: true }, issues: { state: true },
         error: { state: true }, message: { state: true }, busy: { state: true }, loading: { state: true },
         editing: { state: true }, sample: { state: true }, selectedForm: { state: true }, search: { state: true },
         setup: { state: true }, setupLoading: { state: true }, script: { state: true }, antiSpam: { state: true }, antiSpamEditing: { state: true },
@@ -45,7 +44,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
         .steps { display:grid; gap:20px; max-width:800px; } .steps article { display:grid; grid-template-columns:30px 1fr; gap:15px; } .step { width:28px; height:28px; display:grid; place-items:center; border-radius:50%; background:var(--uui-color-surface-alt); color:var(--uui-color-text); }
     `;
     constructor() {
-        super(); this.tab = "forms"; this.setup = []; this.antiSpam = []; this.forms = []; this.connections = []; this.issues = []; this.search = ""; this.loading = true;
+        super(); this.tab = "forms"; this.setup = []; this.antiSpam = []; this.forms = []; this.connections = []; this.kinds = []; this.issues = []; this.search = ""; this.loading = true;
         this.consumeContext(UMB_AUTH_CONTEXT, auth => { if (auth) { this.auth = auth; this.load(); } });
     }
     set manifest(value) { this.tab = value.meta.pathname; if (this.auth) this.load(); }
@@ -56,7 +55,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
             if (this.tab === "forms") {
                 const result = await request("forms"); this.forms = result.forms; this.issues = result.problems;
             }
-            if (this.tab === "connections") this.connections = await request("connections");
+            if (this.tab === "connections") [this.connections, this.kinds] = await Promise.all([request("connections"), request("database-kinds")]);
             if (this.tab === "setup") await this.loadSetup();
             if (this.tab === "definitions") await this.loadDefinitions();
             if (this.tab === "anti-spam") await this.loadAntiSpam();
@@ -123,7 +122,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
         finally { this.busy = false; }
     }
     edit(connection) {
-        this.editing = { name: connection?.name ?? "", provider: connection?.provider ?? "sqlServer", connectionString: "", existing: !!connection };
+        this.editing = { name: connection?.name ?? "", provider: connection?.provider ?? this.kinds[0]?.provider, connectionString: "", existing: !!connection };
         this.message = undefined; this.error = undefined;
     }
     async saveConnection(test) {
@@ -150,12 +149,12 @@ export default class AppBlocksDashboard extends UmbLitElement {
     renderConnections() {
         if (this.editing) return html`<uui-box class="panel"><h2>${this.editing.existing ? "Edit" : "Add"} database connection</h2><p>Use a memorable name so editors can choose the right database.</p><form class="form" @submit=${event => { event.preventDefault(); this.saveConnection(false); }}>
             <label for="name">Connection name</label><input id="name" name="name" required pattern="[A-Za-z][A-Za-z0-9_-]{0,63}" maxlength="64" .value=${this.editing.name} ?readonly=${this.editing.existing} autocomplete="off">
-            <label for="provider">Database type</label><select id="provider" name="provider" aria-describedby="oracle-compatibility" .value=${this.editing.provider}>${[["sqlServer","SQL Server"],["sqlite","SQLite"],["postgres","PostgreSQL"],["oracle11g","Oracle 11.2"],["oracle","Oracle 12+"]].map(([value,label]) => html`<option value=${value} ?selected=${this.editing.provider === value}>${label}</option>`)}</select>
+            <label for="provider">Database type</label><select id="provider" name="provider" aria-describedby="oracle-compatibility" .value=${this.editing.provider}>${this.kinds.map(kind => html`<option value=${kind.provider} ?selected=${this.editing.provider === kind.provider}>${kind.name}</option>`)}</select>
             <p id="oracle-compatibility" class="hint">Oracle 11.2 and Oracle 12+ select the Oracle SQL compatibility mode used by Interactive Reports and AppBlocks forms.</p>
             <label for="connection">Connection string</label><input id="connection" name="connectionString" type="password" autocomplete="new-password" ?required=${!this.editing.existing} placeholder=${this.editing.existing ? "Leave blank to keep the saved connection string" : "Enter the database connection string"}>
             <p class="hint">Stored encrypted for this installation. Excluded from content exports. <a href="https://www.connectionstrings.com/" target="_blank" rel="noopener noreferrer">Connection string examples ↗</a></p>
             <div class="actions"><button type="submit" class="primary" ?disabled=${this.busy}>Save connection</button><button type="button" ?disabled=${this.busy} @click=${() => this.saveConnection(true)}>Test connection</button><button type="button" ?disabled=${this.busy} @click=${() => this.editing = undefined}>Cancel</button></div></form></uui-box>`;
-        return html`<uui-box class="panel"><div class="toolbar"><div><h2>Database connections</h2><p>Use the AppBlocks database for forms, reports and uploads. It keeps application work separate from Umbraco’s SQLite database.</p></div><button class="primary" @click=${() => this.edit()}>Add connection</button></div><div class="table"><table><thead><tr><th>Connection</th><th>Database type</th><th>Managed by</th><th></th></tr></thead><tbody>${this.connections.map(connection => html`<tr><td><strong>${connection.label}</strong> ${connection.isDefault ? html`<span class="badge">Default</span>` : ""}</td><td>${providers[connection.provider] ?? connection.provider}</td><td>${connection.readOnly ? "Site configuration" : "AppBlocks"}</td><td>${connection.readOnly ? "" : html`<button @click=${() => this.edit(connection)}>Edit connection</button>`}</td></tr>`)}</tbody></table></div></uui-box>`;
+        return html`<uui-box class="panel"><div class="toolbar"><div><h2>Database connections</h2><p>Use the AppBlocks database for forms, reports and uploads. It keeps application work separate from Umbraco’s SQLite database.</p></div><button class="primary" @click=${() => this.edit()}>Add connection</button></div><div class="table"><table><thead><tr><th>Connection</th><th>Database type</th><th>Managed by</th><th></th></tr></thead><tbody>${this.connections.map(connection => html`<tr><td><strong>${connection.label}</strong> ${connection.isDefault ? html`<span class="badge">Default</span>` : ""}</td><td>${connection.databaseType}</td><td>${connection.readOnly ? "Site configuration" : "AppBlocks"}</td><td>${connection.readOnly ? "" : html`<button @click=${() => this.edit(connection)}>Edit connection</button>`}</td></tr>`)}</tbody></table></div></uui-box>`;
     }
     renderSetup() {
         return html`<div class="setup"><p>AppBlocks keeps a few tables of its own. It creates them on first use when the database account may. If it may not, grant the permission or run the script: either works without a restart, and everything else keeps working in the meantime.</p>
@@ -170,7 +169,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
                 ${this.script?.alias === feature.alias ? html`<pre tabindex="0" aria-label="Script"><code>${this.script.text}</code></pre>` : ""}` : ""}
             </details>` : "";
         return html`<uui-box class="panel" data-feature=${feature.alias}><div class="toolbar"><div><h2>${feature.title}</h2><p>${feature.summary}</p></div><span class="badge ${feature.state}">${featureStates[feature.state] ?? feature.state}</span></div>
-            <dl class="setup-facts"><dt>Connection</dt><dd>${feature.connection}</dd><dt>Database type</dt><dd>${providers[feature.provider] ?? feature.provider}</dd></dl>
+            <dl class="setup-facts"><dt>Connection</dt><dd>${feature.connection}</dd><dt>Database type</dt><dd>${feature.databaseType}</dd></dl>
             ${feature.tables.length ? html`<div class="table"><table><thead><tr><th>Table</th><th>State</th></tr></thead><tbody>${feature.tables.map(table => html`<tr><td><strong>${table.name}</strong>${table.required ? "" : html`<small>Used only by the saved report administration page.</small>`}</td><td>${tableStates[table.state] ?? table.state}</td></tr>`)}</tbody></table></div>` : ""}
             <p>${feature.lost}</p>${remedies}</uui-box>`;
     }

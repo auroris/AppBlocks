@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Umbraco.Cms.Api.Management.Controllers;
 using Umbraco.Cms.Api.Management.Routing;
-using Umbraco.Cms.Core.Security;
+using AppBlocks.Authentication;
 using Umbraco.Cms.Web.Common.Authorization;
 
 namespace AppBlocks.Documents.Management;
@@ -12,15 +12,13 @@ namespace AppBlocks.Documents.Management;
 [VersionedApiBackOfficeRoute("appblocks/documents")]
 [ApiExplorerSettings(GroupName = "AppBlocks.Documents")]
 [Authorize(Policy = AuthorizationPolicies.SectionAccessSettings)]
-public sealed class DocumentsSettingsController(DocumentSettingsStore settings, IBackOfficeSecurityAccessor security, DocumentOutputService outputs)
+[Authorize(Policy = AppBlocksAuthorization.AdministratorPolicy)]
+public sealed class DocumentsSettingsController(DocumentSettingsStore settings, DocumentOutputService outputs)
     : ManagementApiControllerBase
 {
-    private bool Admin => security.BackOfficeSecurity?.CurrentUser?.IsAdmin() == true;
-
     [HttpGet("settings")]
     public IActionResult Get()
     {
-        if (!Admin) return Forbid();
         Response.Headers.CacheControl = "no-store";
         return Ok(settings.List());
     }
@@ -28,7 +26,6 @@ public sealed class DocumentsSettingsController(DocumentSettingsStore settings, 
     [HttpPost("configurations")]
     public async Task<IActionResult> Save(SavePressroomConfiguration request, CancellationToken ct)
     {
-        if (!Admin) return Forbid();
         Response.Headers.CacheControl = "no-store";
         try
         {
@@ -48,7 +45,6 @@ public sealed class DocumentsSettingsController(DocumentSettingsStore settings, 
     [HttpDelete("configurations/{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
-        if (!Admin) return Forbid();
         Response.Headers.CacheControl = "no-store";
         try { await settings.DeleteAsync(id, ct); return Ok(settings.List()); }
         catch (KeyNotFoundException error) { return Problem(error.Message, statusCode: 404); }
@@ -57,7 +53,6 @@ public sealed class DocumentsSettingsController(DocumentSettingsStore settings, 
     [HttpPost("printers")]
     public async Task<IActionResult> Printers(DiscoverPressroomPrinters request, CancellationToken ct)
     {
-        if (!Admin) return Forbid();
         Response.Headers.CacheControl = "no-store";
         try { return Ok(await outputs.DiscoverPrintersAsync(request, ct)); }
         catch (ArgumentException error) { return Problem(error.Message, statusCode: 422); }

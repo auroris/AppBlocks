@@ -18,7 +18,10 @@ public sealed class AppBlocksMigrationPlan() : AppBlocksPackagePlan("AppBlocks",
         To<UseSingleBlockFormInterface>("2026-11-02-single-block-form-interface");
         // API endpoint nodes under Data sources.
         To<AddApiEndpoints>("2026-11-03-api-endpoints");
+        // The data source's concurrency choices.
         To<AddDataSourceConcurrency>("2026-11-04-data-source-concurrency");
+        // The same step again, for sites that ran the first under the earlier VersionColumn choice: it replaces that choice with
+        // Checksum. On every other site it leaves the definition as the first run did.
         To<AddDataSourceConcurrency>("2026-11-04-checksum-concurrency");
     }
 }

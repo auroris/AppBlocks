@@ -93,8 +93,6 @@ internal sealed class SavedViewsDatabaseSetup(ISavedReportStore saved, IAdminist
     private static ReportDialect ActualDialect(ReportDialect dialect, DatabaseInspection? inspection)
         => dialect == ReportDialect.Oracle && int.TryParse(inspection?.ServerVersion?.Split('.')[0], out var major) && major < 12 ? ReportDialect.Oracle11g : dialect;
 
-    private static string Provider(ReportDialect dialect) => dialect switch {
-        ReportDialect.Sqlite => "sqlite", ReportDialect.SqlServer => "sqlServer", ReportDialect.Postgres => "postgres",
-        ReportDialect.Oracle => "oracle", ReportDialect.Oracle11g => "oracle11g", _ => ConnectionCatalog.UnknownProvider,
-    };
+    private static string Provider(ReportDialect dialect)
+        => ReportConnectionBridge.TryFromReportDialect(dialect, out var kind) ? kind.ProviderName() : ConnectionCatalog.UnknownProvider;
 }

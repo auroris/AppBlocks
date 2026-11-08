@@ -4,14 +4,17 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using AppBlocks.Databases;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 
 namespace AppBlocks.Connections;
 
-public sealed record ConnectionInfo(string Name, string Label, string Provider, bool IsDefault, bool ReadOnly);
+public sealed record ConnectionInfo(string Name, string Label, string Provider, bool IsDefault, bool ReadOnly)
+{
+    /// <summary>The database type as a person reads it, such as <c>SQL Server</c> (<see cref="DatabaseKinds.DisplayName(string)"/>).</summary>
+    public string DatabaseType => DatabaseKinds.DisplayName(Provider);
+}
 public sealed record SaveConnection(string Name, string Provider, string? ConnectionString)
 {
     /// <summary>Without the connection string: MVC writes an action's arguments to the log when tracing is on, and this is what it writes.</summary>
@@ -40,6 +43,13 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     private readonly SemaphoreSlim gate = new(1, 1);
     private string FilePath => Path.Combine(configuration["AppBlocks:DataRoot"]
         ?? environment.ContentRootPath, "App_Data", "AppBlocks", "connections.json");
+    private SettingsFile<Saved[]>? savedFile;
+    /// <summary>connections.json, parsed once per version of the file, so opening a connection or looking up a plan reads no disk.</summary>
+    private SettingsFile<Saved[]> SavedFile => savedFile ??= new(() => FilePath, text => (text is null ? [] : JsonSerializer.Deserialize<StoredConnection[]>(text) ?? [])
+        .Select(entry => new Saved(entry, new Lazy<string>(() => protector.Unprotect(entry.ProtectedValue), LazyThreadSafetyMode.PublicationOnly))).ToArray());
+
+    /// <summary>A saved connection and its connection string, decrypted on first use and kept with the parsed file; a failed decryption is tried again.</summary>
+    private sealed record Saved(StoredConnection Entry, Lazy<string> Value);
 
     public IReadOnlyList<ConnectionInfo> List()
     {
@@ -77,10 +87,10 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
             var uploads = name.Equals(AttachmentsConnection, StringComparison.OrdinalIgnoreCase);
             var value = LocalDatabaseFiles.ConnectionString(LocalDatabaseFiles.PathFor(configuration, environment,
                 uploads ? AttachmentsDatabaseFile : ApplicationDatabaseFile));
-            return new("sqlite", value, Hash(value), LocalDefault: true);
+            return new(DatabaseDialect.Sqlite.ProviderName(), value, Hash(value), LocalDefault: true);
         }
-        var stored = Read().SingleOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-        return stored is null ? null : new(stored.Provider, Expand(protector.Unprotect(stored.ProtectedValue)), stored.Revision);
+        var stored = SavedFile.Read().SingleOrDefault(c => c.Entry.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        return stored is null ? null : new(stored.Entry.Provider, Expand(stored.Value.Value), stored.Entry.Revision);
     }
 
     /// <summary><c>ConnectionStrings:&lt;name&gt;</c> and its provider, the only reading of those settings, which a builder with no catalog behind it shares.</summary>
@@ -91,7 +101,7 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     internal static string ConfiguredProvider(IConfiguration configuration, string name)
     {
         var value = configuration[$"ConnectionStrings:{name}_ProviderName"];
-        if (string.IsNullOrWhiteSpace(value)) return "sqlServer";
+        if (string.IsNullOrWhiteSpace(value)) return DatabaseDialect.SqlServer.ProviderName();
         try { return Provider(value); }
         catch (ArgumentException error) { throw new ArgumentException($"ConnectionStrings:{name}_ProviderName is {value}. {error.Message}", error); }
     }
@@ -122,12 +132,12 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     /// <summary>The declared dialect, or else what an unopened connection's type says, as <see cref="ApplicationConnections"/> decides a dialect.</summary>
     private string RegisteredProvider(string name)
     {
-        if (registered!.Dialects.TryGetValue(name, out var declared)) return Provider(declared.ToString());
+        if (registered!.Dialects.TryGetValue(name, out var declared)) return declared.ProviderName();
         if (detectedProviders.TryGetValue(name, out var known)) return known;
         try
         {
             using var connection = Registered(name)!;
-            return detectedProviders[name] = Provider(ApplicationDatabase.Dialect(connection));
+            return detectedProviders[name] = DatabaseKinds.Of(connection).ProviderName();
         }
         // One registration that cannot be built or recognized must not take the list with it; opening it says why.
         catch (Exception) { return UnknownProvider; }
@@ -136,11 +146,11 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     public async Task SaveAsync(SaveConnection request, CancellationToken ct)
     {
         if (!Regex.IsMatch(request.Name, "^[A-Za-z][A-Za-z0-9_-]{0,63}$", RegexOptions.CultureInvariant)
-            || request.Name.Equals("umbracoDbDSN", StringComparison.OrdinalIgnoreCase)
-            || request.Name.Equals("ReportsDb", StringComparison.OrdinalIgnoreCase)
-            || request.Name.Equals("AttachmentsDb", StringComparison.OrdinalIgnoreCase))
+            || request.Name.Equals("umbracoDbDSN", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Use a unique name beginning with a letter, with up to 64 letters, numbers, hyphens or underscores.");
-        if (List().Any(c => c.Name.Equals(request.Name, StringComparison.OrdinalIgnoreCase) && c.ReadOnly))
+        // The listed connections the site manages, AttachmentsDb among them, and the names companions reserve for their own factories.
+        if (List().Any(c => c.Name.Equals(request.Name, StringComparison.OrdinalIgnoreCase) && c.ReadOnly)
+            || registered?.ReservedConnectionNames.Contains(request.Name) == true)
             throw new ArgumentException("This connection is managed by the site and cannot be replaced here.");
         var provider = Provider(request.Provider);
         await gate.WaitAsync(ct);
@@ -149,8 +159,9 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
             var entries = Read().ToList();
             var old = entries.SingleOrDefault(c => c.Name.Equals(request.Name, StringComparison.OrdinalIgnoreCase));
             if (string.IsNullOrWhiteSpace(request.ConnectionString) && old is null) throw new ArgumentException("Enter a connection string.");
+            // Oracle's two modes read the same connection string.
             if (string.IsNullOrWhiteSpace(request.ConnectionString) && old!.Provider != provider
-                && !(old.Provider is "oracle" or "oracle11g" && provider is "oracle" or "oracle11g"))
+                && !(IsOracle(old.Provider) && IsOracle(provider)))
                 throw new ArgumentException("Enter a connection string for the new database type.");
             var value = string.IsNullOrWhiteSpace(request.ConnectionString) ? protector.Unprotect(old!.ProtectedValue) : request.ConnectionString.Trim();
             using var check = Create(provider, Expand(value)); // Validates syntax without writing to the database.
@@ -163,7 +174,7 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
                 await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(entries), ct);
                 File.Move(temporary, FilePath, overwrite: true);
             }
-            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); SavedFile.Invalidate(); }
         }
         finally { gate.Release(); }
     }
@@ -187,29 +198,23 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
         await connection.OpenAsync(timeout.Token);
     }
 
-    private StoredConnection[] Read() => File.Exists(FilePath)
-        ? JsonSerializer.Deserialize<StoredConnection[]>(File.ReadAllText(FilePath)) ?? [] : [];
+    private StoredConnection[] Read() => SavedFile.Read().Select(saved => saved.Entry).ToArray();
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     internal static string Expand(string value) => value.Replace("|DataDirectory|", AppDomain.CurrentDomain.GetData("DataDirectory") as string ?? AppContext.BaseDirectory,
         StringComparison.OrdinalIgnoreCase);
 
-    public static string Provider(string value) => value.Trim().ToLowerInvariant() switch
-    {
-        "sqlite" or "microsoft.data.sqlite" => "sqlite",
-        "sqlserver" or "microsoft.data.sqlclient" or "system.data.sqlclient" => "sqlServer",
-        "postgres" or "postgresql" or "npgsql" => "postgres",
-        "oracle" or "oracle.manageddataaccess.client" or "oracle.manageddataaccess.core" => "oracle",
-        "oracle11g" => "oracle11g",
-        _ => throw new ArgumentException("Choose SQLite, SQL Server, PostgreSQL, Oracle 11.2 or Oracle 12+."),
-    };
+    /// <summary>The provider name for any spelling a site may use (<see cref="DatabaseKinds.NormalizeProvider"/>).</summary>
+    public static string Provider(string value) => DatabaseKinds.NormalizeProvider(value);
+    private static bool IsOracle(string provider) => DatabaseKinds.TryFromProvider(provider, out var kind) && kind is DatabaseDialect.Oracle or DatabaseDialect.Oracle11g;
     internal static DbConnection Create(ConnectionMaterial material) => material.LocalDefault
         ? LocalDatabaseFiles.Create(material.Value) : Create(material.Provider, material.Value);
 
-    internal static DbConnection Create(string provider, string value) => provider switch
-    {
-        "sqlite" => new SqliteConnection(value), "sqlServer" => new SqlConnection(value),
-        "postgres" => DatabaseDrivers.PostgreSql.Create(value),
-        "oracle" or "oracle11g" => DatabaseDrivers.Oracle.Create(value),
-        _ => throw new ArgumentException("Unsupported database type."),
-    };
+    internal static DbConnection Create(string provider, string value) => !DatabaseKinds.TryFromProvider(provider, out var kind)
+        ? throw new ArgumentException("Unsupported database type.")
+        : kind switch {
+            DatabaseDialect.Sqlite => new SqliteConnection(value),
+            DatabaseDialect.SqlServer => new SqlConnection(value),
+            DatabaseDialect.Postgres => DatabaseDrivers.PostgreSql.Create(value),
+            _ => DatabaseDrivers.Oracle.Create(value),
+        };
 }

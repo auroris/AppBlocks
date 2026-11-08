@@ -125,7 +125,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
     private void PaperReport(string picked, List<string> errors)
     {
         if (contents is null || PaperReportLinks.PickedKey(picked) is not { } key || contents.GetById(key) is not { } node) return;
-        if (node.ContentType.Alias != "paperReport") errors.Add($"Select a Paper report node for Paper report; {node.Name} is not one.");
+        if (node.ContentType.Alias != PaperReportLinks.ContentTypeAlias) errors.Add($"Select a Paper report node for Paper report; {node.Name} is not one.");
     }
 
     private void Form(IBlockLayoutItem layout, BlockItemData block, Dictionary<Guid, BlockItemData> data, HashSet<Guid> visited, List<string> errors, bool limitNesting = true, List<string>? warnings = null)
@@ -164,6 +164,9 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
                 var field = resource.Fields.FirstOrDefault(f => f.Key == binding);
                 if (field is null) errors.Add($"'{binding}' is not a field of {resource.Alias}.");
                 else if (!Compatible(alias, field, Text(child, "listOfValues").Length > 0)) errors.Add($"The block for '{binding}' does not match its {field.Kind} type.");
+                // A date-time field holds the web server's local time, so :NOW_UTC would only be :NOW written another way.
+                else if (field.Kind == FieldKinds.DateTime && Text(child, "defaultValue").Trim() is [':', .. var named] && BindVariable.Parse(named) is { Kind: BindVariableKind.NowUtc })
+                    errors.Add($"The default of '{binding}' cannot be :NOW_UTC: a date-time field holds the web server's local time. Use :NOW, or bind a text field to keep a UTC stamp.");
                 if (definitions is not null && alias is "appSelect" or AppBlockSchema.ShuttleAlias && Text(child, "listOfValues") is { Length: > 0 } selected && definitions.FindList(selected) is null)
                     errors.Add($"Select a published list of values for '{binding}'.");
             }
@@ -309,7 +312,18 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
         "appDateTime" => field.Kind == "datetime", "appCheckbox" => field.Kind == "checkbox", _ => false,
     };
     private IAppBlockPlugin? Plugin(string alias) => plugins?.FirstOrDefault(p => p.Alias == alias);
-    private string Alias(BlockItemData block) => Aliases.Concat(plugins?.Select(p => p.Alias) ?? []).FirstOrDefault(a => AppBlockSchema.Key(a) == block.ContentTypeKey) ?? "";
+    private Dictionary<Guid, string>? aliasesByKey;
+    /// <summary>The package's and the plugins' aliases by content type key, worked out once, since each key is a hash of its alias.</summary>
+    private string Alias(BlockItemData block)
+    {
+        if (aliasesByKey is null)
+        {
+            var keys = new Dictionary<Guid, string>();
+            foreach (var alias in Aliases.Concat(plugins?.Select(p => p.Alias) ?? [])) keys.TryAdd(AppBlockSchema.Key(alias), alias);
+            aliasesByKey = keys;
+        }
+        return aliasesByKey.GetValueOrDefault(block.ContentTypeKey) ?? "";
+    }
     private static string Text(BlockItemData block, string alias) => BlockValueSets.Text(block, alias);
     private static bool Flag(BlockItemData block, string alias) => Text(block, alias) is "true" or "True" or "1";
 }

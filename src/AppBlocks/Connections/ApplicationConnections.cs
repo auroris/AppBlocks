@@ -4,6 +4,7 @@ using AppBlocks.Databases;
 
 namespace AppBlocks.Connections;
 
+/// <summary>The databases AppBlocks works with. <see cref="DatabaseKinds"/> knows each one's provider name, schema folder and display name.</summary>
 public enum DatabaseDialect { Sqlite, SqlServer, Postgres, Oracle, Oracle11g }
 
 /// <summary>No connection by the name is registered or managed; other failures to make a connection keep their own exception.</summary>
@@ -27,6 +28,30 @@ public sealed class AppBlocksBuilder
     internal Dictionary<string, Func<IServiceProvider, DbConnection>> LookOnlyConnections { get; } = new(StringComparer.OrdinalIgnoreCase);
     internal event Action<string>? ConnectionAdded;
     public IEnumerable<string> ConnectionNames => Connections.Keys;
+    internal HashSet<string> ReservedConnectionNames { get; } = new(StringComparer.OrdinalIgnoreCase);
+    internal HashSet<string> KeySegmentContentTypes { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Keeps a connection name that a companion opens through its own factory, such as the reports store's <c>ReportsDb</c>, from being
+    /// saved on the Connections screen, where a saved connection would take the name over.
+    /// </summary>
+    public AppBlocksBuilder ReserveConnectionName(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ReservedConnectionNames.Add(name);
+        return this;
+    }
+
+    /// <summary>
+    /// Gives the nodes of a companion's definition document type, such as a report definition, a URL segment of their own key, as data
+    /// source nodes have, so a node named like a page can never take that page's URL.
+    /// </summary>
+    public AppBlocksBuilder AddKeySegmentContentType(string alias)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(alias);
+        KeySegmentContentTypes.Add(alias);
+        return this;
+    }
 
     public AppBlocksBuilder AddConnection(string name, Func<IServiceProvider, DbConnection> factory, DatabaseDialect? dialect = null)
     {
@@ -70,21 +95,10 @@ internal sealed class ApplicationConnections(IServiceProvider provider, AppBlock
         var material = catalog.Find(name);
         var revision = material is null ? "" : ConnectionCatalog.Revision(material);
         if (detected.TryGetValue(name, out var known) && known.Revision == revision) return known.Dialect;
-        if (material is not null) return material.Provider switch
-        {
-            "sqlite" => DatabaseDialect.Sqlite, "sqlServer" => DatabaseDialect.SqlServer,
-            "postgres" => DatabaseDialect.Postgres, "oracle" => DatabaseDialect.Oracle,
-            "oracle11g" => DatabaseDialect.Oracle11g,
-            _ => throw new InvalidOperationException("Unsupported database provider."),
-        };
+        if (material is not null) return DatabaseKinds.FromProvider(material.Provider);
         if (builder.Dialects.TryGetValue(name, out var declared)) return declared;
         using var connection = CreateConnection(name);
-        return ApplicationDatabase.Dialect(connection) switch
-        {
-            "sqlite" => DatabaseDialect.Sqlite, "sqlserver" => DatabaseDialect.SqlServer,
-            "postgresql" => DatabaseDialect.Postgres, "oracle" => DatabaseDialect.Oracle,
-            _ => throw new InvalidOperationException("Unsupported database provider."),
-        };
+        return DatabaseKinds.Of(connection);
     }
 
     public void SetDetectedDialect(string name, DatabaseDialect dialect) => detected[name] = (dialect, catalog.Revision(name));

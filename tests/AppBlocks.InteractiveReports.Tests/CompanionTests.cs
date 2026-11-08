@@ -71,6 +71,26 @@ public sealed class CompanionTests
         public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
     }
 
+    /// <summary>A node of the given document type, as a URL segment provider reads it: its type's alias and its key.</summary>
+    private static Umbraco.Cms.Core.Models.IContentBase Node(string alias, Guid key)
+        => Answering<Umbraco.Cms.Core.Models.IContentBase>.With(new() { ["get_ContentType"] = Answering<Umbraco.Cms.Core.Models.ISimpleContentType>.With(new() { ["get_Alias"] = alias }), ["get_Key"] = key });
+
+    /// <summary>An interface whose members answer from a table by name; any other member throws.</summary>
+    public class Answering<T> : System.Reflection.DispatchProxy where T : class
+    {
+        private Dictionary<string, object?> answers = [];
+
+        public static T With(Dictionary<string, object?> answers)
+        {
+            var proxy = Create<T, Answering<T>>();
+            ((Answering<T>)(object)proxy).answers = answers;
+            return proxy;
+        }
+
+        protected override object? Invoke(System.Reflection.MethodInfo? method, object?[]? args)
+            => answers.TryGetValue(method!.Name, out var answer) ? answer : throw new NotSupportedException(method.Name);
+    }
+
     [Fact]
     public void Companion_owns_report_schema_views_and_editors_and_references_AppBlocks()
     {
@@ -153,6 +173,18 @@ public sealed class CompanionTests
         Assert.Equal(ReportDialect.Oracle11g, compiler.Compile("Declared", new ReportDefinition { Connection = "Declared", Sql = "SELECT 1 AS id" }).Dialect);
         // A connection only the report builder has stays out of it: forms can open it, as above, but the screens do not offer it.
         Assert.DoesNotContain(listed, c => c.Name == "Legacy");
+        // The names the site and the companion own cannot be saved over: the uploads database is listed as managed, and the reports
+        // store's connection is reserved. Report definition nodes get a URL segment of their key, as data source nodes do.
+        var catalog = provider.GetRequiredService<ConnectionCatalog>();
+        foreach (var taken in new[] { "ReportsDb", "reportsdb", "AttachmentsDb" })
+            Assert.Contains("managed by the site", (await Assert.ThrowsAsync<ArgumentException>(
+                () => catalog.SaveAsync(new(taken, "sqlite", "Data Source=" + Path.Combine(root, "taken.db")), default))).Message);
+        var segments = new DataSourceUrlSegmentProvider(provider.GetRequiredService<AppBlocksBuilder>());
+        var nodeKey = Guid.NewGuid();
+        Assert.Equal("data-source-" + nodeKey.ToString("N"), segments.GetUrlSegment(Node(AppBlocks.InteractiveReports.DataSources.PublishedReportCatalog.ReportAlias, nodeKey)));
+        Assert.Null(segments.GetUrlSegment(Node("article", nodeKey)));
+        Assert.Null(new DataSourceUrlSegmentProvider().GetUrlSegment(Node(AppBlocks.InteractiveReports.DataSources.PublishedReportCatalog.ReportAlias, nodeKey)));
+        Assert.NotNull(new DataSourceUrlSegmentProvider().GetUrlSegment(Node(DataSourceSchema.SqlAlias, nodeKey)));
 
         // Hold the CMS write lock throughout application writes: separate files must not compete for it.
         await using var cms = application.CreateConnection("UmbracoDb");

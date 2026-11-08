@@ -170,15 +170,9 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
         _ => false,
     };
 
+    /// <summary>What a query's SQL binds for a variable (<see cref="BindVariableValues"/>); null for <c>:FIELD.</c> and <c>:ARG.</c>, which a query has none of.</summary>
     internal static object? Bind(BindVariable variable, DataSourceUser user, IReadOnlyDictionary<string, string>? parameters, DateTimeOffset now, SqlDialect dialect, IReadOnlyDictionary<string, object?>? app = null)
-        => variable.Kind switch {
-            BindVariableKind.UserSid => user.Sid, BindVariableKind.UserName => user.Name, BindVariableKind.UserKey => user.Key,
-            BindVariableKind.UserEmail => user.Email, BindVariableKind.UserGroups => user.Groups,
-            BindVariableKind.Now => dialect.Now(now.DateTime), BindVariableKind.NowUtc => dialect.NowUtc(now.UtcDateTime),
-            BindVariableKind.Param => parameters?.FirstOrDefault(pair => pair.Key.Equals(variable.Name, StringComparison.OrdinalIgnoreCase)).Value,
-            BindVariableKind.App => app?.GetValueOrDefault(variable.Name!),
-            _ => null,
-        };
+        => new BindVariableValues(user, parameters, now, app).Bind(variable, dialect);
 
     internal static string ChoiceValue(object? value) => Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
 }

@@ -7,7 +7,8 @@ namespace AppBlocks.DataSources;
 /// <summary>
 /// What every data source shares: the application connections and dialects, the plan cache, the create
 /// receipts and the clock. Plans are cached by definition fingerprint for a minute, so a published change takes
-/// effect at once and a change to the database schema within a minute; a failure is retried after five seconds.
+/// effect at once and a change to the database schema within about a minute, rebuilt in the background while the
+/// expired plan serves; a failure is retried after five seconds.
 /// </summary>
 public sealed class DataSourceRuntime(IApplicationConnectionFactory connections, ILogger<DataSourceRuntime> logger,
     TimeProvider? time = null, ConnectionCatalog? managed = null)
@@ -16,6 +17,7 @@ public sealed class DataSourceRuntime(IApplicationConnectionFactory connections,
     private static readonly TimeSpan ProblemLifetime = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DefinitionLifetime = TimeSpan.FromMinutes(5);
     private readonly ConcurrentDictionary<string, PlanEntry> plans = new();
+    private readonly ConcurrentDictionary<string, Lazy<PlanEntry>> building = new();
     private readonly ConcurrentDictionary<(Type Kind, Guid Key, DateTime Updated, string Dependencies), (object? Definition, DateTimeOffset Expires)> definitions = new();
     private readonly TimeProvider clock = time ?? TimeProvider.System;
 
@@ -46,13 +48,52 @@ public sealed class DataSourceRuntime(IApplicationConnectionFactory connections,
 
     internal sealed record PlanEntry(DataSourcePlan? Plan, string? Problem, DateTimeOffset Expires);
 
+    /// <summary>
+    /// The plan for a definition. One build runs at a time for each definition and connection revision, and callers that ask meanwhile
+    /// share it. A working plan whose minute has passed keeps serving while one rebuild runs in the background, so no request waits for
+    /// the schema to be read again; a definition with no plan yet, or with a problem past its five seconds, is built while its callers wait.
+    /// </summary>
     internal PlanEntry Plan(DataSourceDefinition definition)
     {
         var key = definition.ComputeFingerprint() + ":" + managed?.Revision(definition.Connection);
+        if (plans.TryGetValue(key, out var cached))
+        {
+            if (cached.Expires > clock.GetUtcNow()) return cached;
+            if (cached.Plan is not null)
+            {
+                var rebuild = Building(key, definition, out var started);
+                if (started) _ = Task.Run(() => Finish(key, rebuild));
+                return cached;
+            }
+        }
+        var build = Building(key, definition, out var mine);
+        try { return build.Value; }
+        finally { if (mine) building.TryRemove(new KeyValuePair<string, Lazy<PlanEntry>>(key, build)); }
+    }
+
+    /// <summary>The build running for a key, or a new one that this caller <paramref name="started"/>.</summary>
+    private Lazy<PlanEntry> Building(string key, DataSourceDefinition definition, out bool started)
+    {
+        var mine = new Lazy<PlanEntry>(() => Store(key, definition), LazyThreadSafetyMode.ExecutionAndPublication);
+        var build = building.GetOrAdd(key, mine);
+        started = ReferenceEquals(build, mine);
+        return build;
+    }
+
+    private void Finish(string key, Lazy<PlanEntry> build)
+    {
+        try { _ = build.Value; }
+        finally { building.TryRemove(new KeyValuePair<string, Lazy<PlanEntry>>(key, build)); }
+    }
+
+    /// <summary>Builds a plan and keeps it, or the problem that stopped it; an entry another build stored meanwhile is kept instead.</summary>
+    private PlanEntry Store(string key, DataSourceDefinition definition)
+    {
         var now = clock.GetUtcNow();
-        if (plans.TryGetValue(key, out var cached) && cached.Expires > now) return cached;
+        if (plans.TryGetValue(key, out var fresh) && fresh.Expires > now) return fresh;
         var errors = new List<string>();
         var plan = Build(definition, errors, compileStatements: false);
+        now = clock.GetUtcNow();
         var entry = plan is not null ? new PlanEntry(plan, null, now + PlanLifetime)
             : new PlanEntry(null, errors.Count > 0 ? string.Join(" ", errors) : "The data source could not be prepared.", now + ProblemLifetime);
         if (plan is null) logger.LogWarning("Data source {Alias} is not available: {Problem}", definition.Alias, entry.Problem);

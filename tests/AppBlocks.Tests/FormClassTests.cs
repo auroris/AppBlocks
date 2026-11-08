@@ -23,6 +23,23 @@ public sealed class FormClassTests
         Assert.Contains("Recreate the Form Interface using the Single Block editor.", validator.ValidateEmbedded(legacy));
     }
 
+    [Fact]
+    public void A_date_time_field_default_cannot_be_NOW_UTC()
+    {
+        var validator = new AppBlocksValidator(new FormResourceRegistry([new Resource("events", new FormField("startsAt", "Starts at", "datetime"), new FormField("stamp", "Stamp", "text"))], []));
+        string Page(string field, string block, string value)
+        {
+            var page = BlockPages.Empty();
+            BlockPages.Layout(page).Add(BlockPages.FormBlock(page, "events", [BlockPages.Add(page, block, ("field", field), ("defaultValue", value))], []));
+            return page.ToJsonString();
+        }
+        Assert.Contains("The default of 'startsAt' cannot be :NOW_UTC: a date-time field holds the web server's local time. Use :NOW, or bind a text field to keep a UTC stamp.",
+            validator.ValidateEmbedded(Page("startsAt", "appDateTime", " :now_utc ")));
+        Assert.Contains(validator.ValidateEmbedded(Page("startsAt", "appDisplay", ":NOW_UTC")), error => error.Contains(":NOW_UTC"));
+        Assert.Empty(validator.ValidateEmbedded(Page("startsAt", "appDateTime", ":NOW")));
+        Assert.Empty(validator.ValidateEmbedded(Page("stamp", "appText", ":NOW_UTC")));
+    }
+
     private static string Form(string resource)
     {
         var key = Guid.NewGuid(); var configuration = Guid.NewGuid();
@@ -40,11 +57,11 @@ public sealed class FormClassTests
     {
         public IEnumerable<IFormResource> Resources => throw new InvalidOperationException("Forms must not load content sources.");
     }
-    private sealed class Resource(string alias) : IFormResource
+    private sealed class Resource(string alias, params FormField[] fields) : IFormResource
     {
         public string Alias => alias;
         public string ContractVersion => "1";
-        public IReadOnlyList<FormField> Fields => [];
+        public IReadOnlyList<FormField> Fields => fields;
         public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
         public Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
         public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());

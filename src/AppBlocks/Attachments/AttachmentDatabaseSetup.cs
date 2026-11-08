@@ -20,16 +20,16 @@ internal sealed class AttachmentDatabaseSetup(ConnectionCatalog connections, IAp
         var label = connections.List().FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         var shown = label is null ? name : label.Label == label.Name ? label.Name : $"{label.Label} ({label.Name})";
         var noTables = AttachmentStore.Tables.Select(table => new DatabaseFeatureTable(table, "missing", true)).ToArray();
-        if (label?.Provider is "postgres" or "oracle" or "oracle11g")
-            return new(Alias, Title, shown, label.Provider, DatabaseFeatureState.Unsupported, OtherDatabases, Lost, noTables, null, null, false);
+        if (DatabaseKinds.TryFromProvider(label?.Provider, out var listed) && !Supported(listed))
+            return new(Alias, Title, shown, label!.Provider, DatabaseFeatureState.Unsupported, OtherDatabases, Lost, noTables, null, null, false);
         DatabaseInspection inspection;
-        string provider;
+        DatabaseDialect kind;
         try
         {
             await using var connection = Inspectable(name);
-            provider = ConnectionCatalog.Provider(ApplicationDatabase.Dialect(connection));
-            if (provider is not ("sqlite" or "sqlServer"))
-                return new(Alias, Title, shown, provider, DatabaseFeatureState.Unsupported, OtherDatabases, Lost, noTables, null, null, false);
+            kind = DatabaseKinds.Of(connection);
+            if (!Supported(kind))
+                return new(Alias, Title, shown, kind.ProviderName(), DatabaseFeatureState.Unsupported, OtherDatabases, Lost, noTables, null, null, false);
             inspection = await DatabaseInspector.InspectAsync(connection, AttachmentStore.Tables, false, ct);
         }
         catch (Exception error) when (error is ArgumentException or InvalidOperationException)
@@ -38,6 +38,7 @@ internal sealed class AttachmentDatabaseSetup(ConnectionCatalog connections, IAp
                 $"Attachments:Connection names {name}, which is not a connection AppBlocks can open. Choose one from the Connections tab.", Lost, noTables, null, null, false);
         }
         var (state, summary) = DatabaseSetupGuide.Standing(inspection, AttachmentStore.Tables);
+        var provider = kind.ProviderName();
         var (text, sql) = DatabaseSetupGuide.Grant(provider, inspection.Account, inspection.Schema);
         return new(Alias, Title, shown, provider, state, summary, Lost, DatabaseSetupGuide.Tables(inspection, AttachmentStore.Tables), text, sql, true);
     }
@@ -46,10 +47,10 @@ internal sealed class AttachmentDatabaseSetup(ConnectionCatalog connections, IAp
     {
         var status = await StatusAsync(ct);
         if (!status.HasScript) return null;
-        var dialect = status.Provider == "sqlServer" ? "sqlserver" : "sqlite";
+        var folder = DatabaseKinds.FromProvider(status.Provider).SchemaFolder();
         var inspection = await LookAsync(ct);
         return DatabaseSetupGuide.Header(Title, status.Connection, status.Provider, inspection.Account, inspection.Schema)
-            + ApplicationDatabase.Script(AttachmentStore.Schema, dialect)
+            + ApplicationDatabase.Script(AttachmentStore.Schema, folder)
             + DatabaseSetupGuide.TableGrants(status.Provider, inspection.Account, AttachmentStore.Tables);
     }
 
@@ -58,6 +59,9 @@ internal sealed class AttachmentDatabaseSetup(ConnectionCatalog connections, IAp
         await using var connection = Inspectable(settings.Value.ConnectionName);
         return await DatabaseInspector.InspectAsync(connection, [], false, ct);
     }
+
+    /// <summary>The databases the upload store has scripts for.</summary>
+    private static bool Supported(DatabaseDialect kind) => kind is DatabaseDialect.Sqlite or DatabaseDialect.SqlServer;
 
     /// <summary>A connection the catalog knows, or one only the report builder has, which ensures nothing either way.</summary>
     private DbConnection Inspectable(string name)

@@ -37,6 +37,20 @@ public sealed class AntiSpamSettings(IConfiguration configuration, IWebHostEnvir
     private readonly IDataProtector protector = protection.CreateProtector("AppBlocks.AntiSpam.v1");
     private readonly SemaphoreSlim gate = new(1, 1);
     private string FilePath => Path.Combine(configuration["AppBlocks:DataRoot"] ?? environment.ContentRootPath, "App_Data", "AppBlocks", "anti-spam.json");
+    private SettingsFile<Saved[]>? savedFile;
+    /// <summary>anti-spam.json, parsed once per version of the file, so checking a submission reads no disk.</summary>
+    private SettingsFile<Saved[]> SavedFile => savedFile ??= new(() => FilePath, text => (text is null ? [] : JsonSerializer.Deserialize<StoredAntiSpamKeys[]>(text) ?? [])
+        .Select(keys => new Saved(keys, new Lazy<string?>(() => Unprotect(keys.ProtectedSecretKey), LazyThreadSafetyMode.PublicationOnly))).ToArray());
+
+    /// <summary>A service's saved keys and its secret key, decrypted on first use and kept with the parsed file; null when there is none, or this installation can no longer read it.</summary>
+    private sealed record Saved(StoredAntiSpamKeys Keys, Lazy<string?> Secret);
+
+    private string? Unprotect(string? saved)
+    {
+        if (saved is null) return null;
+        try { return protector.Unprotect(saved); }
+        catch (CryptographicException) { return null; }
+    }
 
     internal string? ConfiguredSecret(string service) => configuration[$"{Section}:{service}:SecretKey"] is { Length: > 0 } value ? value : null;
     internal string? ConfiguredSiteKey(string service) => configuration[$"{Section}:{service}:SiteKey"] is { Length: > 0 } value ? value : null;
@@ -45,20 +59,18 @@ public sealed class AntiSpamSettings(IConfiguration configuration, IWebHostEnvir
     internal string? SecretKey(string service)
     {
         if (ConfiguredSecret(service) is { } configured) return configured;
-        if (Stored(service)?.ProtectedSecretKey is not { } saved) return null;
-        try { return protector.Unprotect(saved); }
-        catch (CryptographicException) { return null; }
+        return Stored(service)?.Secret.Value;
     }
 
     public AntiSpamSecretState SecretState(string service)
     {
         if (ConfiguredSecret(service) is not null) return AntiSpamSecretState.Configuration;
-        if (Stored(service)?.ProtectedSecretKey is null) return AntiSpamSecretState.None;
+        if (Stored(service)?.Keys.ProtectedSecretKey is null) return AntiSpamSecretState.None;
         return SecretKey(service) is null ? AntiSpamSecretState.Unreadable : AntiSpamSecretState.Saved;
     }
 
     /// <summary>The site-wide site key, which a block's own replaces. Public.</summary>
-    public string? SiteKey(string service) => ConfiguredSiteKey(service) ?? (Stored(service)?.SiteKey is { Length: > 0 } saved ? saved : null);
+    public string? SiteKey(string service) => ConfiguredSiteKey(service) ?? (Stored(service)?.Keys.SiteKey is { Length: > 0 } saved ? saved : null);
 
     public async Task SaveAsync(SaveAntiSpamKeys request, CancellationToken ct)
     {
@@ -83,13 +95,13 @@ public sealed class AntiSpamSettings(IConfiguration configuration, IWebHostEnvir
                 await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(entries), ct);
                 File.Move(temporary, FilePath, overwrite: true);
             }
-            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); SavedFile.Invalidate(); }
         }
         finally { gate.Release(); }
     }
 
-    private StoredAntiSpamKeys? Stored(string service) => Read().FirstOrDefault(entry => entry.Service.Equals(service, StringComparison.OrdinalIgnoreCase));
-    private StoredAntiSpamKeys[] Read() => File.Exists(FilePath) ? JsonSerializer.Deserialize<StoredAntiSpamKeys[]>(File.ReadAllText(FilePath)) ?? [] : [];
+    private Saved? Stored(string service) => SavedFile.Read().FirstOrDefault(entry => entry.Keys.Service.Equals(service, StringComparison.OrdinalIgnoreCase));
+    private StoredAntiSpamKeys[] Read() => SavedFile.Read().Select(entry => entry.Keys).ToArray();
 }
 
 /// <summary>What is currently wrong with each service, which the settings screen shows. Each problem is logged once, however many visitors it turns away.</summary>

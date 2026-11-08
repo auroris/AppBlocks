@@ -208,7 +208,7 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
 
     private static async Task<long> InsertFileAsync(DbConnection connection, DbTransaction transaction, AttachmentUpload file, string by, DateTime now, long? replaces, CancellationToken ct)
     {
-        var sqlServer = ApplicationDatabase.Dialect(connection) == "sqlserver";
+        var sqlServer = DatabaseKinds.Of(connection) == DatabaseDialect.SqlServer;
         var sql = "INSERT INTO APP_ATTACHMENT (FILE_NAME, CONTENT_TYPE, SIZE, SHA256, CONTENT, UPLOADED_BY, UPLOADED_AT, REPLACES)"
             + (sqlServer ? " OUTPUT INSERTED.ATTACHMENT_ID" : "")
             + " VALUES (@name, @type, @size, @hash, @content, @by, @now, @replaces)"
@@ -235,7 +235,7 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
         try
         {
             // Nothing is created on a database type the tables have no script for, and it need not be reachable to say so.
-            if (ApplicationDatabase.Dialect(connection) is not ("sqlite" or "sqlserver"))
+            if (DatabaseKinds.Of(connection) is not (DatabaseDialect.Sqlite or DatabaseDialect.SqlServer))
                 throw new AttachmentStoreException($"The attachments connection {name} is not SQLite or SQL Server, the only databases uploads run on.", null, AttachmentStoreProblem.Unsupported);
             await connection.OpenAsync(ct);
             // The two tables are created in whichever database the connection opens, once per process, or found there already made by hand.
@@ -289,7 +289,7 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
     }
 
     /// <summary>SQL Server stops a recursive query at 100 levels unless told otherwise; a file replaced more often than that is still one chain.</summary>
-    private static string Recursion(DbConnection connection) => ApplicationDatabase.Dialect(connection) == "sqlserver" ? "\nOPTION (MAXRECURSION 0)" : "";
+    private static string Recursion(DbConnection connection) => DatabaseKinds.Of(connection) == DatabaseDialect.SqlServer ? "\nOPTION (MAXRECURSION 0)" : "";
 
     private static DbCommand Command(DbConnection connection, DbTransaction? transaction, string sql, params (string Name, object? Value)[] parameters)
     {

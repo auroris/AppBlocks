@@ -86,6 +86,14 @@ public sealed class AttachmentsHttpTests
         Assert.Equal(2, purged.GetProperty("files").GetInt32());
         using var editor = await EditorAsync(site);
         Assert.Equal(HttpStatusCode.Forbidden, (await editor.PostAsJsonAsync($"{site.PathBase}/umbraco/management/api/v1/attachments/purge", new { retentionDays = 0 })).StatusCode);
+        // The administrator policy guards the Settings screens' own data too; the pickers' lists stay open to every backoffice user.
+        foreach (var screen in new[] { "appblocks/database-setup", "appblocks/definitions", "appblocks/forms", "appblocks/anti-spam" })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await editor.GetAsync($"{site.PathBase}/umbraco/management/api/v1/{screen}")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await administrator.GetAsync($"{site.PathBase}/umbraco/management/api/v1/{screen}")).StatusCode);
+        }
+        Assert.Equal(HttpStatusCode.OK, (await editor.GetAsync($"{site.PathBase}/umbraco/management/api/v1/appblocks/connections")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await editor.GetAsync($"{site.PathBase}/umbraco/management/api/v1/appblocks/database-kinds")).StatusCode);
 
         // A page whose blocks are read only, or tightly limited: uploads are refused by the block, by type and by size.
         var limited = await PublishLimitedPageAsync(site);

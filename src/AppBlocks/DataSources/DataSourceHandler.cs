@@ -287,10 +287,12 @@ public sealed class DataSourceSql : IAsyncDisposable
 /// <summary>
 /// The backing classes registered in code, by alias, which a data source names in its <c>handler</c> property. Classes compiled from the C#
 /// folder follow, each made for the request from the generation serving, and keep only a valid alias still free: the site's own classes win.
+/// The site fails to start when a registered class has an invalid alias or shares one (<see cref="DataSourceHandlerValidation"/>); should
+/// such a class reach a request all the same, it is logged and left out, and the first class with the alias keeps it.
 /// </summary>
-public sealed class DataSourceHandlers(IEnumerable<IDataSourceHandler>? handlers = null, Code.CompiledTypes? compiled = null)
+public sealed class DataSourceHandlers(IEnumerable<IDataSourceHandler>? handlers = null, Code.CompiledTypes? compiled = null, ILogger<DataSourceHandlers>? logger = null)
 {
-    private readonly Dictionary<string, IDataSourceHandler> site = Index(handlers ?? []);
+    private readonly Dictionary<string, IDataSourceHandler> site = Index(handlers ?? [], logger);
     private Dictionary<string, IDataSourceHandler>? all;
 
     // Compiled classes are made on first use, not in the constructor, so one that takes this registry is given this instance.
@@ -305,14 +307,46 @@ public sealed class DataSourceHandlers(IEnumerable<IDataSourceHandler>? handlers
         return index;
     }
 
-    private static Dictionary<string, IDataSourceHandler> Index(IEnumerable<IDataSourceHandler> handlers)
+    private static Dictionary<string, IDataSourceHandler> Index(IEnumerable<IDataSourceHandler> handlers, ILogger? logger)
     {
         var index = new Dictionary<string, IDataSourceHandler>(StringComparer.Ordinal);
         foreach (var handler in handlers)
-        {
-            if (!DataSourceDefinition.IsAlias(handler.Alias)) throw new InvalidOperationException($"The backing class {handler.GetType().Name} has the alias '{handler.Alias}', which is not one: use letters, digits, '.', '-' and '_', starting with a letter.");
-            if (!index.TryAdd(handler.Alias, handler)) throw new InvalidOperationException($"Two backing classes have the alias {handler.Alias}.");
-        }
+            if (Problem(handler, index) is { } problem) logger?.LogError("{Problem} The class is left out.", problem);
+            else index.Add(handler.Alias, handler);
         return index;
     }
+
+    /// <summary>What is wrong with the registered classes' aliases, one message per class: an alias that is not one, or one an earlier class has. Empty when nothing is.</summary>
+    internal static IReadOnlyList<string> Problems(IEnumerable<IDataSourceHandler> handlers)
+    {
+        var index = new Dictionary<string, IDataSourceHandler>(StringComparer.Ordinal);
+        var problems = new List<string>();
+        foreach (var handler in handlers)
+            if (Problem(handler, index) is { } problem) problems.Add(problem);
+            else index.Add(handler.Alias, handler);
+        return problems;
+    }
+
+    private static string? Problem(IDataSourceHandler handler, Dictionary<string, IDataSourceHandler> earlier)
+        => !DataSourceDefinition.IsAlias(handler.Alias)
+            ? $"The backing class {handler.GetType().Name} has the alias '{handler.Alias}', which is not one: use letters, digits, '.', '-' and '_', starting with a letter."
+            : earlier.ContainsKey(handler.Alias) ? $"Two backing classes have the alias {handler.Alias}." : null;
+}
+
+/// <summary>
+/// Checks the backing classes registered in code when the site starts, made in a scope of their own as a request would make them, and
+/// stops the start with every problem <see cref="DataSourceHandlers"/> would otherwise log on each request: an alias that is not one, or
+/// one two classes share. Classes compiled from the C# folder are checked when they compile.
+/// </summary>
+internal sealed class DataSourceHandlerValidation(IServiceScopeFactory scopes) : IHostedService
+{
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopes.CreateScope();
+        var problems = DataSourceHandlers.Problems(scope.ServiceProvider.GetServices<IDataSourceHandler>());
+        if (problems.Count > 0) throw new InvalidOperationException(string.Join(" ", problems));
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

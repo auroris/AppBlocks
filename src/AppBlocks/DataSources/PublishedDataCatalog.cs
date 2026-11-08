@@ -43,10 +43,13 @@ public sealed class PublishedDataCatalog(IUmbracoContextFactory contexts, IDocum
         return errors.Count == start ? new(key, alias, name, source!, display, stored, maximum) : null;
     }
 
-    /// <summary>The source a list reads: the data source it selects, or its own connection and SQL.</summary>
+    /// <summary>The source a list reads: the data source it selects, or its own connection and SQL. An empty connection is the AppBlocks database, as for a data source.</summary>
     private DataSourceDefinition? ListSource(Guid key, string name, Func<string, object?> value) => Text(value, "dataSource") is { Length: > 0 } selection
         ? ResolveSource(selection)
-        : new DataSourceDefinition { Key = key, Name = name, Alias = Text(value, "alias"), Connection = Text(value, "connection"), Source = Text(value, "sql"), Access = DataSourceAccess.Public };
+        : new DataSourceDefinition {
+            Key = key, Name = name, Alias = Text(value, "alias"), Source = Text(value, "sql"), Access = DataSourceAccess.Public,
+            Connection = Text(value, "connection") is { Length: > 0 } connection ? connection : AppBlocks.Connections.ConnectionCatalog.ApplicationConnection,
+        };
 
 
     /// <summary>

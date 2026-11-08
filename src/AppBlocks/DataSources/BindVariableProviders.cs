@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using AppBlocks.Forms;
 
@@ -24,11 +25,14 @@ public interface IBindVariableProvider
 }
 
 /// <summary>
-/// Asks every registered provider once per operation and merges their answers; nothing is asked when no provider is registered. Providers
-/// compiled from the C# folder are asked first, so a registered provider wins a name they share.
+/// Asks every registered provider and merges their answers; nothing is asked when no provider is registered. Providers compiled from the
+/// C# folder are asked first, so a registered provider wins a name they share. The merged answer is kept for the lifetime of this
+/// instance, which is one request scope, by the signed-in principal, the page, the form and the request's parameters: the facts a provider
+/// decides from do not change within one request, so every operation and every row of a request binds the same values.
 /// </summary>
 public sealed class BindVariableProviders(IEnumerable<IBindVariableProvider>? providers = null, Code.CompiledTypes? compiled = null)
 {
+    private readonly ConcurrentDictionary<(System.Security.Claims.ClaimsPrincipal Member, Guid Page, Guid Form, string Parameters), IReadOnlyDictionary<string, object?>> resolved = new();
     private IBindVariableProvider[]? all;
     // Compiled providers are made on first use, not in the constructor, so one that takes this class is given this instance.
     private IBindVariableProvider[] Providers => all ??= [.. compiled?.Create<IBindVariableProvider>() ?? [], .. providers ?? []];
@@ -56,15 +60,22 @@ public sealed class BindVariableProviders(IEnumerable<IBindVariableProvider>? pr
               + $"{(missing.Length == 1 ? "it binds" : "they bind")} NULL. The providers declare {string.Join(", ", declared.Order(StringComparer.OrdinalIgnoreCase).Select(name => ":APP." + name))}.";
     }
 
+    /// <summary>The providers' merged values for the context's principal, page, form and parameters, asked once per request scope.</summary>
     public async ValueTask<IReadOnlyDictionary<string, object?>> ResolveAsync(FormExecutionContext context, CancellationToken ct)
     {
         if (Providers.Length == 0) return None;
+        var key = (context.Member, context.PageKey, context.FormKey, Signature(context.Parameters));
+        if (resolved.TryGetValue(key, out var known)) return known;
         var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var provider in Providers)
             foreach (var (name, value) in await provider.ResolveAsync(context, ct) ?? None)
                 if (SqlTemplate.IsIdentifier(name)) values[name] = value;
-        return values;
+        return resolved[key] = values;
     }
+
+    /// <summary>The request's parameters as one text, names in any letter case, so two contexts with the same parameters share an answer.</summary>
+    private static string Signature(IReadOnlyDictionary<string, string>? parameters) => parameters is null ? ""
+        : string.Join('\u001e', parameters.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase).Select(pair => pair.Key.ToUpperInvariant() + '\u001f' + pair.Value));
 
     /// <summary>A value as a field default reads it: invariant text, dates as ISO, nothing for null or empty.</summary>
     public static string? Text(object? value) => value switch {

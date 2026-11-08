@@ -48,7 +48,8 @@ public sealed class DataSourcePreview(DataSourceRuntime runtime, BindVariablePro
         var plan = runtime.Inspect(definition, errors);
         if (plan is null || errors.Count > 0) return new([], null, errors.Count > 0 ? errors : ["The data source could not be prepared."]);
         var columns = plan.Columns.Select(c => new DataSourcePreviewColumn(c.Field, c.Column, c.Kind, c.ReadOnly, c.Required)).ToArray();
-        var now = runtime.Now();
+        // Without a sample, the editor's own facts and the current time, as a request would bind them; parameters and application values bind NULL.
+        var current = new BindVariableValues(editor, null, runtime.Now(), null);
         object? Value(BindVariable variable)
         {
             if (values.TryGetValue(variable.ToString(), out var sample))
@@ -66,12 +67,7 @@ public sealed class DataSourcePreview(DataSourceRuntime runtime, BindVariablePro
                     throw new DataSourceException("NOW needs a date and time value.");
                 return plan.Dialect.Now(instant);
             }
-            return variable.Kind switch {
-                BindVariableKind.UserKey => editor.Key, BindVariableKind.UserSid => editor.Sid,
-                BindVariableKind.UserName => editor.Name, BindVariableKind.UserEmail => editor.Email,
-                BindVariableKind.UserGroups => editor.Groups, BindVariableKind.Now => plan.Dialect.Now(now.DateTime),
-                BindVariableKind.NowUtc => plan.Dialect.NowUtc(now.UtcDateTime), _ => null,
-            };
+            return current.Bind(variable, plan.Dialect);
         }
         try
         {

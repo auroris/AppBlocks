@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Umbraco.Cms.Api.Management.Controllers;
 using Umbraco.Cms.Api.Management.Routing;
-using Umbraco.Cms.Core.Security;
+using AppBlocks.Authentication;
 using Umbraco.Cms.Web.Common.Authorization;
 
 namespace AppBlocks.Management;
@@ -17,10 +17,9 @@ public sealed record AntiSpamServiceStatus(string Alias, string Name, string Sec
 [ApiVersion("1.0")]
 [VersionedApiBackOfficeRoute("appblocks")]
 [ApiExplorerSettings(GroupName = "AppBlocks")]
-public sealed class AntiSpamSettingsController(AntiSpamGate gate, AntiSpamSettings settings, AntiSpamHealth health, IBackOfficeSecurityAccessor security) : ManagementApiControllerBase
+[Authorize(Policy = AppBlocksAuthorization.AdministratorPolicy)]
+public sealed class AntiSpamSettingsController(AntiSpamGate gate, AntiSpamSettings settings, AntiSpamHealth health) : ManagementApiControllerBase
 {
-    private bool Admin => security.BackOfficeSecurity?.CurrentUser?.IsAdmin() == true;
-
     private AntiSpamServiceStatus[] Statuses() => gate.Services.Select(service =>
     {
         var problem = health.Current(service.Alias);
@@ -31,7 +30,6 @@ public sealed class AntiSpamSettingsController(AntiSpamGate gate, AntiSpamSettin
     [HttpGet("anti-spam")]
     public IActionResult List()
     {
-        if (!Admin) return Forbid();
         Response.Headers.CacheControl = "no-store";
         return Ok(Statuses());
     }
@@ -40,7 +38,6 @@ public sealed class AntiSpamSettingsController(AntiSpamGate gate, AntiSpamSettin
     [Authorize(Policy = AuthorizationPolicies.SectionAccessSettings)]
     public async Task<IActionResult> Save(SaveAntiSpamKeys request, CancellationToken ct)
     {
-        if (!Admin) return Forbid();
         Response.Headers.CacheControl = "no-store";
         if (gate.Find(request.Service) is not { } service) return Problem("Choose one of the services this site offers.", statusCode: 422);
         try { await settings.SaveAsync(request with { Service = service.Alias }, ct); }

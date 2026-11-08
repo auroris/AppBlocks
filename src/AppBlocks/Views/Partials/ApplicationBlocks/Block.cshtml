@@ -53,7 +53,7 @@ else if (alias == "appForm")
     }
     else
     {
-        var destination = definition.Interface.Value<IPublishedContent>("returnPage")?.Url() ?? Context.Request.PathBase + "/";
+        var destination = definition.ReturnUrl(Context.Request.PathBase);
         <form class="app-form" data-label-position="@(string.Equals(block.Value<string>("labelPosition")?.Trim(), "left", StringComparison.OrdinalIgnoreCase) ? "left" : "top")" data-app-form data-api="@(Context.Request.PathBase)/api/forms/@Model.Page.Key/@item.ContentKey@apiQuery"
             data-key-parameter="@definition.KeyParameter" data-return="@destination" data-anonymous="@(Model.Anonymous ? "true" : null)" novalidate>
             @if (!string.IsNullOrWhiteSpace(heading)) { <h2>@heading</h2> }
@@ -136,7 +136,7 @@ else if (alias == AppBlockSchema.AntiSpamAlias && Model.Form is not null)
 }
 else if (alias == "appActions" && Model.Form is not null)
 {
-    var destination = Model.Form.Interface.Value<IPublishedContent>("returnPage")?.Url() ?? Context.Request.PathBase + "/";
+    var destination = Model.Form.ReturnUrl(Context.Request.PathBase);
     <div class="app-form-actions">
         <button type="submit" data-save>@(Text("saveLabel") ?? "Save")</button>
         <a href="@destination">@(Text("cancelLabel") ?? "Cancel")</a>

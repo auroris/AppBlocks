@@ -28,7 +28,7 @@ public sealed class ConnectionTables(ConnectionCatalog connections)
         while (await reader.ReadAsync(timeout.Token))
         {
             var schema = reader.GetString(0); var table = reader.GetString(1);
-            string Quote(string item) => info.Provider == "sqlServer" ? "[" + item.Replace("]", "]]") + "]" : "\"" + item.Replace("\"", "\"\"") + "\"";
+            string Quote(string item) => info.Provider == DatabaseDialect.SqlServer.ProviderName() ? "[" + item.Replace("]", "]]") + "]" : "\"" + item.Replace("\"", "\"\"") + "\"";
             tables.Add(new(schema.Length > 0 ? schema + "." + table : table, schema.Length > 0 ? Quote(schema) + "." + Quote(table) : Quote(table)));
         }
         return tables;

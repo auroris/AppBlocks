@@ -31,7 +31,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public DataSourceDefinition Definition => definition;
     /// <summary>Whether anonymous reads can reach the policies, subject to the calling page and owning record's access.</summary>
     public bool AllowsAnonymousRead => CanRead(DataSourceUser.Anonymous);
-    /// <summary>What :APP. binds, asked once per operation and once per batch of rows, so every row of a save sees the same answer; nothing without a provider, as in a test.</summary>
+    /// <summary>What :APP. binds, which the providers answer once per request, so every row of a save sees the same answer; nothing without a provider, as in a test.</summary>
     private async Task<IReadOnlyDictionary<string, object?>?> AppAsync(FormExecutionContext context, CancellationToken ct) => providers is null ? null : await providers.ResolveAsync(context, ct);
     public string Alias => definition.Alias;
     public string ContractVersion => Entry.Plan?.ContractVersion ?? "unavailable";
@@ -136,6 +136,8 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         Dictionary<PlanColumn, object?> values, DateTimeOffset now, DbConnection connection, DbTransaction transaction, IReadOnlyDictionary<string, object?>? app, CancellationToken ct,
         IReadOnlyList<DataSourceDetail>? details = null)
     {
+        // A blank for a column that must hold a value leaves it to its insert default or the database's default; the form required it otherwise.
+        values = values.Where(v => v.Value is not null || !v.Key.NeedsValue).ToDictionary(v => v.Key, v => v.Value);
         var binder = new Binder(plan, user, context, now, values, app);
         var row = new Dictionary<PlanColumn, object?>(values);
         foreach (var value in plan.Defaults.Where(d => !values.ContainsKey(d.Column)))
@@ -160,8 +162,8 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         if (plan.UpdatedBy is { } updatedBy) row[updatedBy] = user.Name;
         if (plan.CreatedAt is { } createdAt) row[createdAt] = FieldValues.FromValue(now.DateTime, createdAt.Kind, out _);
         if (plan.UpdatedAt is { } updatedAt) row[updatedAt] = FieldValues.FromValue(now.DateTime, updatedAt.Kind, out _);
-        // Required and still empty after the defaults, with nothing in the database to fill it.
-        var missing = plan.Columns.Where(c => c.Required && c.Target is { HasDefault: false, AutoValue: false, Computed: false }
+        // A column that must hold a value and is still empty after the defaults, with nothing in the database to fill it.
+        var missing = plan.Columns.Where(c => c.NeedsValue && c.Target is { HasDefault: false, AutoValue: false, Computed: false }
             && (!row.TryGetValue(c, out var v) || v is null)).ToArray();
         if (missing.Length > 0) return new(422, Errors: missing.ToDictionary(c => c.Field, _ => new[] { "A value is required." }));
         // Asked inside the transaction, so a rule that counts other rows sees what the insert will join; a refusal also undoes what the class wrote.
@@ -474,7 +476,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
                 else if (stored is not null && FieldValues.Unchanged(property.Value, stored.GetValueOrDefault(column))) continue;
                 else
                 {
-                    var value = FieldValues.FromJson(property.Value, column, out var error);
+                    var value = FieldValues.FromJson(property.Value, column, updating: stored is not null, out var error);
                     if (error is not null) errors[column.Field] = [error];
                     else values[column] = value;
                 }
@@ -650,24 +652,16 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         return [key];
     }
 
-    /// <summary>The values of the bind variables for one operation: the caller's facts, the request's parameters, the clock and the record's fields.</summary>
+    /// <summary>The values of the bind variables for one operation: those that hold for the whole operation (<see cref="BindVariableValues"/>) and the record's fields.</summary>
     private sealed class Binder(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, DateTimeOffset now, IReadOnlyDictionary<PlanColumn, object?>? fields, IReadOnlyDictionary<string, object?>? app)
     {
+        private BindVariableValues Shared => new(user, context.Parameters, now, app);
+
         public Binder With(IReadOnlyDictionary<PlanColumn, object?> values) => new(plan, user, context, now, values, app);
 
-        public object? Value(BindVariable variable) => variable.Kind switch {
-            BindVariableKind.UserSid => user.Sid,
-            BindVariableKind.UserName => user.Name,
-            BindVariableKind.UserKey => user.Key,
-            BindVariableKind.UserEmail => user.Email,
-            BindVariableKind.UserGroups => user.Groups,
-            BindVariableKind.Now => plan.Dialect.Now(now.DateTime),
-            BindVariableKind.NowUtc => plan.Dialect.NowUtc(now.UtcDateTime),
-            BindVariableKind.Param => Parameter(variable.Name!),
-            BindVariableKind.App => app?.GetValueOrDefault(variable.Name!),
-            BindVariableKind.Arg => null,
-            _ => Field(variable.Name!) is { } column && fields?.TryGetValue(column, out var value) == true ? ToDatabase(plan, column, value) : null,
-        };
+        public object? Value(BindVariable variable) => variable.Kind == BindVariableKind.Field
+            ? Field(variable.Name!) is { } column && fields?.TryGetValue(column, out var value) == true ? ToDatabase(plan, column, value) : null
+            : Shared.Bind(variable, plan.Dialect);
 
         /// <summary>An insert default's value as the canonical value of its field; invalid when a parameter or field does not convert.</summary>
         public object? Default(InsertValue value, out bool valid)
@@ -676,23 +670,19 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
             if (value.Variable is not { } variable) return value.Literal;
             var raw = variable.Kind switch {
                 BindVariableKind.Now => now.DateTime,
-                // A text field takes the ISO form with Z, which sorts as text; the others take the UTC date, time or moment.
+                // A text field takes the ISO form with Z, which sorts as text; a date or time field takes the UTC date or time. The planner
+                // refuses it for a date-time field, which holds the web server's local time.
                 BindVariableKind.NowUtc => value.Column.Kind == FieldKinds.Text ? FieldValues.UtcText(now) : now.UtcDateTime,
-                BindVariableKind.Param => Parameter(variable.Name!),
-                BindVariableKind.App => app?.GetValueOrDefault(variable.Name!),
                 BindVariableKind.Field => Field(variable.Name!) is { } column && fields?.TryGetValue(column, out var current) == true ? FieldValues.ToJson(current) : null,
-                BindVariableKind.UserSid => user.Sid,
-                BindVariableKind.UserName => user.Name,
-                BindVariableKind.UserKey => user.Key,
-                BindVariableKind.UserEmail => user.Email,
-                _ => null,
+                // A list fills no single field; reading the definition refuses it.
+                BindVariableKind.UserGroups => null,
+                _ => Shared.Value(variable),
             };
             var result = FieldValues.FromValue(raw is bool flag ? (flag ? "true" : "false") : raw, value.Column.Kind, out valid);
             if (valid && result is not null && !FieldValues.Check(result, value.Column, out _)) valid = false;
             return valid ? result : null;
         }
 
-        private string? Parameter(string name) => context.Parameters?.FirstOrDefault(p => p.Key.Equals(name, StringComparison.OrdinalIgnoreCase)).Value;
         private PlanColumn? Field(string alias) => plan.Columns.FirstOrDefault(c => c.Field.Equals(alias, StringComparison.OrdinalIgnoreCase));
     }
 }

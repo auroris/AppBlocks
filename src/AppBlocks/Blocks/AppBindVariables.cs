@@ -1,8 +1,5 @@
 using System.Globalization;
 using System.Security.Claims;
-using System.Text.RegularExpressions;
-using Microsoft.AspNetCore.Identity;
-using Umbraco.Cms.Core.Services;
 using AppBlocks.Authentication;
 using AppBlocks.DataSources;
 using AppBlocks.Forms;
@@ -21,88 +18,67 @@ namespace AppBlocks.Blocks;
 /// <param name="Now">The web server's local date and time when the page rendered, with its offset, from which <c>:NOW_UTC</c> takes the UTC moment.</param>
 /// <param name="Query">The page's query string, which <c>:PARAM.name</c> reads.</param>
 /// <param name="Application">The values the application's bind variable providers computed for the page, which <c>:APP.name</c> reads; null where none ran.</param>
-public sealed partial record AppBindVariables(string Key, string? Sid, string? Name, string? Email, DateTimeOffset Now, IQueryCollection Query, IReadOnlyDictionary<string, object?>? Application = null)
+public sealed record AppBindVariables(string Key, string? Sid, string? Name, string? Email, DateTimeOffset Now, IQueryCollection Query, IReadOnlyDictionary<string, object?>? Application = null)
 {
     /// <summary>
     /// Resolves a default for a field of the given kind (<see cref="Forms.FormField.Kind"/>): one of the variables,
-    /// whole and in any case, or else the literal text. A variable without a value, such as the SID of an account
-    /// that has none or a parameter the address does not carry, resolves to null, which leaves the field as the
-    /// resource initialised it. <c>:NOW</c> is written as the kind's own value: a date, a time, an ISO date and
-    /// time with its offset, or for text the date and time in the invariant <c>yyyy-MM-dd HH:mm</c>; a number or a
-    /// checkbox has no "now". <c>:NOW_UTC</c> is the same moment in UTC: the UTC date or time, and for a date-time or
-    /// text field the ISO form with <c>Z</c>, such as <c>2026-11-01T07:30:00Z</c>.
+    /// whole and in any case, as <see cref="BindVariable.Parse"/> reads it, or else the literal text. A variable without
+    /// a value, such as the SID of an account that has none or a parameter the address does not carry, resolves to null,
+    /// which leaves the field as the resource initialised it. <c>:NOW</c> is written as the kind's own value: a date, a
+    /// time, an ISO date and time with its offset, or for text the date and time in the invariant <c>yyyy-MM-dd HH:mm</c>;
+    /// a number or a checkbox has no "now". <c>:NOW_UTC</c> is the same moment in UTC: the UTC date or time, and for a text
+    /// field the ISO form with <c>Z</c>, such as <c>2026-11-01T07:30:00Z</c>. A date-time field holds the web server's
+    /// local time, so publishing refuses <c>:NOW_UTC</c> for one, and it resolves to null here.
     /// </summary>
     public string? Resolve(string? value, string kind)
     {
         var text = value?.Trim();
         if (string.IsNullOrEmpty(text)) return null;
-        var variable = Variable().Match(text);
-        if (!variable.Success) return text;
-        var resolved = variable.Groups["param"].Success
-            ? Query[variable.Groups["param"].Value] is { Count: > 0 } values ? values[0] : null
-            : variable.Groups["app"].Success ? BindVariableProviders.Text(Application?.GetValueOrDefault(variable.Groups["app"].Value))
-            : variable.Groups["name"].Value.ToUpperInvariant() switch {
-                "USER_SID" => Sid,
-                "USER_NAME" => Name,
-                "USER_KEY" => Key,
-                "USER_EMAIL" => Email,
-                "NOW" => kind switch {
-                    "date" => Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-                    "time" => Now.ToString("HH:mm", CultureInfo.InvariantCulture),
-                    "datetime" => Now.ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture),
-                    "text" => Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
-                    _ => null,
-                },
-                "NOW_UTC" => kind switch {
-                    "date" => Now.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-                    "time" => Now.UtcDateTime.ToString("HH:mm", CultureInfo.InvariantCulture),
-                    "datetime" or "text" => FieldValues.UtcText(Now),
-                    _ => null,
-                },
-                // Not one of the variables, so the editor meant the text itself.
-                _ => text,
-            };
+        // Not one of the variables, so the editor meant the text itself.
+        if (text[0] != ':' || BindVariable.Parse(text[1..]) is not { } variable) return text;
+        var resolved = variable.Kind switch {
+            BindVariableKind.Param => Query[variable.Name!] is { Count: > 0 } values ? values[0] : null,
+            BindVariableKind.App => BindVariableProviders.Text(Application?.GetValueOrDefault(variable.Name!)),
+            BindVariableKind.UserSid => Sid,
+            BindVariableKind.UserName => Name,
+            BindVariableKind.UserKey => Key,
+            BindVariableKind.UserEmail => Email,
+            BindVariableKind.Now => kind switch {
+                FieldKinds.Date => Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                FieldKinds.Time => Now.ToString("HH:mm", CultureInfo.InvariantCulture),
+                FieldKinds.DateTime => Now.ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture),
+                FieldKinds.Text => Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
+                _ => null,
+            },
+            BindVariableKind.NowUtc => kind switch {
+                FieldKinds.Date => Now.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                FieldKinds.Time => Now.UtcDateTime.ToString("HH:mm", CultureInfo.InvariantCulture),
+                FieldKinds.Text => FieldValues.UtcText(Now),
+                _ => null,
+            },
+            // :USER_GROUPS is a list, and a field default has no record or backing class for :FIELD. and :ARG., so the text stays as written.
+            _ => text,
+        };
         return string.IsNullOrEmpty(resolved) ? null : resolved;
     }
-
-    [GeneratedRegex(@"^:(?:PARAM\.(?<param>[A-Za-z0-9_\-]+)|APP\.(?<app>[A-Za-z_][A-Za-z0-9_]*)|(?<name>[A-Za-z_]+))$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex Variable();
 }
 
 /// <summary>
-/// Reads the signed-in person's facts from Umbraco rather than from the cookie's claims, so a renamed account or
-/// a newly linked SID applies at once. A member is read by the integer id its cookie carries, a backoffice user
-/// by its key; the SID is the provider key of the account's external login, which every sign-in provider of the
-/// platform stores.
+/// Reads the signed-in person's facts through <see cref="IDataSourceUserResolver"/>, as the data sources do: from Umbraco rather than
+/// from the cookie's claims, so a renamed account or a newly linked SID applies at once, and only for an approved account that is not
+/// locked out. The time is the data source runtime's, so a page's field defaults and its data sources read one clock.
 /// </summary>
-public sealed class AppBindVariableResolver(IUserService users, IMemberService members, IExternalLoginWithKeyService logins, BindVariableProviders? providers = null)
+public sealed class AppBindVariableResolver(IDataSourceUserResolver users, DataSourceRuntime runtime, BindVariableProviders? providers = null)
 {
-    /// <param name="pageKey">The page rendering, which the providers see as the context's page with no form; null leaves the application variables without values.</param>
+    /// <param name="pageKey">The page rendering, which the person's page permissions and the providers see; null leaves the application variables without values.</param>
     public async Task<AppBindVariables> ResolveAsync(ClaimsPrincipal person, IQueryCollection query, Guid? pageKey = null)
     {
-        var id = person.FindFirstValue(ClaimTypes.NameIdentifier);
-        Guid? key = null; string? name = null, email = null;
-        if (ApplicationAccessPolicy.IsBackOfficeIdentity(person))
-        {
-            // The built-in administrator's legacy id is -1.
-            var user = Guid.TryParse(id, out var userKey) ? await users.GetAsync(userKey)
-                : int.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var legacy) ? users.GetUserById(legacy) : null;
-            (key, name, email) = (user?.Key, user?.Username, user?.Email);
-        }
-        else if (person.Identity?.AuthenticationType == IdentityConstants.ApplicationScheme)
-        {
-            var member = int.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var memberId) ? members.GetById(memberId)
-                : Guid.TryParse(id, out var memberKey) ? (await members.GetByKeysAsync(memberKey)).FirstOrDefault() : null;
-            (key, name, email) = (member?.Key, member?.Username, member?.Email);
-        }
-        var sid = key is { } account
-            ? logins.GetExternalLogins(account).Select(login => login.ProviderKey).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
-            : null;
-        // Field defaults are resolved once per page, before any form, so the providers see the page and an empty form key.
-        var application = pageKey is { } rendering && providers is { Any: true }
-            ? await providers.ResolveAsync(new FormExecutionContext(person, rendering, Guid.Empty, "", Parameters: query.Where(p => p.Value.Count == 1).ToDictionary(p => p.Key, p => p.Value.ToString(), StringComparer.OrdinalIgnoreCase)), default)
-            : null;
-        return new(ApplicationAccessPolicy.UserKey(person), sid, name, NonEmpty(email), DateTimeOffset.Now, query, application);
+        // Field defaults are resolved once per page, before any form, so the resolver and the providers see the page and an empty form key.
+        var context = new FormExecutionContext(person, pageKey ?? Guid.Empty, Guid.Empty, "",
+            Parameters: query.Where(p => p.Value.Count == 1).ToDictionary(p => p.Key, p => p.Value.ToString(), StringComparer.OrdinalIgnoreCase));
+        var user = await users.ResolveAsync(context, default) ?? DataSourceUser.Anonymous;
+        var application = pageKey is not null && providers is { Any: true } ? await providers.ResolveAsync(context, default) : null;
+        return new(user.Key, user.Sid, user.Name, NonEmpty(user.Email), runtime.Now(), query, application);
     }
 
     private static string? NonEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;

@@ -1,4 +1,5 @@
 using Asp.Versioning;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Umbraco.Cms.Api.Management.Controllers;
@@ -17,12 +18,12 @@ public sealed record AttachmentPurgeRequest(int? RetentionDays);
 [ApiVersion("1.0")]
 [VersionedApiBackOfficeRoute("attachments")]
 [ApiExplorerSettings(GroupName = "Attachments")]
-public sealed class AttachmentsManagementController(AttachmentStore store, ApplicationAccessPolicy access, IOptions<AttachmentSettings> settings) : ManagementApiControllerBase
+[Authorize(Policy = AppBlocksAuthorization.AdministratorPolicy)]
+public sealed class AttachmentsManagementController(AttachmentStore store, IOptions<AttachmentSettings> settings) : ManagementApiControllerBase
 {
     [HttpPost("purge")]
     public async Task<IActionResult> Purge([FromBody] AttachmentPurgeRequest? request, CancellationToken ct)
     {
-        if (!await access.IsBackOfficeAdministratorAsync(User)) return Problem("Only a backoffice Administrator may purge removed attachments.", statusCode: 403);
         var days = request?.RetentionDays ?? settings.Value.RetentionDays;
         if (days < 0) return Problem("Retention days cannot be negative.", statusCode: 422);
         Response.Headers.CacheControl = "no-store";

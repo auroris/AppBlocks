@@ -18,6 +18,8 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
     public string Revision => $"{Page.UpdateDate.Ticks}:{Culture}{ListsRevision}:{Resource.ContractVersion}";
     public bool ViewOnly => Interface.Value<bool>("viewOnly");
     public string KeyParameter => Interface.Value<string>("keyParameter") is { Length: > 0 } key ? key : "id";
+    /// <summary>Where Save and Cancel return to: the Form interface's return page, or the site's root under <paramref name="pathBase"/>.</summary>
+    public string ReturnUrl(PathString pathBase) => Interface.Value<IPublishedContent>("returnPage")?.Url() ?? pathBase + "/";
     public static async Task<FormDefinition?> ResolveAsync(IPublishedContent page, Guid key, FormResourceRegistry resources, PublishedDataCatalog? definitions = null, string? culture = null)
     {
         var blocks = AppBlockContent.Blocks(page, culture);

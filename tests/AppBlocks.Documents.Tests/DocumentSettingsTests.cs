@@ -59,21 +59,12 @@ public sealed class DocumentSettingsTests
     }
 
     [Fact]
-    public async Task Non_administrators_cannot_read_or_save_settings()
+    public void Only_administrators_can_read_or_save_settings()
     {
-        using var site = new SettingsSite();
-        var accessor = System.Reflection.DispatchProxy.Create<IBackOfficeSecurityAccessor, EmptySecurity>();
-        var controller = new DocumentsSettingsController(site.Store, accessor, null!);
-        Assert.IsType<ForbidResult>(controller.Get());
-        Assert.IsType<ForbidResult>(await controller.Save(new(null, "Other", "https://other.example/"), default));
-        Assert.IsType<ForbidResult>(await controller.Printers(new(null, "https://other.example/"), default));
-        Assert.IsType<ForbidResult>(await controller.Delete(Guid.NewGuid(), default));
-        Assert.False(site.Store.Get().Saved);
-    }
-
-    public class EmptySecurity : System.Reflection.DispatchProxy
-    {
-        protected override object? Invoke(System.Reflection.MethodInfo? method, object?[]? args) => null;
+        // The administrator policy guards every action of the controller, before any of them runs.
+        var policies = typeof(DocumentsSettingsController).GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), true)
+            .Cast<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>().Select(attribute => attribute.Policy);
+        Assert.Contains(AppBlocks.Authentication.AppBlocksAuthorization.AdministratorPolicy, policies);
     }
 
     internal sealed class SettingsSite : IDisposable

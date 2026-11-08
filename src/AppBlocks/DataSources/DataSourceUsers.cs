@@ -100,14 +100,18 @@ public interface IDataSourceUserResolver
 }
 
 /// <summary>
-/// Reads current account status and groups from Umbraco on every operation. Both Members and backoffice Users
-/// must be approved and unlocked. User Group membership never decides whether an identity can be resolved.
+/// Reads current account status and groups from Umbraco, once per request: the instance is scoped, and keeps what it read by the
+/// principal's Member and backoffice identities and the calling page for as long as it lives, since an account's facts do not change
+/// within one request. The next request reads them afresh. Both Members and backoffice Users must be approved and unlocked. User Group
+/// membership never decides whether an identity can be resolved.
 /// </summary>
 public sealed class UmbracoDataSourceUsers(IMemberManager members, ApplicationAccessPolicy access, IExternalLoginWithKeyService logins,
     IContentPermissionService? permissions = null) : IDataSourceUserResolver
 {
     /// <summary>Enough groups for any real account, few enough to stay far below a statement's parameter limit.</summary>
     public const int MaxGroups = 500;
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string? Member, string? BackOffice, Guid Page), DataSourceUser?> resolved = new();
 
     public Task<DataSourceUser?> ResolveAsync(ClaimsPrincipal principal, CancellationToken ct) => ResolveAsync(principal, Guid.Empty, ct);
 
@@ -116,10 +120,16 @@ public sealed class UmbracoDataSourceUsers(IMemberManager members, ApplicationAc
     private async Task<DataSourceUser?> ResolveAsync(ClaimsPrincipal principal, Guid pageKey, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var member = await ResolveMemberAsync(ApplicationAccessPolicy.MemberIdentity(principal));
-        var backOfficeUser = await ResolveBackOfficeAsync(ApplicationAccessPolicy.BackOfficeIdentity(principal), pageKey);
-        return member is null ? backOfficeUser : backOfficeUser is null ? member : DataSourceUser.Combine(member, backOfficeUser);
+        var memberIdentity = ApplicationAccessPolicy.MemberIdentity(principal);
+        var backOfficeIdentity = ApplicationAccessPolicy.BackOfficeIdentity(principal);
+        var key = (Id(memberIdentity), Id(backOfficeIdentity), pageKey);
+        if (resolved.TryGetValue(key, out var known)) return known;
+        var member = await ResolveMemberAsync(memberIdentity);
+        var backOfficeUser = await ResolveBackOfficeAsync(backOfficeIdentity, pageKey);
+        return resolved[key] = member is null ? backOfficeUser : backOfficeUser is null ? member : DataSourceUser.Combine(member, backOfficeUser);
     }
+
+    private static string? Id(ClaimsIdentity? identity) => identity?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
     private async Task<DataSourceUser?> ResolveBackOfficeAsync(ClaimsIdentity? identity, Guid pageKey)
     {

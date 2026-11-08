@@ -47,6 +47,23 @@ public sealed class WebPageBlocksTests
     }
 
     [Fact]
+    public void A_local_date_is_compared_in_utc_and_reported_as_registered()
+    {
+        var local = DateTime.UtcNow.AddDays(1).ToLocalTime();
+        var context = new DefaultHttpContext();
+        context.RegisterPageUpdateDate(local);
+        // An earlier moment loses, whichever way it is written.
+        context.RegisterPageUpdateDate(new DateTimeOffset(local).AddHours(-1).ToOffset(TimeSpan.FromHours(9)));
+        context.RegisterPageUpdateDate(local.AddMinutes(-1));
+        // A layout shows this as the page's "Date modified", so it is the date the page registered, not its UTC form.
+        var reported = context.GetPageUpdateDate(DateTime.MinValue);
+        Assert.Equal(local, reported);
+        Assert.Equal(local.Kind, reported.Kind);
+        Assert.False(context.ApplyCacheHeaders(reported));
+        Assert.Equal(local.ToUniversalTime().ToString("R"), context.Response.Headers.LastModified.ToString());
+    }
+
+    [Fact]
     public void A_date_with_an_offset_is_reported_and_validated_in_utc()
     {
         // After the process's deployment stamp, which the validators never fall below.

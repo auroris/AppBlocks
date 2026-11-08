@@ -33,7 +33,9 @@ public static class InteractiveReportsExtensions
     /// <summary>Adds the optional reports companion. Its composer calls this automatically when installed.</summary>
     public static IUmbracoBuilder AddAppBlocksInteractiveReports(this IUmbracoBuilder builder, Action<InteractiveReportBuilder>? configure = null)
     {
-        builder.AddAppBlocks();
+        // Report definition nodes keep out of pages' URLs as data source nodes do, and the reports store's own connection cannot be saved over.
+        builder.AddAppBlocks(appBlocks => appBlocks.AddKeySegmentContentType(PublishedReportCatalog.ReportAlias)
+            .ReserveConnectionName(InteractiveReportsSite.ReportsConnection));
         var services = builder.Services;
         if (services.FirstOrDefault(d => d.ServiceType == typeof(Registration))?.ImplementationInstance is Registration existing)
         {

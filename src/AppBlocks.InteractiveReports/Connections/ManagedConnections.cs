@@ -24,9 +24,10 @@ internal static class ManagedReportCompiler
         detached.Connection = "";
         detached.DataSource = connection.Value;
         // Interactive Reports uses one Oracle driver token and a separate legacy SQL dialect.
-        detached.Provider = connection.Provider == "oracle11g" ? "oracle" : connection.Provider;
+        var legacyOracle = connection.Provider == DatabaseDialect.Oracle11g.ProviderName();
+        detached.Provider = legacyOracle ? DatabaseDialect.Oracle.ProviderName() : connection.Provider;
         var compiled = compiler.Compile(name, detached);
-        if (connection.Provider == "oracle11g") compiled.Dialect = ReportDialect.Oracle11g;
+        if (legacyOracle) compiled.Dialect = ReportDialect.Oracle11g;
         // The engine stores connection material privately under a content-addressed identifier.
         // Definitions returned to clients never include the material used to resolve that identifier.
         compiled.DataSource = null;

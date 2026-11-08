@@ -5,7 +5,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using AppBlocks.Connections;
-using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 
 namespace AppBlocks.Databases;
@@ -100,18 +99,8 @@ public static class ApplicationDatabase
     internal static string Script(ApplicationSchema schema, string dialect)
         => string.Concat(schema.Scripts(dialect).Select(script => Encoding.UTF8.GetString(script.Content).TrimStart('﻿')));
 
-    /// <summary>The dialect folder name for a connection, by its type.</summary>
-    public static string Dialect(DbConnection connection) => connection switch {
-        SqliteConnection => "sqlite",
-        SqlConnection => "sqlserver",
-        // Also recognize host-supplied PostgreSQL and Oracle connections by name.
-        _ => connection.GetType().Name switch {
-            "NpgsqlConnection" => "postgresql",
-            "OracleConnection" => "oracle",
-            _ => throw new InvalidOperationException(
-                $"An application database is SQLite, SQL Server, PostgreSQL or Oracle; {connection.GetType().FullName} is none of them."),
-        },
-    };
+    /// <summary>The schema folder name for a connection, by its type (<see cref="DatabaseKinds.Of"/> and <see cref="DatabaseKinds.SchemaFolder"/>).</summary>
+    public static string Dialect(DbConnection connection) => DatabaseKinds.Of(connection).SchemaFolder();
 
     private static DbConnection Create(IServiceProvider provider, string name, string? defaultFile, bool forUse)
     {

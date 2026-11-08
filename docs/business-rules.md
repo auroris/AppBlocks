@@ -200,22 +200,24 @@ Page Public Access, row restrictions and every `IDataSourcePolicy` still apply t
 
 There is no administrator exception to Specific groups: backoffice User groups do not satisfy Member group requirements. When your rules involve backoffice Users, use Not public and enforce the rules in `IDataSourcePolicy` using `request.User`. Each registered policy must allow the operation. Custom `IFormResource` implementations enforce their own rules on every operation.
 
-In C#, the required `DataSourceDefinition.Access` property must be `DataSourceAccess.Public`, `NotPublic` or `SpecificGroups`. Null and unknown values fail runtime validation before a connection is opened. Read groups never supply a missing Access value. Changing the access setting changes the definition fingerprint and form contract version.
+In C#, the required `DataSourceDefinition.Access` property must be `DataSourceAccess.Public`, `NotPublic` or `SpecificGroups`. Null and unknown values fail runtime validation before a connection is opened. Read groups never supply a missing Access value. Changing the access setting changes the definition fingerprint and form contract version. Renaming the data source node changes neither, so forms already open on it stay current.
 
 Fresh installations include the required Access editor. Existing sites retain their installed document types: add the mandatory `access` property to `sqlDataSource` using the **Application: Data source access** radio-button data type, with the choices **Public**, **Not public**, and **Specific groups**, or apply the updated packaged schema through the site's schema-management process. Set and publish an explicit Access value on every existing source. Previously published sources with no value are unavailable until corrected, including sources that already have Read groups. Public as the starting value comes from the AppBlocks backoffice extension rather than the stored definitions, so it applies on existing sites as soon as the package is updated, and only to sources created in the backoffice: opening an existing source never fills in its Access.
 
 **Row restriction** limits rows without any C#. It is added to every fetch and write, for example `OWNER_KEY = :USER_KEY` or `REGION IN (:USER_GROUPS)`, and a write that would leave the restriction is refused. It may use `:USER_KEY`, `:USER_SID`, `:USER_NAME`, `:USER_EMAIL`, `:USER_GROUPS`, `:NOW` and `:NOW_UTC`. `:USER_GROUPS` holds the account's group display names, so a Member and a backoffice User are matched against different lists.
 
-**The clock** has two bind variables, read once per operation so they name the same moment. `:NOW` is the web server's local wall time, the value the audit columns record. `:NOW_UTC` is that moment in UTC, for an application that stores UTC stamps; it needs no zone conversion in SQL, so it stays correct in the autumn hour that repeats. Each dialect binds it in the form its UTC stamps compare with:
+**The clock** has two bind variables, read once per operation so they name the same moment. `:NOW` is the web server's local wall time, the value the audit columns record. `:NOW_UTC` is that moment in UTC, for an application that stores UTC stamps; it needs no zone conversion in SQL, so it stays correct in the autumn hour that repeats.
+
+A date-time field whose column has no time zone holds the web server's local time: the engine writes it as `:NOW` would and reads it back the same way. A UTC stamp therefore lives in a column the engine's date-time fields do not write, either a text field or a column your own SQL fills, such as a custom statement or a backing class's statement that binds `:NOW_UTC`. Each dialect binds `:NOW_UTC` in the form those stamps compare with:
 
 | Database | `:NOW_UTC` binds | Compare with |
 |---|---|---|
 | SQLite | ISO-8601 text with `Z`, such as `2026-11-01T07:30:00Z` | Text stamps in the same form, which sort in time order, or SQLite's date functions, which read the `Z` as UTC |
-| SQL Server | A `datetime2` holding the UTC wall time, as `SYSUTCDATETIME()` returns | `datetime2` UTC columns; a `datetimeoffset` column compares as the same moment |
+| SQL Server | A `datetime2` holding the UTC wall time, as `SYSUTCDATETIME()` returns | `datetime2` columns your SQL writes in UTC, as `SYSUTCDATETIME()` does; a `datetimeoffset` column compares as the same moment |
 | PostgreSQL | A `timestamptz` | `timestamptz` columns |
-| Oracle | A `DATE` holding the UTC wall time, as `SYS_EXTRACT_UTC(SYSTIMESTAMP)` returns | `DATE` or `TIMESTAMP` UTC columns |
+| Oracle | A `DATE` holding the UTC wall time, as `SYS_EXTRACT_UTC(SYSTIMESTAMP)` returns | `DATE` or `TIMESTAMP` columns your SQL writes in UTC, as `SYS_EXTRACT_UTC(SYSTIMESTAMP)` does |
 
-A posting window stored as UTC text in SQLite becomes a row source condition such as `WHERE POST_FROM <= :NOW_UTC AND (POST_UNTIL IS NULL OR POST_UNTIL > :NOW_UTC)`. Field defaults and insert defaults accept both names. As a default, `:NOW_UTC` fills a date or time field with the UTC date or time, and a date-time or text field with the ISO form with `Z`.
+A posting window stored as UTC text in SQLite becomes a row source condition such as `WHERE POST_FROM <= :NOW_UTC AND (POST_UNTIL IS NULL OR POST_UNTIL > :NOW_UTC)`. Field defaults and insert defaults accept both names. As a default, `:NOW_UTC` fills a date or time field with the UTC date or time, and a text field with the ISO form with `Z`. Publishing refuses it as the default of a date-time field, since that field holds local time, and names the alternatives: `:NOW`, or a text field for a UTC stamp.
 
 **Application bind variables** are values your own code computes for an operation, written `:APP.name`. Register an `IBindVariableProvider`; it receives the execution context, the page key and form key, the signed-in person and the request's parameters, and answers with named values. Because they come from the application and not from the browser, they may filter a row source, appear in a row restriction and fill insert defaults, which `:PARAM.` never may. A site that gives each tenant a copy of the same pages decides the tenant from the page in one place and writes one data source for every copy, `WHERE TENANT_ID = :APP.tenant`; a field default of `:APP.tenant` hands the same value to a form class. A name no provider answers binds NULL.
 
@@ -240,7 +242,7 @@ public sealed class TenantProvider(IPublishedContentCache pages, IDocumentNaviga
 }
 ```
 
-Register it with `services.AddScoped<IBindVariableProvider, TenantProvider>()`. A property on the tenant's page type is the explicit way; matching the ancestor's content type alias instead works the same way. The values are resolved once per operation and once per batch of rows, so every row of a save sees the same answer. Field defaults are resolved once per page before any form, so there the context carries the page and an empty form key, and a block report's providers see its page and block. The [worked example](activity-schedule-example.md) builds a whole application on this rule.
+Register it with `services.AddScoped<IBindVariableProvider, TenantProvider>()`. A property on the tenant's page type is the explicit way; matching the ancestor's content type alias instead works the same way. The providers are asked once per request for each signed-in person, page, form and set of request parameters, and every operation and every row of a save in that request binds the same answer. Field defaults are resolved once per page before any form, so there the context carries the page and an empty form key, and a block report's providers see its page and block. The [worked example](activity-schedule-example.md) builds a whole application on this rule.
 
 A provider can also declare the names it answers, by implementing `Names`, which `IBindVariableProvider` otherwise answers with an empty list:
 
@@ -357,7 +359,7 @@ public sealed class ResolverWithExternalGroups(UmbracoDataSourceUsers umbraco, I
 }
 ```
 
-Register `builder.Services.AddScoped<UmbracoDataSourceUsers>()` and `builder.Services.AddScoped<IDataSourceUserResolver, ResolverWithExternalGroups>()`, with your `IExternalGroups` implementation. The resolver runs on every operation, so cache a slow lookup briefly. Public Access still uses the account's real Member Groups, and `IsInUserGroup` still uses `UserGroupAliases`, which this example does not change.
+Register `builder.Services.AddScoped<UmbracoDataSourceUsers>()` and `builder.Services.AddScoped<IDataSourceUserResolver, ResolverWithExternalGroups>()`, with your `IExternalGroups` implementation. AppBlocks asks the resolver on every operation, so cache a slow lookup briefly; `UmbracoDataSourceUsers` itself reads each account once per request. Public Access still uses the account's real Member Groups, and `IsInUserGroup` still uses `UserGroupAliases`, which this example does not change.
 
 Forward both resolver overloads as shown to preserve `CanEditPage`, `CanPublishPage` and `CanDeletePage` for the calling page. Existing custom resolvers that implement only the principal overload continue to work, but do not calculate page permissions.
 
@@ -557,6 +559,8 @@ A SQL data source writes its rows with statements it generates, or with the cust
 builder.Services.AddScoped<IDataSourceHandler, OrderRules>();
 ```
 
+The site checks the registered classes when it starts. Two classes with one alias, or an alias that is not one, stop the site from starting, with a message naming each.
+
 Every hook passes through by default, so a class implements only the ones it needs:
 
 | Hook | When the engine asks | What the class can do |
@@ -717,7 +721,7 @@ Your class runs twice for each anonymous page view, once when the page renders a
 
 AppBlocks does not limit how often anyone calls a public form or report. Add rate limiting in your application if the page will be exposed to the internet. Limiting how often, under Anti-spam, has a recipe for ASP.NET Core's rate limiter on `/api/forms`.
 
-A select field using a published list of values reads it through the data source engine. Select Public on its SQL source to follow the form's page access, or impose additional access restrictions. An inline list source explicitly uses Public. You can also give the field its choices in your class's `FormField.Choices`.
+A select field using a published list of values reads it through the data source engine. Select Public on its SQL source to follow the form's page access, or impose additional access restrictions. An inline list source explicitly uses Public, and reads the AppBlocks database (`AppBlocksDb`) when its connection is empty, as a data source does. You can also give the field its choices in your class's `FormField.Choices`.
 
 ## Anti-spam
 
@@ -811,7 +815,9 @@ A form submission is also limited to 1 MB, which leaves room for long text field
 
 ## Validation and trusted defaults
 
-Use field settings for required values, lengths and numeric limits. Use a resource for rules involving several fields or database records:
+Use field settings for required values, lengths and numeric limits. A SQL data source makes a field required when its column is NOT NULL and nothing else fills it: no database default, no identity or computed value, and no insert default. A NOT NULL column with a default is optional on the form. When a new record leaves it blank, the insert default or the database's default fills it. An update has no default to fall back on, so a blank for that column is refused with "A value is required." against the field. The mapping's `"required": true` or `"required": false` replaces the column's own rule.
+
+Use a resource for rules involving several fields or database records:
 
 ```csharp
 if (input.EndDate < input.StartDate)

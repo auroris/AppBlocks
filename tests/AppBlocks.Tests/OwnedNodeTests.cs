@@ -74,5 +74,12 @@ public sealed class OwnedNodeTests
         var restored = With(services => services.GetRequiredService<IContentService>().GetById(ListKey)!);
         Assert.False(restored.Trashed);
         Assert.True(restored.Published);
+
+        // A list with its own SQL and no connection reads the AppBlocks database, as a data source does.
+        var errors = new List<string>();
+        var unnamed = new Dictionary<string, object?>(first.Values) { ["connection"] = null };
+        var list = With(services => services.GetRequiredService<PublishedDataCatalog>().ReadList(Guid.NewGuid(), "Customers", alias => unnamed.GetValueOrDefault(alias), errors));
+        Assert.True(list is not null, string.Join(" ", errors));
+        Assert.Equal(AppBlocks.Connections.ConnectionCatalog.ApplicationConnection, list.DataSource.Connection);
     }
 }

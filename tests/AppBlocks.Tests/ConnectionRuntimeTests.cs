@@ -78,6 +78,39 @@ public sealed class ConnectionRuntimeTests
     }
 
     [Fact]
+    public async Task Saved_connections_are_read_once_per_version_of_the_file_and_a_hand_edit_is_picked_up()
+    {
+        var root = Directory.CreateTempSubdirectory("appblocks-saved-").FullName;
+        try
+        {
+            var config = new ConfigurationBuilder().Build();
+            var protection = new EphemeralDataProtectionProvider();
+            var catalog = new ConnectionCatalog(config, new Environment(root), protection);
+            var file = Path.Combine(root, "App_Data", "AppBlocks", "connections.json");
+            Assert.Null(catalog.Find("Business"));
+            await catalog.SaveAsync(new("Business", "sqlite", "Data Source=" + Path.Combine(root, "first.db")), default);
+            // The catalog's own save is seen at once.
+            Assert.EndsWith("first.db", catalog.Find("Business")!.Value);
+            // Another process, or a person, changes the file: the next lookup reads it again.
+            var other = new ConnectionCatalog(config, new Environment(root), protection);
+            await other.SaveAsync(new("Business", "sqlite", "Data Source=" + Path.Combine(root, "second-database.db")), default);
+            Assert.EndsWith("second-database.db", catalog.Find("Business")!.Value);
+            File.Delete(file);
+            Assert.Null(catalog.Find("Business"));
+            Assert.DoesNotContain(catalog.List(), c => c.Name == "Business");
+            // While the file stays as it is, a lookup uses what was read: a file that can no longer be parsed is not noticed until it changes.
+            await catalog.SaveAsync(new("Business", "sqlite", "Data Source=" + Path.Combine(root, "third.db")), default);
+            Assert.EndsWith("third.db", catalog.Find("Business")!.Value);
+            var written = File.GetLastWriteTimeUtc(file);
+            var text = File.ReadAllText(file);
+            File.WriteAllText(file, new string(' ', text.Length));
+            File.SetLastWriteTimeUtc(file, written);
+            Assert.EndsWith("third.db", catalog.Find("Business")!.Value);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public async Task Detected_Oracle_version_is_cached_only_for_the_current_managed_connection_revision()
     {
         var root = Directory.CreateTempSubdirectory("appblocks-oracle-").FullName;

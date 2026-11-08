@@ -20,16 +20,23 @@ internal sealed class ReportConnectionBridge(IApplicationConnectionFactory appli
         reports.SetDetectedDialect(name, ToReportDialect(dialect));
     }
 
+    /// <summary>The report engine's dialect for an AppBlocks database kind: the companion's one map between the two.</summary>
     internal static ReportDialect ToReportDialect(DatabaseDialect dialect) => dialect switch
     {
         DatabaseDialect.Sqlite => ReportDialect.Sqlite, DatabaseDialect.SqlServer => ReportDialect.SqlServer,
         DatabaseDialect.Postgres => ReportDialect.Postgres, DatabaseDialect.Oracle => ReportDialect.Oracle,
         DatabaseDialect.Oracle11g => ReportDialect.Oracle11g, _ => throw new ArgumentOutOfRangeException(nameof(dialect)),
     };
-    private static DatabaseDialect FromReportDialect(ReportDialect dialect) => dialect switch
+
+    /// <summary>The AppBlocks database kind for a report engine dialect, read back through <see cref="ToReportDialect"/>; false for one AppBlocks has no kind for.</summary>
+    internal static bool TryFromReportDialect(ReportDialect dialect, out DatabaseDialect kind)
     {
-        ReportDialect.Sqlite => DatabaseDialect.Sqlite, ReportDialect.SqlServer => DatabaseDialect.SqlServer,
-        ReportDialect.Postgres => DatabaseDialect.Postgres, ReportDialect.Oracle => DatabaseDialect.Oracle,
-        ReportDialect.Oracle11g => DatabaseDialect.Oracle11g, _ => throw new InvalidOperationException($"Unsupported database dialect: {dialect}."),
-    };
+        foreach (var candidate in DatabaseKinds.All)
+            if (ToReportDialect(candidate) == dialect) { kind = candidate; return true; }
+        kind = default;
+        return false;
+    }
+
+    private static DatabaseDialect FromReportDialect(ReportDialect dialect)
+        => TryFromReportDialect(dialect, out var kind) ? kind : throw new InvalidOperationException($"Unsupported database dialect: {dialect}.");
 }

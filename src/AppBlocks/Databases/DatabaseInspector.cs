@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using Microsoft.Data.SqlClient;
+using AppBlocks.Connections;
 using Microsoft.Data.Sqlite;
 
 namespace AppBlocks.Databases;
@@ -45,7 +46,7 @@ public static class DatabaseInspector
     /// <param name="legacyOracle">The connection is in Oracle 11.2 mode, whose identity needs a trigger as well as a sequence.</param>
     public static async Task<DatabaseInspection> InspectAsync(DbConnection connection, IReadOnlyList<string> tables, bool legacyOracle, CancellationToken ct)
     {
-        var dialect = ApplicationDatabase.Dialect(connection);
+        var kind = DatabaseKinds.Of(connection);
         var readOnlyFile = false;
         if (connection is SqliteConnection sqlite)
         {
@@ -71,11 +72,11 @@ public static class DatabaseInspector
             var found = new List<InspectedTable>();
             foreach (var table in tables)
             {
-                var state = await TableStateAsync(connection, dialect, table, timeout.Token);
-                if (state == InspectedTableState.Ready && await MayWriteAsync(connection, dialect, table, timeout.Token) == false) state = InspectedTableState.NoAccess;
+                var state = await TableStateAsync(connection, kind, table, timeout.Token);
+                if (state == InspectedTableState.Ready && await MayWriteAsync(connection, kind, table, timeout.Token) == false) state = InspectedTableState.NoAccess;
                 found.Add(new(table, state));
             }
-            var (account, canCreate, schema) = await AccountAsync(connection, dialect, legacyOracle || MajorVersion(version) < 12, timeout.Token);
+            var (account, canCreate, schema) = await AccountAsync(connection, kind, legacyOracle || MajorVersion(version) < 12, timeout.Token);
             return new(true, account, canCreate, version, found, schema);
         }
         // A database that opens and then stops answering says nothing about its tables.
@@ -88,9 +89,9 @@ public static class DatabaseInspector
     /// <summary>Whether this account can read every table, by an empty read of each on an open connection.</summary>
     public static async Task<bool> TablesReadableAsync(DbConnection connection, IEnumerable<string> tables, CancellationToken ct)
     {
-        var dialect = ApplicationDatabase.Dialect(connection);
+        var kind = DatabaseKinds.Of(connection);
         foreach (var table in tables)
-            if (await TableStateAsync(connection, dialect, table, ct) != InspectedTableState.Ready) return false;
+            if (await TableStateAsync(connection, kind, table, ct) != InspectedTableState.Ready) return false;
         return true;
     }
 
@@ -122,11 +123,11 @@ public static class DatabaseInspector
 
     private static int MajorVersion(string? version) => int.TryParse(version?.Split('.')[0], out var major) ? major : int.MaxValue;
 
-    private static async Task<InspectedTableState> TableStateAsync(DbConnection connection, string dialect, string table, CancellationToken ct)
+    private static async Task<InspectedTableState> TableStateAsync(DbConnection connection, DatabaseDialect kind, string table, CancellationToken ct)
     {
         await using var command = connection.CreateCommand();
         command.CommandTimeout = TimeoutSeconds;
-        command.CommandText = $"SELECT * FROM {Quote(dialect, table)} WHERE 1 = 0";
+        command.CommandText = $"SELECT * FROM {Quote(kind, table)} WHERE 1 = 0";
         try
         {
             await using var reader = await command.ExecuteReaderAsync(ct);
@@ -136,26 +137,26 @@ public static class DatabaseInspector
     }
 
     /// <summary>Whether the account may write to the table; null when the database cannot say without trying.</summary>
-    private static async Task<bool?> MayWriteAsync(DbConnection connection, string dialect, string table, CancellationToken ct)
+    private static async Task<bool?> MayWriteAsync(DbConnection connection, DatabaseDialect kind, string table, CancellationToken ct)
     {
         if (connection is SqliteConnection sqlite) return SQLitePCL.raw.sqlite3_db_readonly(sqlite.Handle, "main") != 1;
-        var quoted = Quote(dialect, table).Replace("'", "''", StringComparison.Ordinal);
-        var check = dialect switch {
-            "sqlserver" => $"SELECT CASE WHEN HAS_PERMS_BY_NAME(N'{quoted}', 'OBJECT', 'INSERT') = 1 AND HAS_PERMS_BY_NAME(N'{quoted}', 'OBJECT', 'UPDATE') = 1 AND HAS_PERMS_BY_NAME(N'{quoted}', 'OBJECT', 'DELETE') = 1 THEN 1 ELSE 0 END",
-            "postgresql" => $"SELECT CASE WHEN has_table_privilege('{quoted}', 'INSERT') AND has_table_privilege('{quoted}', 'UPDATE') AND has_table_privilege('{quoted}', 'DELETE') THEN 1 ELSE 0 END",
+        var quoted = Quote(kind, table).Replace("'", "''", StringComparison.Ordinal);
+        var check = kind switch {
+            DatabaseDialect.SqlServer => $"SELECT CASE WHEN HAS_PERMS_BY_NAME(N'{quoted}', 'OBJECT', 'INSERT') = 1 AND HAS_PERMS_BY_NAME(N'{quoted}', 'OBJECT', 'UPDATE') = 1 AND HAS_PERMS_BY_NAME(N'{quoted}', 'OBJECT', 'DELETE') = 1 THEN 1 ELSE 0 END",
+            DatabaseDialect.Postgres => $"SELECT CASE WHEN has_table_privilege('{quoted}', 'INSERT') AND has_table_privilege('{quoted}', 'UPDATE') AND has_table_privilege('{quoted}', 'DELETE') THEN 1 ELSE 0 END",
             _ => null,
         };
         return check is null ? null : await ScalarAsync(connection, check, ct) is { } value ? Convert.ToInt32(value) == 1 : null;
     }
 
     /// <summary>Who the account is, whether it may create the tables and then read and write them, and the schema that asks about, which is where they would land.</summary>
-    private static async Task<(string? Account, bool? CanCreate, string? Schema)> AccountAsync(DbConnection connection, string dialect, bool legacyOracle, CancellationToken ct)
+    private static async Task<(string? Account, bool? CanCreate, string? Schema)> AccountAsync(DbConnection connection, DatabaseDialect kind, bool legacyOracle, CancellationToken ct)
     {
-        switch (dialect)
+        switch (kind)
         {
-            case "sqlite":
+            case DatabaseDialect.Sqlite:
                 return (null, SQLitePCL.raw.sqlite3_db_readonly(((SqliteConnection)connection).Handle, "main") != 1, null);
-            case "sqlserver":
+            case DatabaseDialect.SqlServer:
                 // A default schema that does not exist reads as NULL here, which no right is held on, and SQL Server refuses such an account's tables.
                 var rights = await ScalarAsync(connection, """
                     DECLARE @schema nvarchar(258) = QUOTENAME(SCHEMA_NAME());
@@ -164,7 +165,7 @@ public static class DatabaseInspector
                         AND HAS_PERMS_BY_NAME(@schema, 'SCHEMA', 'UPDATE') = 1 AND HAS_PERMS_BY_NAME(@schema, 'SCHEMA', 'DELETE') = 1 AND HAS_PERMS_BY_NAME(@schema, 'SCHEMA', 'REFERENCES') = 1 THEN 1 ELSE 0 END
                     """, ct);
                 return (await ScalarAsync(connection, "SELECT USER_NAME()", ct) as string, rights is null ? null : Convert.ToInt32(rights) == 1, await ScalarAsync(connection, "SELECT SCHEMA_NAME()", ct) as string);
-            case "postgresql":
+            case DatabaseDialect.Postgres:
                 var inSchema = await ScalarAsync(connection, "SELECT CASE WHEN has_schema_privilege(current_schema(), 'CREATE') THEN 1 ELSE 0 END", ct);
                 return (await ScalarAsync(connection, "SELECT current_user", ct) as string, inSchema is null ? null : Convert.ToInt32(inSchema) == 1, await ScalarAsync(connection, "SELECT current_schema()", ct) as string);
             default:
@@ -183,5 +184,5 @@ public static class DatabaseInspector
         catch (DbException) { return null; }
     }
 
-    private static string Quote(string dialect, string table) => dialect == "sqlserver" ? $"[{table}]" : $"\"{table}\"";
+    private static string Quote(DatabaseDialect kind, string table) => kind == DatabaseDialect.SqlServer ? $"[{table}]" : $"\"{table}\"";
 }

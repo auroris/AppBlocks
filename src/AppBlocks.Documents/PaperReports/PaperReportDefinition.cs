@@ -12,7 +12,7 @@ namespace AppBlocks.Documents.PaperReports;
 public sealed record PaperReportDefinition(Guid DataSourceKey, IReadOnlyDictionary<string, string> Parameters,
     RenderOptions Options, string FileName, string Culture, int MaximumRows)
 {
-    public const string Alias = "paperReport";
+    public const string Alias = AppBlocks.DocumentOutput.PaperReportLinks.ContentTypeAlias;
 
     /// <summary>Every row is held in memory, rendered and encoded, so a report's result is bounded like any other query's.</summary>
     public const int DefaultMaximumRows = 5000, MaximumRowsLimit = 50_000;

@@ -31,7 +31,11 @@ public sealed record DatabaseFeatureTable(string Name, string State, bool Requir
 /// <param name="GrantSql">The statements to run for that, when the database type has them.</param>
 /// <param name="HasScript">Whether <see cref="IDatabaseSetupFeature.ScriptAsync"/> has a script for this database type.</param>
 public sealed record DatabaseFeatureStatus(string Alias, string Title, string Connection, string Provider, string State, string Summary, string Lost,
-    IReadOnlyList<DatabaseFeatureTable> Tables, string? GrantText, string? GrantSql, bool HasScript);
+    IReadOnlyList<DatabaseFeatureTable> Tables, string? GrantText, string? GrantSql, bool HasScript)
+{
+    /// <summary>The database type as a person reads it, such as <c>SQL Server</c> (<see cref="DatabaseKinds.DisplayName(string)"/>).</summary>
+    public string DatabaseType => DatabaseKinds.DisplayName(Provider);
+}
 
 /// <summary>A feature with tables of its own, for the setup screen. Companions add theirs through dependency injection.</summary>
 public interface IDatabaseSetupFeature
@@ -79,18 +83,18 @@ public static class DatabaseSetupGuide
 
     /// <summary>How to let AppBlocks create the tables itself on this database type.</summary>
     /// <param name="schema">Where the account's tables would land, as <see cref="DatabaseInspection.Schema"/> gives it. The rights have to be there, because that is what the inspection asks about.</param>
-    public static (string Text, string? Sql) Grant(string provider, string? account, string? schema = null) => provider switch {
-        "sqlite" => ("SQLite has no accounts. Give the account the site runs under read and write access to the database file and the folder it sits in.", null),
-        "sqlServer" => ((account is not null && schema is null
+    public static (string Text, string? Sql) Grant(string provider, string? account, string? schema = null) => Kind(provider) switch {
+        DatabaseDialect.Sqlite => ("SQLite has no accounts. Give the account the site runs under read and write access to the database file and the folder it sits in.", null),
+        DatabaseDialect.SqlServer => ((account is not null && schema is null
                 ? "This account's default schema does not exist, so it cannot create tables. Create that schema, or give the account a default schema that exists, and then run this in the database as its owner with the schema's name filled in. The account can then create tables there and read and write every table there."
                 : $"Run this in the database as its owner. It lets the account create tables in {(schema is null ? "its default schema" : $"{schema}, its default schema,")} and read and write every table there.") + " To keep it to these tables alone, use the script instead.",
             $"GRANT CREATE TABLE TO {SqlServerName(account)};\nGRANT ALTER ON SCHEMA::{SqlServerName(schema ?? UnknownSchema)} TO {SqlServerName(account)};\nGRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON SCHEMA::{SqlServerName(schema ?? UnknownSchema)} TO {SqlServerName(account)};\n"),
-        "postgres" => (account is not null && schema is null
+        DatabaseDialect.Postgres => (account is not null && schema is null
                 ? "This account has no schema it can use on its search path. Fill in the one it should use, and make sure that schema is on the path. Run this in the database as its owner. The account then owns the tables it creates."
                 : $"Run this in the database as its owner. The account then owns the tables it creates in {schema ?? "its current schema"}.",
             $"GRANT USAGE, CREATE ON SCHEMA {PostgresName(schema ?? UnknownSchema)} TO {PostgresName(account ?? UnknownAccount)};\n"),
-        "oracle" or "oracle11g" => ("Run this as a DBA. The account then owns the tables it creates, and needs room for them in its tablespace.",
-            (provider == "oracle11g" ? $"GRANT CREATE TABLE, CREATE SEQUENCE, CREATE TRIGGER TO {account ?? UnknownAccount};\n" : $"GRANT CREATE TABLE, CREATE SEQUENCE TO {account ?? UnknownAccount};\n")
+        DatabaseDialect.Oracle or DatabaseDialect.Oracle11g => ("Run this as a DBA. The account then owns the tables it creates, and needs room for them in its tablespace.",
+            (Kind(provider) == DatabaseDialect.Oracle11g ? $"GRANT CREATE TABLE, CREATE SEQUENCE, CREATE TRIGGER TO {account ?? UnknownAccount};\n" : $"GRANT CREATE TABLE, CREATE SEQUENCE TO {account ?? UnknownAccount};\n")
                 + $"ALTER USER {account ?? UnknownAccount} QUOTA UNLIMITED ON <tablespace>;\n"),
         _ => ("Grant the account the right to create tables.", null),
     };
@@ -99,11 +103,11 @@ public static class DatabaseSetupGuide
     /// <param name="schema">Where the account's own tables land, for what running this as someone else does differently.</param>
     public static string Header(string title, string connection, string provider, string? account, string? schema = null)
     {
-        var how = provider switch {
-            "sqlite" => "-- Run it with any SQLite tool against the database file.\n",
-            "sqlServer" => "-- Run it in that database as its owner, with sqlcmd or Management Studio: the GO lines separate its batches.\n"
+        var how = Kind(provider) switch {
+            DatabaseDialect.Sqlite => "-- Run it with any SQLite tool against the database file.\n",
+            DatabaseDialect.SqlServer => "-- Run it in that database as its owner, with sqlcmd or Management Studio: the GO lines separate its batches.\n"
                 + (schema is null or "dbo" ? "" : $"-- The account's default schema is {schema}. Run as the owner, this creates the tables in dbo, which SQL Server looks in next, so the account finds them there.\n"),
-            "postgres" => "-- Run it in that database as the account the site signs in as, or as an owner who then grants the tables below.\n"
+            DatabaseDialect.Postgres => "-- Run it in that database as the account the site signs in as, or as an owner who then grants the tables below.\n"
                 + (schema is null ? "" : $"-- The account works in schema {schema}. An owner should run this first, so the tables land there: SET search_path TO {PostgresName(schema)};\n"),
             _ => $"-- Run it in SQL*Plus or SQLcl: the / lines run its blocks. Connect as the site's account, or as a DBA after:\n--     ALTER SESSION SET CURRENT_SCHEMA = {account ?? UnknownAccount};\n",
         };
@@ -111,9 +115,9 @@ public static class DatabaseSetupGuide
     }
 
     /// <summary>Statements as one script, each followed by what ends a statement on this database type's own tool.</summary>
-    public static string Join(string provider, IEnumerable<string> statements) => string.Concat(statements.Select(statement => statement.TrimEnd() + (provider switch {
-        "sqlServer" => "\nGO\n",
-        "oracle" or "oracle11g" => "\n/\n",
+    public static string Join(string provider, IEnumerable<string> statements) => string.Concat(statements.Select(statement => statement.TrimEnd() + (Kind(provider) switch {
+        DatabaseDialect.SqlServer => "\nGO\n",
+        DatabaseDialect.Oracle or DatabaseDialect.Oracle11g => "\n/\n",
         _ => ";\n",
     })));
 
@@ -121,15 +125,18 @@ public static class DatabaseSetupGuide
     public static string TableGrants(string provider, string? account, IEnumerable<string> tables)
     {
         // An account that is the database's owner already has every right, and SQL Server refuses to grant to itself.
-        if (provider == "sqlServer" && account is "dbo") return "";
-        var rights = tables.Select(table => provider switch {
-            "sqlServer" => $"GRANT SELECT, INSERT, UPDATE, DELETE ON {table} TO {SqlServerName(account)};\n",
-            "postgres" => $"GRANT SELECT, INSERT, UPDATE, DELETE ON \"{table}\" TO {PostgresName(account ?? UnknownAccount)};\n",
+        if (Kind(provider) == DatabaseDialect.SqlServer && account is "dbo") return "";
+        var rights = tables.Select(table => Kind(provider) switch {
+            DatabaseDialect.SqlServer => $"GRANT SELECT, INSERT, UPDATE, DELETE ON {table} TO {SqlServerName(account)};\n",
+            DatabaseDialect.Postgres => $"GRANT SELECT, INSERT, UPDATE, DELETE ON \"{table}\" TO {PostgresName(account ?? UnknownAccount)};\n",
             _ => "",
         });
         var text = string.Concat(rights);
-        return text.Length == 0 ? "" : $"\n-- Lets the account the site signs in as use the tables.\n{text}" + (provider == "sqlServer" ? "GO\n" : "");
+        return text.Length == 0 ? "" : $"\n-- Lets the account the site signs in as use the tables.\n{text}" + (Kind(provider) == DatabaseDialect.SqlServer ? "GO\n" : "");
     }
+
+    /// <summary>The kind a provider name stands for; null for one AppBlocks does not know, which gets the general wording.</summary>
+    private static DatabaseDialect? Kind(string provider) => DatabaseKinds.TryFromProvider(provider, out var kind) ? kind : null;
 
     private static string SqlServerName(string? name) => "[" + (name ?? UnknownAccount).Replace("]", "]]", StringComparison.Ordinal) + "]";
 

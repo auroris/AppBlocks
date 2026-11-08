@@ -177,11 +177,15 @@ public static class FormEndpoints
     private static async Task<IResult> Mutate(Guid pageKey, Guid formKey, string? key, FormSubmission submission, string operation, HttpContext http, CancellationToken ct)
     {
         var (form, member) = await Resolve(pageKey, formKey, http);
-        if (member is null || form?.ViewOnly != false) return Results.StatusCode(403);
+        if (member is null) return Results.StatusCode(403);
+        // As a load answers it: a form whose definition does not resolve is 422, a read-only one refuses every change.
+        if (form is null) return Results.Problem("The form definition is not valid.", statusCode: 422);
+        if (form.ViewOnly) return Results.StatusCode(403);
         if (FormResourceAccess.Refusal(form.Resource, member) is { } refused) return Results.StatusCode(refused);
         try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
         catch (AntiforgeryValidationException) { return Results.BadRequest(); }
-        if (submission.DefinitionVersion != form.Revision) return Results.Json(FormResult.Invalid("", "This form has changed. Reload the page before saving."), statusCode: 409);
+        if (submission.DefinitionVersion != form.Revision)
+            return Result(new FormResult(409, Errors: new Dictionary<string, string[]> { [""] = ["This form has changed. Reload the page before saving."] }));
         var context = new FormExecutionContext(member, pageKey, formKey, form.Revision, submission.SubmissionKey, Parameters(http.Request.Query)) {
             FormData = FormData(submission.FormData, http.RequestServices.GetRequiredService<IOptions<AntiforgeryOptions>>().Value.FormFieldName),
         };

@@ -301,7 +301,7 @@ public sealed class DataSourceHandlerTests : IDisposable
         Assert.Null(result.Rows[2]["STATUS"]);
         Assert.False(result.Rows[0].ContainsKey("EXTRA"));
         Assert.Contains(result.Columns, column => column.Name == "CUSTOMER" && column.Field == "customer");
-        Assert.Empty((await queries.QueryAsync(definition, Context(Other))).Rows.Where(row => row["CUSTOMER"] is string text && text.StartsWith("Code: ")));
+        Assert.DoesNotContain((await queries.QueryAsync(definition, Context(Other))).Rows, row => row["CUSTOMER"] is string text && text.StartsWith("Code: "));
         // Null reads the row source as before.
         Assert.Equal(["Hangar Co", "Runway Ltd"], (await queries.QueryAsync(definition, Context(Owner, new() { ["engine"] = "1" }))).Rows.Select(row => row["CUSTOMER"]));
         // The row limit and the order apply to the class's rows as to the engine's.
@@ -354,7 +354,46 @@ public sealed class DataSourceHandlerTests : IDisposable
         var errors = new List<string>();
         Assert.Null(DataSourceDefinition.Read(Guid.NewGuid(), "Orders", alias => Values(("handler", "not an alias")).GetValueOrDefault(alias), picked => picked.Split(','), errors));
         Assert.Contains(errors, error => error.Contains("backing class"));
-        Assert.Throws<InvalidOperationException>(() => new DataSourceHandlers([new Handler(), new Handler()]));
+    }
+
+    [Fact]
+    public async Task Backing_classes_with_a_shared_or_invalid_alias_stop_the_site_starting_and_are_left_out_of_a_request()
+    {
+        var first = new Handler();
+        var invalid = new Renamed("not an alias");
+        var collection = new ServiceCollection();
+        collection.AddLogging();
+        collection.AddScoped<IDataSourceHandler>(_ => first);
+        collection.AddScoped<IDataSourceHandler, Handler>();
+        collection.AddScoped<IDataSourceHandler>(_ => invalid);
+        collection.AddHostedService<DataSourceHandlerValidation>();
+        using var provider = collection.BuildServiceProvider();
+        // At startup, every problem at once, so the site never answers a request with them.
+        var validation = provider.GetServices<Microsoft.Extensions.Hosting.IHostedService>().OfType<DataSourceHandlerValidation>().Single();
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => validation.StartAsync(default));
+        Assert.Contains("Two backing classes have the alias orders.rules.", refused.Message);
+        Assert.Contains("has the alias 'not an alias', which is not one", refused.Message);
+        // In a request, should the classes get there all the same, each problem is logged and the first class keeps its alias.
+        var log = new ErrorCount();
+        var registry = new DataSourceHandlers(provider.GetServices<IDataSourceHandler>(), null, log);
+        Assert.Same(first, registry.Find("orders.rules"));
+        Assert.Equal(["orders.rules"], registry.All.Keys);
+        Assert.Equal(2, log.Errors);
+        Assert.Empty(DataSourceHandlers.Problems([first, new Renamed("orders.other")]));
+    }
+
+    private sealed class Renamed(string alias) : IDataSourceHandler
+    {
+        public string Alias => alias;
+    }
+
+    private sealed class ErrorCount : Microsoft.Extensions.Logging.ILogger<DataSourceHandlers>
+    {
+        public int Errors { get; private set; }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        { if (logLevel == Microsoft.Extensions.Logging.LogLevel.Error) Errors++; }
     }
 
     [Fact]

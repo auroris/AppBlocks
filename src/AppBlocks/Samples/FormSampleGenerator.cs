@@ -23,8 +23,8 @@ public static class FormSampleGenerator
         var fields = form.Fields.Where(f => !f.ReadOnly).Select((field, index) => (Field: field, Name: Name(field, index))).ToArray();
         string Literal(string value) => JsonSerializer.Serialize(value, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         string Column(string name) => "\"" + name + "\"";
-        string SqlType(FormField field) => field.Kind switch { "number" => "NUMERIC", "boolean" or "checkbox" => "INTEGER", _ => "TEXT" };
-        string CsType(FormField field) => field.Kind switch { "number" => "decimal?", "boolean" or "checkbox" => "bool?", _ => "string?" };
+        string SqlType(FormField field) => field.Kind switch { "number" => "NUMERIC", "checkbox" => "INTEGER", _ => "TEXT" };
+        string CsType(FormField field) => field.Kind switch { "number" => "decimal?", "checkbox" => "bool?", _ => "string?" };
         var schema = "CREATE TABLE IF NOT EXISTS SampleForm (Id TEXT PRIMARY KEY"
             + string.Concat(fields.Select(f => $", {Column(f.Name)} {SqlType(f.Field)}")) + ");";
         var select = "SELECT Id" + string.Concat(fields.Select(f => ", " + Column(f.Name))) + " FROM SampleForm WHERE Id = @id;";
@@ -56,8 +56,8 @@ public static class FormSampleGenerator
         code.AppendLine("    // For a new record use a new Guid string and expectedChecksum = null.\n    // For an edit pass the Id and Checksum returned by ReadAsync. False means the record changed since it was read, or is missing.\n    public async Task<bool> SaveAsync(string id, string? expectedChecksum, SampleFormValues values, ClaimsPrincipal user, CancellationToken ct = default)\n    {\n        if (user.Identity?.IsAuthenticated != true) throw new UnauthorizedAccessException();\n        DemandAccess(user);\n        if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException(\"Supply a record id.\");");
         foreach (var (field, name) in fields)
         {
-            if (field.Required) code.AppendLine($"        if ({(field.Kind is "number" or "boolean" or "checkbox" ? $"values.{name} is null" : $"string.IsNullOrWhiteSpace(values.{name})")}) throw new ArgumentException({Literal(field.Label + " is required.")});");
-            if (field.MaxLength is { } max && field.Kind is not ("number" or "boolean" or "checkbox")) code.AppendLine($"        if (values.{name}?.Length > {max}) throw new ArgumentException({Literal(field.Label + " is too long.")});");
+            if (field.Required) code.AppendLine($"        if ({(field.Kind is "number" or "checkbox" ? $"values.{name} is null" : $"string.IsNullOrWhiteSpace(values.{name})")}) throw new ArgumentException({Literal(field.Label + " is required.")});");
+            if (field.MaxLength is { } max && field.Kind is not ("number" or "checkbox")) code.AppendLine($"        if (values.{name}?.Length > {max}) throw new ArgumentException({Literal(field.Label + " is too long.")});");
             if (field.Kind == "number" && field.Minimum is { } min) code.AppendLine($"        if (values.{name} < {min.ToString(System.Globalization.CultureInfo.InvariantCulture)}m) throw new ArgumentException({Literal(field.Label + " is below its minimum.")});");
             if (field.Kind == "number" && field.Maximum is { } maximum) code.AppendLine($"        if (values.{name} > {maximum.ToString(System.Globalization.CultureInfo.InvariantCulture)}m) throw new ArgumentException({Literal(field.Label + " is above its maximum.")});");
         }
@@ -77,7 +77,7 @@ public static class FormSampleGenerator
         for (var i = 0; i < fields.Length; i++)
         {
             var f = fields[i]; var column = i + 1;
-            var read = f.Field.Kind switch { "number" => $"reader.GetDecimal({column})", "boolean" or "checkbox" => $"reader.GetBoolean({column})", _ => $"reader.GetString({column})" };
+            var read = f.Field.Kind switch { "number" => $"reader.GetDecimal({column})", "checkbox" => $"reader.GetBoolean({column})", _ => $"reader.GetString({column})" };
             code.AppendLine($"            {f.Name} = reader.IsDBNull({column}) ? null : {read},");
         }
         code.AppendLine("        };\n        return new(reader.GetString(0), Checksum(values), values);\n    }\n");

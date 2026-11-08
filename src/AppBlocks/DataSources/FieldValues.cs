@@ -139,14 +139,20 @@ internal static class FieldValues
         catch (ArgumentOutOfRangeException) { return new DateTimeOffset(DateTime.SpecifyKind(moment, DateTimeKind.Unspecified), TimeSpan.Zero); }
     }
 
-    /// <summary>The canonical value of a submitted JSON value, checked against the field's own rules; an error message otherwise.</summary>
-    public static object? FromJson(JsonElement value, PlanColumn column, out string? error)
+    /// <summary>
+    /// The canonical value of a submitted JSON value, checked against the field's own rules; an error message otherwise. A blank is
+    /// refused for a required field, and on an update also for a column that must hold a value, which a default fills only on insert.
+    /// </summary>
+    public static object? FromJson(JsonElement value, PlanColumn column, bool updating, out string? error)
     {
         error = null;
         // Blank text is no value, as the form runtime sends it, so a required field cannot be satisfied with spaces.
         if (value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
             || value.ValueKind == JsonValueKind.String && string.IsNullOrWhiteSpace(value.GetString()))
-            return Required(column, out error);
+        {
+            error = column.Required || updating && column.NeedsValue ? "A value is required." : null;
+            return null;
+        }
         object? result = column.Kind switch {
             FieldKinds.Number => value.ValueKind switch {
                 JsonValueKind.Number when value.TryGetDecimal(out var number) => number,
@@ -161,12 +167,6 @@ internal static class FieldValues
         };
         if (result is null) { error = "Enter a valid value."; return null; }
         return Check(result, column, out error) ? result : null;
-    }
-
-    private static object? Required(PlanColumn column, out string? error)
-    {
-        error = column.Required ? "A value is required." : null;
-        return null;
     }
 
     /// <summary>The field's length, range and choice rules, enforced by the engine whatever the form already checked.</summary>

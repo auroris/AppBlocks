@@ -182,6 +182,32 @@ await fetch("/api/notices", {
 
 A mapped endpoint takes the same policy with `RequireAuthorization(AppBlocksAuthorization.MemberPolicy)`. The policy decides only that the caller is a current Member; the controller still decides which Members may do what.
 
+### Backoffice controllers for administrators
+
+A companion's management API controller that only administrators may use takes the `AppBlocks.Administrator` policy, `AppBlocksAuthorization.AdministratorPolicy`, as AppBlocks' own Settings screens do. It admits a backoffice User in Umbraco's Administrators group whose account is approved and not locked out, read afresh on every request, so a User taken out of the group or locked out is refused at once, and it answers anyone else with 403. It adds to the backoffice access every management controller already requires, and it can sit on the controller or on single actions beside other policies:
+
+```csharp
+using AppBlocks.Authentication;
+using Microsoft.AspNetCore.Authorization;
+
+[VersionedApiBackOfficeRoute("notices/settings")]
+[Authorize(Policy = AppBlocksAuthorization.AdministratorPolicy)]
+public sealed class NoticeSettingsController(NoticeSettings settings) : ManagementApiControllerBase
+{
+    [HttpGet]
+    public IActionResult Get() => Ok(settings.Read());
+}
+```
+
+AppBlocks' connection list, database types, table list and guide stay open to every backoffice user, because the data source and report pickers read them.
+
+### Names a companion owns
+
+A companion registers the names it owns with AppBlocks from its own registration, through `builder.AddAppBlocks(appBlocks => ...)`:
+
+- `AddKeySegmentContentType("alias")` gives the nodes of a definition document type a URL segment of their own key, as data source nodes have, so a definition named like a page never takes that page's URL. The reports companion registers its report definitions this way.
+- `ReserveConnectionName("name")` keeps a connection the companion opens through its own factory from being saved on the Connections screen, where a saved connection would take the name over. The reports companion reserves `ReportsDb`.
+
 ### Nodes a package generates
 
 API endpoints, lists of values and data sources are content nodes, which editors publish. A package that generates some of them from its own code, so that their SQL follows the package's rules, installs them with `OwnedNodeInstaller`. Each node is an `OwnedNode`: a fixed key, a name, the document type alias and the property values by alias, as the backoffice stores them.
