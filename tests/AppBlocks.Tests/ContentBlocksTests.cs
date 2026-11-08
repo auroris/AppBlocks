@@ -35,6 +35,11 @@ public sealed class ContentBlocksTests
     [InlineData(":NOW", "time", "14:05")]
     [InlineData(":NOW", "datetime", "2026-10-23T14:05:09-06:00")]
     [InlineData(":NOW", "text", "2026-10-23 14:05")]
+    // The same moment in UTC: 14:05 at -06:00 is 20:05Z.
+    [InlineData(":NOW_UTC", "date", "2026-10-23")]
+    [InlineData(":NOW_UTC", "time", "20:05")]
+    [InlineData(":now_utc", "datetime", "2026-10-23T20:05:09Z")]
+    [InlineData(":NOW_UTC", "text", "2026-10-23T20:05:09Z")]
     [InlineData("NEW", "text", "NEW")]
     [InlineData("true", "checkbox", "true")]
     [InlineData("12.50", "number", "12.50")]
@@ -53,8 +58,17 @@ public sealed class ContentBlocksTests
     [InlineData(":PARAM.empty", "text")]
     [InlineData(":NOW", "number")]
     [InlineData(":NOW", "checkbox")]
+    [InlineData(":NOW_UTC", "number")]
     public void A_default_without_a_value_leaves_the_field_to_the_resource(string? value, string kind)
         => Assert.Null(Variables().Resolve(value, kind));
+
+    [Fact]
+    public void The_UTC_default_takes_the_UTC_date_when_the_local_day_has_not_turned()
+    {
+        var evening = Variables() with { Now = new DateTimeOffset(2026, 11, 1, 19, 30, 0, TimeSpan.FromHours(-6)) };
+        Assert.Equal("2026-11-02", evening.Resolve(":NOW_UTC", "date"));
+        Assert.Equal("2026-11-02T01:30:00Z", evening.Resolve(":NOW_UTC", "datetime"));
+    }
 
     [Fact]
     public void An_account_with_only_a_password_has_no_SID_to_default_to()

@@ -40,7 +40,7 @@ public sealed partial class SqlDataSource
     /// one transaction. Each detail data source must share this one's connection. A retry with the same submission keys and the same
     /// values answers as the first save did and writes nothing again.
     /// </summary>
-    public async Task<DataSourceSaveResult> SaveWithDetailsAsync(string? key, JsonElement input, string? version, IReadOnlyList<DataSourceDetailBatch> details,
+    public async Task<DataSourceSaveResult> SaveWithDetailsAsync(string? key, JsonElement input, string? checksum, IReadOnlyList<DataSourceDetailBatch> details,
         FormExecutionContext context, CancellationToken ct)
     {
         if (Ready is not { } plan) return new(Unavailable());
@@ -94,7 +94,7 @@ public sealed partial class SqlDataSource
         var master = await RunAsync(plan, write: true, async (connection, transaction) => {
             var written = creating
                 ? await InsertRecordAsync(plan, user, context, values!, now, connection, transaction!, app, ct, shared)
-                : await UpdateRecordAsync(plan, user, context, key!, keys, input, version, now, connection, transaction!, null, app, ct, shared);
+                : await UpdateRecordAsync(plan, user, context, key!, keys, input, checksum, now, connection, transaction!, null, app, ct, shared);
             if (written.Status != 200) return written;
             for (var i = 0; i < batches.Count; i++)
             {
@@ -168,7 +168,7 @@ public sealed partial class SqlDataSource
     /// Applies what is left of a prepared batch, after the master's backing class, to the rows linked to the master inside its
     /// transaction; the first refusal, numbered by its place in the batch as sent, or null when every change was applied.
     /// </summary>
-    internal async Task<DataSourceRowsResult?> ApplyBatchAsync(PreparedBatch batch, string masterKey, DateTime now, DbConnection connection, DbTransaction transaction, CancellationToken ct)
+    internal async Task<DataSourceRowsResult?> ApplyBatchAsync(PreparedBatch batch, string masterKey, DateTimeOffset now, DbConnection connection, DbTransaction transaction, CancellationToken ct)
     {
         var plan = batch.Plan;
         if (Link(plan, new DataSourceScope(batch.LinkField, masterKey), out var link, out var value) is { } problem) return DataSourceRowsResult.From(problem);

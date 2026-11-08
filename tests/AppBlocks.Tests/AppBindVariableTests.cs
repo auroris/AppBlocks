@@ -81,4 +81,49 @@ public sealed class AppBindVariableTests
         public int Calls { get; private set; }
         public ValueTask<IReadOnlyDictionary<string, object?>?> ResolveAsync(FormExecutionContext context, CancellationToken ct) { Calls++; return ValueTask.FromResult(values); }
     }
+
+    private sealed class Declaring(params string[] names) : IBindVariableProvider
+    {
+        public IReadOnlyCollection<string> Names => names;
+        public ValueTask<IReadOnlyDictionary<string, object?>?> ResolveAsync(FormExecutionContext context, CancellationToken ct)
+            => ValueTask.FromResult<IReadOnlyDictionary<string, object?>?>(names.ToDictionary(name => name, name => (object?)name));
+    }
+
+    [Fact]
+    public void Declared_names_are_known_only_when_every_provider_declares_its_own()
+    {
+        Assert.Empty(((IBindVariableProvider)new Provider(null)).Names);
+        Assert.Null(new BindVariableProviders().DeclaredNames);
+        // A provider that declares nothing may answer any name, so nothing can be called unanswered.
+        Assert.Null(new BindVariableProviders([new Declaring("tenant"), new Provider(null)]).DeclaredNames);
+        var providers = new BindVariableProviders([new Declaring("tenant"), new Declaring("Period", "region")]);
+        Assert.True(providers.DeclaredNames!.SetEquals(["TENANT", "period", "region"]));
+        Assert.Null(providers.UndeclaredWarning(["Tenant", "period"]));
+        var warning = providers.UndeclaredWarning(["tenant", "tennant", "TENNANT"]);
+        Assert.Contains(":APP.tennant is not declared", warning);
+        Assert.Contains("The providers declare :APP.Period, :APP.region, :APP.tenant.", warning);
+        Assert.Null(new BindVariableProviders([new Provider(null)]).UndeclaredWarning(["anything"]));
+    }
+
+    [Fact]
+    public void A_definition_names_the_application_values_its_SQL_and_defaults_use()
+    {
+        var errors = new List<string>();
+        var values = new Dictionary<string, object?> {
+            ["alias"] = "activities", ["access"] = "Public", ["connection"] = "Db", ["keyColumns"] = "ID",
+            ["source"] = "SELECT ID, TENANT FROM ACTIVITIES WHERE TENANT = :APP.tenant -- :APP.comment is text",
+            ["rowRestriction"] = "REGION = :APP.region OR :APP.TENANT IS NULL",
+            ["insertDefaults"] = "PERIOD = :APP.period\nTENANT = :APP.tenant",
+            ["customStatements"] = "-- delete\nDELETE FROM ACTIVITIES WHERE ID = :FIELD.id AND OWNER = :APP.owner",
+        };
+        var definition = DataSourceDefinition.Read(Guid.NewGuid(), "Activities", alias => values.GetValueOrDefault(alias), picked => [], errors);
+        Assert.True(definition is not null, string.Join(" ", errors));
+        Assert.Equal(["tenant", "region", "owner", "period"], definition.ApplicationNames());
+
+        // Publishing warns, and does not refuse, when declared names leave one unanswered.
+        var validator = new DataSourcePublishValidator(null!, null!, null!, [], providers: new BindVariableProviders([new Declaring("tenant", "region", "period")]));
+        Assert.Contains(":APP.owner is not declared", validator.Warning(Guid.NewGuid(), "Activities", alias => values.GetValueOrDefault(alias)));
+        var silent = new DataSourcePublishValidator(null!, null!, null!, [], providers: new BindVariableProviders([new Provider(null)]));
+        Assert.Null(silent.Warning(Guid.NewGuid(), "Activities", alias => values.GetValueOrDefault(alias)));
+    }
 }

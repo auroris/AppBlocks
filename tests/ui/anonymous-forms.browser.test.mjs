@@ -15,7 +15,7 @@ before(async () => { browser = await chromium.launch({ headless: true, ...(exist
 after(async () => browser?.close());
 
 const api = '/api/forms/page/form';
-const blank = { key: null, version: null, values: { name: null }, capabilities: { create: true } };
+const blank = { key: null, checksum: null, values: { name: null }, capabilities: { create: true } };
 
 /** The markup Block.cshtml renders for a form, a stand-in captcha widget's script, and a server that answers as told. */
 async function mount({ anonymous = true, loadStatus = 200, submit = () => ({ status: 200, body: { status: 200, record: blank } }), extra = '', address = '/contact/', origin = 'http://localhost' } = {}) {

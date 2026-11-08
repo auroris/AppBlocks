@@ -151,21 +151,21 @@ public sealed class SqlServerDataSourceTests
         Assert.Equal("1", created.Record!.Key);
         Assert.Equal("24.68", created.Record.Values["total"]);
         Assert.Equal(1, Scalar(connection, "SELECT COUNT(*) FROM dbo.ORDER_AUDIT")); // The trigger ran beside OUTPUT INSERTED.
-        var updated = await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { notes = "Through SQL Server", orderDate = "2026-12-24" }), created.Record.Version!, context, default);
+        var updated = await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { notes = "Through SQL Server", orderDate = "2026-12-24" }), created.Record.Checksum!, context, default);
         Assert.True(updated.Status == 200, JsonSerializer.Serialize(updated.Errors));
-        Assert.NotEqual(created.Record.Version, updated.Record!.Version);
+        Assert.NotEqual(created.Record.Checksum, updated.Record!.Checksum);
         // The policy read the table through the engine's connection, inside the transaction holding the row.
         Assert.Equal((ConnectionState.Open, true, 1), policy.Updates[0]);
-        var legacy = await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { legacyAt = "1700-01-01T00:00:00Z" }), updated.Record.Version, context, default);
+        var legacy = await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { legacyAt = "1700-01-01T00:00:00Z" }), updated.Record.Checksum, context, default);
         Assert.Equal(422, legacy.Status);
         Assert.Contains("1753", legacy.Errors!["legacyAt"][0]);
         Assert.Equal("2026-12-24", updated.Record.Values["orderDate"]);
         Assert.Equal("jsmith", Scalar(connection, "SELECT UPDATED_BY FROM dbo.ORDERS WHERE ORDER_ID = 1"));
-        Assert.Equal(409, (await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { notes = "Stale" }), created.Record.Version!, context, default)).Status);
+        Assert.Equal(409, (await orders.UpdateAsync("1", JsonSerializer.SerializeToElement(new { notes = "Stale" }), created.Record.Checksum!, context, default)).Status);
         Execute(connection, "INSERT INTO dbo.ORDERS (CUSTOMER, ORDER_DATE, OWNER) VALUES ('Someone else', '2026-01-01', 'kjones')");
         Assert.Equal(404, (await orders.LoadAsync("2", context, default)).Status);
         Assert.Equal(403, (await orders.CreateAsync(JsonSerializer.SerializeToElement(new { customer = "Not mine", owner = "kjones" }), context with { SubmissionKey = Guid.NewGuid().ToString() }, default)).Status);
-        Assert.Equal(204, (await orders.DeleteAsync("1", updated.Record.Version, context, default)).Status);
+        Assert.Equal(204, (await orders.DeleteAsync("1", updated.Record.Checksum, context, default)).Status);
 
         var notes = Source(runtime, user, new() {
             ["alias"] = "notes", ["access"] = "Public", ["connection"] = "LocalDb", ["source"] = "SELECT ID, BODY, RV FROM dbo.NOTES", ["keyColumns"] = "ID", ["concurrencyMode"] = DataSourceConcurrency.Checksum,
@@ -175,11 +175,11 @@ public sealed class SqlServerDataSourceTests
         Assert.DoesNotContain(notes.Fields, f => f.Key == "rv");
         var note = await notes.CreateAsync(JsonSerializer.SerializeToElement(new { body = "First" }), context with { SubmissionKey = Guid.NewGuid().ToString() }, default);
         Assert.True(Guid.TryParse(note.Record!.Key, out _));
-        Assert.Equal(32, note.Record.Version!.Length);
-        var changed = await notes.UpdateAsync(note.Record.Key!, JsonSerializer.SerializeToElement(new { body = "Second" }), note.Record.Version, context, default);
+        Assert.Equal(32, note.Record.Checksum!.Length);
+        var changed = await notes.UpdateAsync(note.Record.Key!, JsonSerializer.SerializeToElement(new { body = "Second" }), note.Record.Checksum, context, default);
         Assert.Equal(200, changed.Status);
-        Assert.NotEqual(note.Record.Version, changed.Record!.Version);
-        Assert.Equal(409, (await notes.UpdateAsync(note.Record.Key!, JsonSerializer.SerializeToElement(new { body = "Stale" }), note.Record.Version, context, default)).Status);
+        Assert.NotEqual(note.Record.Checksum, changed.Record!.Checksum);
+        Assert.Equal(409, (await notes.UpdateAsync(note.Record.Key!, JsonSerializer.SerializeToElement(new { body = "Stale" }), note.Record.Checksum, context, default)).Status);
         Assert.Equal(404, (await notes.LoadAsync("not-a-guid", context, default)).Status);
 
         var errors = runtime.Validate(Definition(new() {

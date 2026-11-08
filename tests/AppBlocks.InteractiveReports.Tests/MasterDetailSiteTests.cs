@@ -71,7 +71,7 @@ public sealed class MasterDetailSiteTests
         var loaded = await Json(await client.GetAsync($"{form}?id={key}"));
         var rows = list.GetProperty("rows").EnumerateArray().ToArray();
         object Update(string customer, params object[] changes) => new {
-            values = new { customer }, definitionVersion = loaded.GetProperty("definitionVersion").GetString(), version = loaded.GetProperty("record").GetProperty("version").GetString(),
+            values = new { customer }, definitionVersion = loaded.GetProperty("definitionVersion").GetString(), checksum = loaded.GetProperty("record").GetProperty("checksum").GetString(),
             submissionKey = Guid.NewGuid().ToString(), details = new[] { new { block = PublicSite.OrderLines, revision, submissionKey = Guid.NewGuid().ToString(), changes } },
         };
         using (var refused = await Send(client, HttpMethod.Put, $"{form}/{key}?id={key}", token,
@@ -82,7 +82,7 @@ public sealed class MasterDetailSiteTests
         }
         // A line the engine refuses names its block and its place, and rolls the order back with it.
         using (var refused = await Send(client, HttpMethod.Put, $"{form}/{key}?id={key}", token,
-            Update("Initech Two", new { operation = "delete", key = rows[0].GetProperty("key").GetString(), version = rows[0].GetProperty("version").GetString() },
+            Update("Initech Two", new { operation = "delete", key = rows[0].GetProperty("key").GetString(), checksum = rows[0].GetProperty("checksum").GetString() },
                 new { operation = "create", values = new { item = (string?)null } })))
         {
             var refusal = await Json(refused, HttpStatusCode.UnprocessableEntity);
@@ -94,7 +94,7 @@ public sealed class MasterDetailSiteTests
 
         // The same update without the refused line: one commit for the order, the deletion and the new line.
         using (var updated = await Send(client, HttpMethod.Put, $"{form}/{key}?id={key}", token,
-            Update("Initech Two", new { operation = "delete", key = rows[0].GetProperty("key").GetString(), version = rows[0].GetProperty("version").GetString() },
+            Update("Initech Two", new { operation = "delete", key = rows[0].GetProperty("key").GetString(), checksum = rows[0].GetProperty("checksum").GetString() },
                 new { operation = "create", values = new { item = "Washer" } })))
         {
             var saved = await Json(updated);

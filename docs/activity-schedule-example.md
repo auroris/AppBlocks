@@ -62,7 +62,7 @@ CREATE TABLE WING_ACTIVITY (
 );
 ```
 
-Both tables carry the tenant. Categories take a database-generated key, since the engine inserts them; activities take GUID text keys, since the form class chooses them. Dates are ISO text, which every supported database compares correctly. Create them in the application database, `AppBlocksDb`, as the [database setup guide](database-setup.md) describes. `MODIFIED_AT` doubles as the activity's version for the form's stale-write check.
+Both tables carry the tenant. Categories take a database-generated key, since the engine inserts them; activities take GUID text keys, since the form class chooses them. Dates are ISO text, which every supported database compares correctly. Create them in the application database, `AppBlocksDb`, as the [database setup guide](database-setup.md) describes. The form class detects a stale save by comparing a checksum of the activity's values, so the table holds only the activity's own columns.
 
 ## The data source nodes
 
@@ -128,6 +128,8 @@ Four small classes and a composer. The tenant rule, the bind variable provider, 
 using System.ComponentModel.DataAnnotations;
 using System.Data.Common;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text.Json;
 using AppBlocks.Connections;
 using AppBlocks.DataSources;
 using AppBlocks.Forms;
@@ -223,7 +225,7 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
         new("hidden", "Hidden from the schedule", "checkbox"),
     ];
 
-    private static readonly string[] Columns = ["NAME", "START_DATE", "END_DATE", "CATEGORY", "DESCRIPTION", "CONTACT", "UNITS", "LINK", "HIDDEN", "MODIFIED_AT"];
+    private static readonly string[] Columns = ["NAME", "START_DATE", "END_DATE", "CATEGORY", "DESCRIPTION", "CONTACT", "UNITS", "LINK", "HIDDEN"];
 
     /// <summary>The account and the tenant, or the refusal to return: no account, no tenant, or for a change, no permission.</summary>
     private async Task<(DataSourceUser Account, string Tenant, FormResult? Refusal)> AdmitAsync(FormExecutionContext context, bool change, CancellationToken ct)
@@ -250,7 +252,7 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
         var (account, tenant, refusal) = await AdmitAsync(context, change: false, ct);
         if (refusal is not null) return refusal;
         await using var connection = await OpenAsync(ct);
-        return await ReadAsync(connection, key, tenant, WingTenants.CanEdit(account, tenant), ct) ?? FormResult.Missing();
+        return await ReadAsync(connection, null, key, tenant, WingTenants.CanEdit(account, tenant), ct) ?? FormResult.Missing();
     }
 
     protected override async Task<FormResult> CreateAsync(ActivityInput input, FormExecutionContext context, CancellationToken ct)
@@ -261,42 +263,53 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
         if (await ValidateAsync(connection, input, tenant, ct) is { } invalid) return invalid;
         var key = Guid.NewGuid().ToString("D");
         var now = Stamp(DateTime.UtcNow);
-        await ExecuteAsync(connection, """
+        await ExecuteAsync(connection, null, """
             INSERT INTO WING_ACTIVITY (ID, TENANT_ID, NAME, START_DATE, END_DATE, CATEGORY, DESCRIPTION, CONTACT, UNITS, LINK, HIDDEN, CREATED_BY, CREATED_AT, MODIFIED_BY, MODIFIED_AT)
             VALUES (@id, @tenant, @name, @start, @end, @category, @description, @contact, @units, @link, @hidden, @by, @at, @by, @at)
             """, Values(input, key, tenant, account, now), ct);
-        return (await ReadAsync(connection, key, tenant, true, ct))!;
+        return (await ReadAsync(connection, null, key, tenant, true, ct))!;
     }
 
-    protected override async Task<FormResult> UpdateAsync(string key, ActivityInput input, string version, FormExecutionContext context, CancellationToken ct)
+    protected override async Task<FormResult> UpdateAsync(string key, ActivityInput input, string? checksum, FormExecutionContext context, CancellationToken ct)
     {
         var (account, tenant, refusal) = await AdmitAsync(context, change: true, ct);
         if (refusal is not null) return refusal;
         await using var connection = await OpenAsync(ct);
-        if (await ReadAsync(connection, key, tenant, true, ct) is not { Record: { } stored }) return FormResult.Missing();
-        if (stored.Version != version) return FormResult.Conflict();
         if (await ValidateAsync(connection, input, tenant, ct) is { } invalid) return invalid;
-        var now = Stamp(DateTime.UtcNow);
-        var values = Values(input, key, tenant, account, now);
-        values["version"] = version;
-        // The version in the predicate makes the stale-write check hold even against a concurrent save.
-        var changed = await ExecuteAsync(connection, """
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        if (await StaleAsync(connection, transaction, key, tenant, checksum, ct) is { } stale) return stale;
+        await ExecuteAsync(connection, transaction, """
             UPDATE WING_ACTIVITY SET NAME = @name, START_DATE = @start, END_DATE = @end, CATEGORY = @category, DESCRIPTION = @description,
                 CONTACT = @contact, UNITS = @units, LINK = @link, HIDDEN = @hidden, MODIFIED_BY = @by, MODIFIED_AT = @at
-            WHERE ID = @id AND TENANT_ID = @tenant AND MODIFIED_AT = @version
-            """, values, ct);
-        return changed == 0 ? FormResult.Conflict() : (await ReadAsync(connection, key, tenant, true, ct))!;
+            WHERE ID = @id AND TENANT_ID = @tenant
+            """, Values(input, key, tenant, account, Stamp(DateTime.UtcNow)), ct);
+        await transaction.CommitAsync(ct);
+        return (await ReadAsync(connection, null, key, tenant, true, ct))!;
     }
 
-    public override async Task<FormResult> DeleteAsync(string key, string version, FormExecutionContext context, CancellationToken ct)
+    public override async Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct)
     {
         var (_, tenant, refusal) = await AdmitAsync(context, change: true, ct);
         if (refusal is not null) return refusal;
         await using var connection = await OpenAsync(ct);
-        var deleted = await ExecuteAsync(connection, "DELETE FROM WING_ACTIVITY WHERE ID = @id AND TENANT_ID = @tenant AND MODIFIED_AT = @version",
-            new() { ["id"] = key, ["tenant"] = tenant, ["version"] = version }, ct);
-        if (deleted > 0) return new FormResult(200);
-        return await ReadAsync(connection, key, tenant, true, ct) is null ? FormResult.Missing() : FormResult.Conflict();
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        if (await StaleAsync(connection, transaction, key, tenant, checksum, ct) is { } stale) return stale;
+        await ExecuteAsync(connection, transaction, "DELETE FROM WING_ACTIVITY WHERE ID = @id AND TENANT_ID = @tenant", new() { ["id"] = key, ["tenant"] = tenant }, ct);
+        await transaction.CommitAsync(ct);
+        return new FormResult(200);
+    }
+
+    /// <summary>
+    /// Locks the activity for the rest of the transaction, then compares the checksum the caller read with the row as it stands:
+    /// a missing row or a different checksum is the answer to return, and null lets the write go ahead.
+    /// </summary>
+    private static async Task<FormResult?> StaleAsync(DbConnection connection, DbTransaction transaction, string key, string tenant, string? checksum, CancellationToken ct)
+    {
+        // An update that changes nothing still takes the row's write lock, so no other save can change it before this one commits.
+        var locked = await ExecuteAsync(connection, transaction, "UPDATE WING_ACTIVITY SET MODIFIED_AT = MODIFIED_AT WHERE ID = @id AND TENANT_ID = @tenant",
+            new() { ["id"] = key, ["tenant"] = tenant }, ct);
+        if (locked == 0 || await ReadAsync(connection, transaction, key, tenant, true, ct) is not { Record: { } current }) return FormResult.Missing();
+        return current.Checksum == checksum ? null : FormResult.Conflict();
     }
 
     /// <summary>Rules the annotations cannot say: the dates are in order, and the category is one of the tenant's.</summary>
@@ -319,9 +332,10 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
     }
 
     /// <summary>The record as the form shows it, within the tenant only; null when there is no such row.</summary>
-    private static async Task<FormResult?> ReadAsync(DbConnection connection, string key, string tenant, bool canEdit, CancellationToken ct)
+    private static async Task<FormResult?> ReadAsync(DbConnection connection, DbTransaction? transaction, string key, string tenant, bool canEdit, CancellationToken ct)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = $"SELECT {string.Join(", ", Columns)} FROM WING_ACTIVITY WHERE ID = @id AND TENANT_ID = @tenant";
         Bind(command, new() { ["id"] = key, ["tenant"] = tenant });
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -332,8 +346,12 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
             ["units"] = reader.IsDBNull(6) ? null : reader.GetString(6), ["link"] = reader.IsDBNull(7) ? null : reader.GetString(7),
             ["hidden"] = Convert.ToInt64(reader.GetValue(8), CultureInfo.InvariantCulture) != 0,
         };
-        return FormResult.Ok(new FormRecord(key, reader.GetString(9), values, new(Update: canEdit, Delete: canEdit)));
+        return FormResult.Ok(new FormRecord(key, Checksum(values), values, new(Update: canEdit, Delete: canEdit)));
     }
+
+    /// <summary>A checksum of the activity's values as the form shows them: a save by someone else since the read gives a different one.</summary>
+    private static string Checksum(Dictionary<string, object?> values)
+        => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(values)))[..32];
 
     private static Dictionary<string, object?> Values(ActivityInput input, string key, string tenant, DataSourceUser account, string now) => new() {
         ["id"] = key, ["tenant"] = tenant, ["name"] = input.Name.Trim(), ["start"] = Date(input.StartDate), ["end"] = Date(input.EndDate),
@@ -341,9 +359,10 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
         ["link"] = input.Link, ["hidden"] = input.Hidden ? 1 : 0, ["by"] = account.Key, ["at"] = now,
     };
 
-    private static async Task<int> ExecuteAsync(DbConnection connection, string sql, Dictionary<string, object?> values, CancellationToken ct)
+    private static async Task<int> ExecuteAsync(DbConnection connection, DbTransaction? transaction, string sql, Dictionary<string, object?> values, CancellationToken ct)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = sql;
         Bind(command, values);
         return await command.ExecuteNonQueryAsync(ct);
@@ -381,6 +400,7 @@ A few things in that code are deliberate.
 
 - **`AdmitAsync` runs first in every operation**, and `Load` admits with `change: false` so a signed-in reader can open an activity while the returned capabilities say whether this person may change it. The capabilities only shape the buttons; `Update` and `Delete` admit with `change: true` and check again.
 - **The tenant is in every predicate.** `WHERE ID = @id AND TENANT_ID = @tenant` means a key from another unit's schedule is a missing record, not a leak, even if someone types it into the address.
+- **`Update` and `Delete` lock the activity before they compare checksums.** `StaleAsync` runs an update that changes nothing, which takes the row's write lock in SQLite, SQL Server and PostgreSQL, then reads the row in the same transaction. Another save of the same activity waits until this one commits. A checksum that differs from the one the caller read is a conflict, as Oracle APEX's row-values check reports it.
 - **`CanEditPage` is Umbraco's Update permission on the calling page**, resolved for `context.PageKey`. A backoffice User who may edit a unit's pages may edit its schedule; one who may not is treated like any Member and needs the group. That is the one rule the whole application shares, so it lives in `WingTenants.CanEdit` and the policy and the form class both call it.
 - **The provider answers for every data source**, not only the three above, and binds `NULL` outside a tenant. Nothing else reads `:APP.tenant`, so that is harmless, and the policy refuses the `wing.` sources outside a tenant anyway.
 - **Parameter names use `@`**, which SQLite, SQL Server and PostgreSQL accept. Oracle wants `:`; adjust `Bind` if the application database is Oracle.
@@ -397,7 +417,7 @@ A few things in that code are deliberate.
 | Which tenant does a new category get? | The node's insert default `TENANT_ID = :APP.tenant` |
 | Which tenant does a new activity get? | `ActivityResource`, from the page, never from the form |
 | Is the activity's category real, and are its dates in order? | `ActivityResource.ValidateAsync` |
-| Has someone else saved this activity meanwhile? | `MODIFIED_AT` as the version, checked in the `UPDATE` and `DELETE` predicates |
+| Has someone else saved this activity meanwhile? | `ActivityResource.StaleAsync`, which compares a checksum of the activity's values with the locked row inside the update or delete transaction |
 
 Nothing on this list is decided by a URL parameter, a hidden field or a block setting.
 

@@ -179,7 +179,7 @@ if (settings.AppBlocksDemo?.SeedContent) {
     assert.ok(loaded.ok(), await loaded.text());
     const original = await loaded.json();
     const headers = { RequestVerificationToken: original.antiforgeryToken };
-    const body = { definitionVersion: original.definitionVersion, version: original.record.version, values: { title: original.record.values.title } };
+    const body = { definitionVersion: original.definitionVersion, checksum: original.record.checksum, values: { title: original.record.values.title } };
     assert.equal((await admin.put(endpoint + '/1', { data: body })).status(), 400, 'CSRF protection');
     assert.equal((await admin.put(endpoint + '/1', { headers, data: { ...body, definitionVersion: 'old' } })).status(), 409, 'Stale definition protection');
     assert.equal((await admin.put(endpoint + '/1', { headers, data: { ...body, values: { title: null } } })).status(), 422, 'Required field validation');
@@ -188,7 +188,7 @@ if (settings.AppBlocksDemo?.SeedContent) {
     const updated = (await changed.json()).record;
     assert.equal(updated.values.title, 'Clean install update');
     assert.equal((await admin.put(endpoint + '/1', { headers, data: body })).status(), 409, 'Optimistic concurrency protection');
-    const restored = await admin.put(endpoint + '/1', { headers, data: { ...body, version: updated.version } });
+    const restored = await admin.put(endpoint + '/1', { headers, data: { ...body, checksum: updated.checksum } });
     assert.ok(restored.ok(), await restored.text());
     passed(`Native ${prefix === 'main' ? 'Block List' : 'Block Grid'} form reads and updates; validation, CSRF and concurrency checks work`);
     if (companions) {

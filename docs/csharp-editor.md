@@ -89,7 +89,7 @@ Code saved in the section runs inside the site, with the site's full rights: its
 
 The section is for development. Production sites run without the development-mode package, so they compile nothing from the folder. To ship a class, move its file into the site's project and register it with dependency injection, such as `services.AddScoped<IFormResource, OrdersForm>()`. Remove it from the folder at the same time, or the build file leaves it out of the project.
 
-A form class owns its own authorization. On a page with no Public Access, an anonymous visitor reaches it, and a class with no check is public. Classes the wizard writes check the caller in every operation; keep those checks when you change them.
+A form class owns its own authorization. On a page with no Public Access, an anonymous visitor reaches it, and a class with no check is public. Classes the wizard writes check the caller in every operation; keep those checks when you change them. A class for signed-in Members only can also set `RequireMember` to `true`, and AppBlocks then answers 401 to a caller with no account and 403 to a backoffice User alone before any operation runs. The [business rules guide](business-rules.md#the-authenticated-caller) describes it.
 
 ## The New file wizard
 
@@ -115,6 +115,7 @@ A form class owns its own authorization. On a page with no Public Access, an ano
 
 - Every operation resolves the caller first, and refuses one that may not read or write. An account that no longer resolves is refused, never treated as anonymous.
 - The SQL is written for the connection's database (SQLite, SQL Server, PostgreSQL or Oracle), with quoted names and every value a bound parameter.
+- `RequireMember` is `true` when the access is Specific groups with Member groups only, so AppBlocks refuses everyone without a Member session before the class runs; the class's own checks still decide between Members. Every other choice admits backoffice Users or visitors, so it is `false`.
 - Last save wins by default. Set `UseChecksum = true` in a generated form class to detect conflicting edits without adding a column. Update and delete then compare the loaded checksum with the current row inside the write transaction and refuse a stale change.
 - Fields follow the columns: their kind, whether they are required, a text column's length (4,000 characters when it has none) and an integer column's range. A computed or database-generated column is read-only, and binary columns are left out.
 

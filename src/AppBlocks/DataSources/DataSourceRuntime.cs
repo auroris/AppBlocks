@@ -37,8 +37,12 @@ public sealed class DataSourceRuntime(IApplicationConnectionFactory connections,
 
     internal ILogger Logger => logger;
     internal DataSourceReceipts Receipts { get; } = new(time ?? TimeProvider.System);
-    /// <summary>The web server's local time, which <c>:NOW</c> binds and the audit columns record.</summary>
-    internal DateTime Now() => clock.GetLocalNow().DateTime;
+    /// <summary>
+    /// The current moment with the web server's offset. Its local wall time is what <c>:NOW</c> binds and the audit
+    /// columns record; its UTC time is what <c>:NOW_UTC</c> binds. Both come from one reading, so they agree in the
+    /// autumn hour that repeats.
+    /// </summary>
+    internal DateTimeOffset Now() => clock.GetLocalNow();
 
     internal sealed record PlanEntry(DataSourcePlan? Plan, string? Problem, DateTimeOffset Expires);
 

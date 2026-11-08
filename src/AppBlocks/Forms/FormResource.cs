@@ -10,8 +10,11 @@ public sealed record FormField(string Key, string Label, string Kind, bool Requi
     bool ReadOnly = false, int? MaxLength = null, decimal? Minimum = null, decimal? Maximum = null,
     IReadOnlyList<FormChoice>? Choices = null, bool HasServerDefault = false);
 public sealed record FormCapabilities(bool Create = false, bool Update = false, bool Delete = false);
-/// <param name="Version">Null for last-save-wins. A checksum or version opts into conflict detection; the resource must check it atomically with each update or delete.</param>
-public sealed record FormRecord(string? Key, string? Version, IReadOnlyDictionary<string, object?> Values, FormCapabilities Capabilities);
+/// <param name="Checksum">
+/// Null for last-save-wins. A value is the checksum of the row's values as the caller read them, and opts into conflict
+/// detection: the resource compares it with the current row atomically with each update or delete and refuses a stale change.
+/// </param>
+public sealed record FormRecord(string? Key, string? Checksum, IReadOnlyDictionary<string, object?> Values, FormCapabilities Capabilities);
 /// <param name="Member">
 /// Who is calling, never null: authenticated Umbraco Member and/or backoffice User identities, or on a page with no Public Access an
 /// unauthenticated principal for an anonymous visitor. Resources decide which of them, and which groups, may perform each operation;
@@ -57,8 +60,27 @@ public interface IFormResource
     Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct);
     Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct);
     Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct);
-    Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct);
-    Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct);
+    Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct);
+    Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct);
+
+    /// <summary>
+    /// Whether only a signed-in Umbraco Member reaches this class. When true, AppBlocks answers 401 to a caller with no
+    /// account and 403 to a signed-in backoffice User with no Member session, before Initialize, Load, Create, Update or Delete
+    /// runs, and an anonymous visitor sees the form's sign-in notice. The class still decides which Members may do what.
+    /// </summary>
+    bool RequireMember => false;
+}
+
+/// <summary>The check AppBlocks makes for <see cref="IFormResource.RequireMember"/> wherever it calls a form class for a caller.</summary>
+public static class FormResourceAccess
+{
+    /// <summary>The status that refuses <paramref name="caller"/>: 401 with no account, 403 for an account with no Member identity; null when the class may be called.</summary>
+    public static int? Refusal(IFormResource resource, ClaimsPrincipal caller)
+    {
+        if (!resource.RequireMember) return null;
+        if (!caller.Identities.Any(identity => identity.IsAuthenticated)) return 401;
+        return Authentication.ApplicationAccessPolicy.MemberIdentity(caller) is null ? 403 : null;
+    }
 }
 
 /// <summary>Typed command adapter with strict JSON binding and data-annotation validation.</summary>
@@ -70,16 +92,18 @@ public abstract class FormResource<TCreate, TUpdate> : IFormResource where TCrea
     };
     public abstract string Alias { get; }
     public virtual string ContractVersion => "1";
+    /// <inheritdoc cref="IFormResource.RequireMember"/>
+    public virtual bool RequireMember => false;
     public abstract IReadOnlyList<FormField> Fields { get; }
     public abstract Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct);
     public abstract Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct);
-    public abstract Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct);
+    public abstract Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct);
     protected abstract Task<FormResult> CreateAsync(TCreate input, FormExecutionContext context, CancellationToken ct);
-    protected abstract Task<FormResult> UpdateAsync(string key, TUpdate input, string? version, FormExecutionContext context, CancellationToken ct);
+    protected abstract Task<FormResult> UpdateAsync(string key, TUpdate input, string? checksum, FormExecutionContext context, CancellationToken ct);
     public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct)
         => Bind<TCreate>(input, value => CreateAsync(value, context, ct));
-    public Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct)
-        => Bind<TUpdate>(input, value => UpdateAsync(key, value, version, context, ct));
+    public Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct)
+        => Bind<TUpdate>(input, value => UpdateAsync(key, value, checksum, context, ct));
 
     private static Task<FormResult> Bind<T>(JsonElement input, Func<T, Task<FormResult>> execute) where T : class
     {

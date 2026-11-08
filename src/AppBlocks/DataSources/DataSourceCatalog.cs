@@ -84,7 +84,8 @@ internal sealed class MemberGroupNames(IReadOnlyList<IMemberGroup> all)
 /// other published data sources, and the backing class it names must be registered.
 /// </summary>
 public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMemberGroupService groups, DataSourceCatalog catalog,
-    IEnumerable<IFormResource> code, DataSourceHandlers? handlers = null, Code.CompiledTypes? compiled = null) : INotificationAsyncHandler<ContentPublishingNotification>
+    IEnumerable<IFormResource> code, DataSourceHandlers? handlers = null, Code.CompiledTypes? compiled = null, BindVariableProviders? providers = null)
+    : INotificationAsyncHandler<ContentPublishingNotification>
 {
     public async Task HandleAsync(ContentPublishingNotification notification, CancellationToken cancellationToken)
     {
@@ -93,8 +94,18 @@ public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMembe
             var errors = await ValidateAsync(content.Key, content.Name ?? "", alias => content.GetValue(alias));
             if (errors.Count > 0)
                 notification.CancelOperation(new EventMessage("Data source", (content.Name ?? "Data source") + ": " + string.Join(" ", errors), EventMessageType.Error));
+            else if (Warning(content.Key, content.Name ?? "", alias => content.GetValue(alias)) is { } warning)
+                notification.Messages.Add(new EventMessage("Data source", (content.Name ?? "Data source") + ": " + warning, EventMessageType.Warning));
         }
     }
+
+    /// <summary>
+    /// What publishing warns about without refusing: <c>:APP.</c> names no bind variable provider declares. A warning, because the
+    /// providers are code, which may arrive after the content that names their values; until then such a name binds NULL.
+    /// </summary>
+    public string? Warning(Guid key, string name, Func<string, object?> value)
+        => providers is not null && DataSourceDefinition.Read(key, name, value, _ => [], new List<string>()) is { } definition
+            ? providers.UndeclaredWarning(definition.ApplicationNames()) : null;
 
     /// <param name="value">Returns the value of a property of the node being published.</param>
     public async Task<IReadOnlyList<string>> ValidateAsync(Guid key, string name, Func<string, object?> value)

@@ -32,20 +32,32 @@ public interface IDataSourceHandler
     /// <summary>A new row, after the submitted values are parsed and the defaults filled; <see cref="DataSourceOutcome.Handled"/> returns its key.</summary>
     ValueTask<DataSourceOutcome> CreateAsync(DataSourceOperation operation, CancellationToken ct) => DataSourceOutcome.Pass;
 
-    /// <summary>A changed row, locked, after any enabled version check; <see cref="DataSourceOperation.Values"/> is the whole row as it would be stored.</summary>
+    /// <summary>A changed row, locked, after any enabled checksum check; <see cref="DataSourceOperation.Values"/> is the whole row as it would be stored.</summary>
     ValueTask<DataSourceOutcome> UpdateAsync(DataSourceOperation operation, CancellationToken ct) => DataSourceOutcome.Pass;
 
-    /// <summary>A row about to be deleted, locked, after any enabled version check.</summary>
+    /// <summary>A row about to be deleted, locked, after any enabled checksum check.</summary>
     ValueTask<DataSourceOutcome> DeleteAsync(DataSourceOperation operation, CancellationToken ct) => DataSourceOutcome.Pass;
 
     /// <summary>The rows of one parent record, as a tabular form lists them; <see cref="DataSourceOperation.Rows"/> is what it shows.</summary>
     ValueTask<DataSourceOutcome> ListAsync(DataSourceOperation operation, CancellationToken ct) => DataSourceOutcome.Pass;
 
     /// <summary>
-    /// A report, list of values, schedule or paper report about to read the data source. Only a refusal counts: their rows never pass
-    /// through AppBlocks, so nothing here can change them.
+    /// A report, API endpoint, list of values, schedule or paper report about to read the data source. Only a refusal counts: to answer
+    /// the read with rows of the class's own, use <see cref="ReadAsync"/>.
     /// </summary>
     ValueTask<DataSourceOutcome> QueryAsync(DataSourceOperation operation, CancellationToken ct) => DataSourceOutcome.Pass;
+
+    /// <summary>
+    /// Rows in place of the row source's, for the readers whose rows pass through AppBlocks: API endpoints, lists of values, schedules
+    /// and paper reports. Return them by column name, as the row source names its columns, which also give the rows their field aliases
+    /// and kinds; AppBlocks sorts them as an endpoint's Order by asks and holds them to the reader's row limit, as it does its own rows.
+    /// Null, the default, reads the row source. It runs once the data source's access, <see cref="QueryAsync"/> and every policy have
+    /// allowed the read, with <see cref="DataSourceOperation.Context"/> carrying the bound parameters. The row restriction is SQL, so it
+    /// cannot apply to rows from code: the class applies its rule itself. An Interactive Report runs the row source's SQL itself and
+    /// never asks this.
+    /// </summary>
+    ValueTask<IReadOnlyList<IReadOnlyDictionary<string, object?>>?> ReadAsync(DataSourceOperation operation, CancellationToken ct)
+        => new((IReadOnlyList<IReadOnlyDictionary<string, object?>>?)null);
 }
 
 /// <summary>Carry on with the engine's own write, the class wrote it itself, or nothing is written.</summary>
@@ -151,7 +163,7 @@ public sealed class DataSourceDetail
 /// <summary>
 /// The SQL a backing class runs: one statement or block, whole, as one command on the engine's connection and inside its transaction, with
 /// every value bound as a parameter. It takes the bind variables an editor's custom statement does, <c>:USER_*</c>, <c>:PARAM.name</c>,
-/// <c>:APP.name</c>, <c>:FIELD.alias</c> against the operation's values and <c>:NOW</c>, and <c>:ARG.name</c> for a value the class passes
+/// <c>:APP.name</c>, <c>:FIELD.alias</c> against the operation's values, <c>:NOW</c> and <c>:NOW_UTC</c>, and <c>:ARG.name</c> for a value the class passes
 /// in <c>args</c>: a dictionary, or an object whose properties are the names. An Oracle anonymous block (<c>BEGIN ... END;</c>) runs as
 /// written. <c>:USER_*</c> values need a signed-in account.
 /// </summary>

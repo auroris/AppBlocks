@@ -22,4 +22,4 @@ There are two ways to set a feature up, and either takes effect on the next requ
 
 File uploads run on SQLite and SQL Server only. On PostgreSQL or Oracle the block shows the same notice and nothing is created: select a separate store with `Attachments:Connection`, as described under [Connections](connections.md).
 
-`APP_SCHEMA` is a bookkeeping table AppBlocks' schema code writes when it creates tables. Nothing reads it back, so uploads neither need it nor wait for it, and the script leaves it out. An account that may create tables gets one as before.
+`APP_SCHEMA` is a bookkeeping table AppBlocks' schema code writes when it creates tables. The features on this screen never read it back, so uploads neither need it nor wait for it, and the script leaves it out. An account that may create tables gets one as before. An application database of your own reads it to know which of its run-once scripts have run; [Connections](connections.md#application-databases) describes that.

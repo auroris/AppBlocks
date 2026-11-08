@@ -9,7 +9,7 @@ export default class DataSourceTest extends UmbLitElement {
     static properties = { busy: { state: true }, error: { state: true }, result: { state: true } };
     static styles = css`
         :host { display:block; } textarea { width:100%; box-sizing:border-box; min-height:100px; padding:10px; font:13px monospace; }
-        button { margin:12px 0; padding:8px 16px; cursor:pointer; } .error { color:var(--uui-color-danger); }
+        button { margin:12px 0; padding:8px 16px; cursor:pointer; } .error { color:var(--uui-color-danger); } .warning { color:var(--uui-color-warning-emphasis, var(--uui-color-text)); }
         table { border-collapse:collapse; width:100%; } th,td { padding:8px; border-bottom:1px solid var(--uui-color-border); text-align:left; overflow-wrap:anywhere; }
         pre { white-space:pre-wrap; overflow-wrap:anywhere; } p { color:var(--uui-color-text-alt); }
     `;
@@ -43,6 +43,8 @@ export default class DataSourceTest extends UmbLitElement {
             <div aria-live="polite">
                 ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : ""}
                 ${this.result?.errors?.map(error => html`<p class="error" role="alert">${error}</p>`)}
+                ${this.result?.warnings?.map(warning => html`<p class="warning" role="status">${warning}</p>`)}
+                ${this.result?.applicationNames?.length ? html`<p>Application values the bind variable providers declare: ${this.result.applicationNames.map(name => `:APP.${name}`).join(", ")}. Give one a sample value as {"APP.${this.result.applicationNames[0]}": "…"}.</p>` : ""}
                 ${this.result?.columns?.length ? html`<table>
                     <thead><tr><th>Field</th><th>Column</th><th>Type</th><th>Rules</th><th>Sample value</th></tr></thead>
                     <tbody>${this.result.columns.map(column => html`<tr>

@@ -102,7 +102,7 @@ The `AppBlocks:NoStorePages` setting controls AppBlocks' page cache headers:
 
 | Value | Behavior |
 | --- | --- |
-| `AppBlocksPages` (default) | Send `no-store` and prevent output-cache storage for pages with a block whose output depends on who asks: a form, attachments, a schedule, a tabular form or a plugin block that requires a user. Their Public Access login/denied responses follow. A page of content blocks alone is cached as Umbraco and the host decide. |
+| `AppBlocksPages` (default) | Send `no-store` and prevent output-cache storage for pages with a block whose output depends on who asks: a form, attachments, a schedule, a tabular form, or a plugin block that requires a user or varies by data. Their Public Access login/denied responses follow. A page of content blocks alone is cached as Umbraco and the host decide. |
 | `AllPages` | Apply that behavior to every Umbraco-routed website page. |
 | `Off` | Add no page cache restrictions from AppBlocks; the host and Umbraco control caching. |
 
@@ -111,3 +111,100 @@ The `AppBlocks:NoStorePages` setting controls AppBlocks' page cache headers:
 ```
 
 The blocks' `/api/` endpoints keep their own `no-store` headers in every mode, but do not opt out of output caching, so exclude them from any output cache policy you add. [API endpoints](api-endpoints.md) answer below `/api/data`, or `AppBlocks:ApiBasePath`, with `no-store` too; they have no page, so their data source's access decides alone, and AppBlocks adds no CORS policy for them. Antiforgery and other host middleware may also set their own cache headers, including when the setting is Off. A cookie for a disabled or locked-out account stays refused by AppBlocks on an open page; it is not treated as an anonymous visitor.
+
+## Companion packages
+
+A companion package can add blocks of its own and controllers of its own beside the ones AppBlocks provides.
+
+### Blocks
+
+A companion package adds a block by registering an `IAppBlockPlugin`, and two of its members decide how AppBlocks treats a page that has the block:
+
+| Member | When true |
+| --- | --- |
+| `RequiresUser` | The block acts for the signed-in person, as a report does. Publishing refuses it inside a form, and its page is kept out of caches. |
+| `VariesByData` | The block's output can change without a publish, such as a public list read from a database. Its page is rendered for each request and kept out of caches, so visitors see current data. |
+
+A public block whose output comes from a database sets `VariesByData` and leaves `RequiresUser` false. A block that requires the user is kept out of caches whatever `VariesByData` answers. `VariesByData` has a default implementation that answers `RequiresUser`, so a plugin written before it compiles unchanged and keeps its behaviour.
+
+```csharp
+public sealed class NoticesBlock : IAppBlockPlugin
+{
+    public string Alias => "noticeBoard";
+    public string ViewPath => "~/Views/Partials/Notices/Board.cshtml";
+    public bool RequiresUser => false;
+    // The notices come from the database, so a cached copy of the page would go stale.
+    public bool VariesByData => true;
+    public void Validate(JsonElement block, List<string> errors) { }
+}
+```
+
+### Controllers for signed-in Members
+
+A companion's own API controller for signed-in Members uses the `AppBlocks.Member` authorization policy, `AppBlocksAuthorization.MemberPolicy`. It reads Umbraco's Member cookie and admits a Member whose account is approved and not locked out, read afresh on every request as the blocks read it. Marking a controller `[Authorize(AuthenticationSchemes = IdentityConstants.ApplicationScheme)]` instead gets a caller with no session a 302 to the Member login page, which a script cannot use. The policy answers an API-style request with a status the script can act on:
+
+| Caller | API-style request | Any other request |
+| --- | --- | --- |
+| No Member session | 401 | Umbraco's redirect to the login page |
+| A Member who is locked out or unapproved | 403 | Umbraco's access-denied redirect |
+
+A request is API-style when its path is under `/api/`, its controller is an `[ApiController]`, it accepts JSON, or it carries `X-Requested-With: XMLHttpRequest`. A backoffice User without a Member session counts as having no Member session.
+
+A signed-in Member's script gets an antiforgery token from `GET /api/antiforgery/token`, which answers `{ "token": "...", "headerName": "RequestVerificationToken" }` with `Cache-Control: no-store`, and 401 to anyone else. The token is bound to the Member, as the blocks' own tokens are, so it validates on a controller under the policy. Send it in the named header with each change:
+
+```csharp
+using AppBlocks.Authentication;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+[ApiController]
+[Route("api/notices")]
+[Authorize(Policy = AppBlocksAuthorization.MemberPolicy)]
+public sealed class NoticesController(NoticeStore notices) : ControllerBase
+{
+    [HttpGet]
+    public IActionResult List() => Ok(notices.ForMember(User.FindFirstValue(ClaimTypes.NameIdentifier)));
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public IActionResult Post(NoticeInput input) => Ok(notices.Add(input));
+}
+```
+
+```js
+const { token, headerName } = await (await fetch("/api/antiforgery/token")).json();
+await fetch("/api/notices", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", [headerName]: token },
+    body: JSON.stringify({ title: "Runway closed" }),
+});
+```
+
+A mapped endpoint takes the same policy with `RequireAuthorization(AppBlocksAuthorization.MemberPolicy)`. The policy decides only that the caller is a current Member; the controller still decides which Members may do what.
+
+### Nodes a package generates
+
+API endpoints, lists of values and data sources are content nodes, which editors publish. A package that generates some of them from its own code, so that their SQL follows the package's rules, installs them with `OwnedNodeInstaller`. Each node is an `OwnedNode`: a fixed key, a name, the document type alias and the property values by alias, as the backoffice stores them.
+
+```csharp
+public sealed class NoticeDefinitions(IServiceScopeFactory scopes) : INotificationHandler<UmbracoApplicationStartedNotification>
+{
+    public void Handle(UmbracoApplicationStartedNotification notification)
+    {
+        // A scope of its own, as the publish checks the installer runs use scoped services.
+        using var scope = scopes.CreateScope();
+        scope.ServiceProvider.GetRequiredService<OwnedNodeInstaller>().Install([
+            new OwnedNode(NoticesEndpointKey, "Notices API", "apiEndpoint", new Dictionary<string, object?> {
+                ["alias"] = "notices.current", ["route"] = "notices", ["connection"] = "NoticesDb", ["access"] = "Public",
+                ["sql"] = NoticeRules.CurrentSql, ["shape"] = "Collection",
+            }, Parent: DataSourcesRootKey),
+        ]);
+    }
+}
+```
+
+The installer keeps a SHA-256 fingerprint of each node's definition in Umbraco's key-value table, under `AppBlocks:OwnedNode:<key>`. A start whose definition has the stored fingerprint changes nothing, so the node keeps its published version. A changed definition updates the node and publishes it, which runs the publish checks of its type: an endpoint's SQL is checked against its database at that start, and a definition the checks refuse throws an `OwnedNodeException` with their reasons, publishes nothing and records nothing, so the next start tries again. `Install` answers `Created`, `Updated`, `Unchanged` or `LeftDeleted` for each node.
+
+The package owns the properties its definition names. An editor's change to one of them lasts until the package's definition next changes, and a property the definition leaves out keeps whatever an editor gives it. A node an editor deleted or put in the recycle bin comes back at the next start; pass `recreateDeleted: false` to leave it deleted. For a document type that varies by culture, give each culture's name and values in `Cultures`.
+
+Call the installer once the things its nodes are checked against exist: a list or endpoint's database and tables, and the data source a node selects. Install a parent before its children, as `Install` does with a list in order.

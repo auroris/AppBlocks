@@ -121,6 +121,9 @@ internal static class FieldValues
         }
     }
 
+    /// <summary>A moment as <c>:NOW_UTC</c> writes it into text: ISO-8601 to the second with <c>Z</c>, fixed width so it sorts in time order.</summary>
+    public static string UtcText(DateTimeOffset moment) => moment.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", Invariant);
+
     private static decimal? ToDecimal(double number) => double.IsFinite(number) && Math.Abs(number) < 7.9e27 ? (decimal)number : null;
 
     /// <summary>

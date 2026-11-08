@@ -18,6 +18,8 @@ public enum BindVariableKind
     UserGroups,
     /// <summary>The web server's local date and time.</summary>
     Now,
+    /// <summary>The current moment in UTC, bound in the form each dialect compares with stored UTC stamps.</summary>
+    NowUtc,
     /// <summary>A query parameter of the form request.</summary>
     Param,
     /// <summary>The current value of another field of the record.</summary>
@@ -34,6 +36,7 @@ public sealed record BindVariable(BindVariableKind Kind, string? Name = null)
     private static readonly Dictionary<string, BindVariableKind> Fixed = new(StringComparer.OrdinalIgnoreCase) {
         ["USER_SID"] = BindVariableKind.UserSid, ["USER_NAME"] = BindVariableKind.UserName, ["USER_KEY"] = BindVariableKind.UserKey,
         ["USER_EMAIL"] = BindVariableKind.UserEmail, ["USER_GROUPS"] = BindVariableKind.UserGroups, ["NOW"] = BindVariableKind.Now,
+        ["NOW_UTC"] = BindVariableKind.NowUtc,
     };
 
     public override string ToString() => Kind switch {
@@ -66,7 +69,7 @@ internal enum SqlUse
 {
     /// <summary>A SELECT used as the row source: one statement, no :FIELD values.</summary>
     RowSource,
-    /// <summary>A predicate added to every fetch and write: only the signed-in person's values and :NOW.</summary>
+    /// <summary>A predicate added to every fetch and write: only the signed-in person's values, :NOW and :NOW_UTC.</summary>
     RowRestriction,
     /// <summary>A custom insert, update or delete, run whole.</summary>
     Statement,
@@ -167,7 +170,7 @@ internal sealed class SqlTemplate
                 }
                 var written = sql[i..end];
                 var variable = BindVariable.Parse(written[1..]);
-                if (variable is null) errors.Add($"{label} uses {written}, which is not a bind variable (use :USER_SID, :USER_NAME, :USER_KEY, :USER_EMAIL, :USER_GROUPS, :NOW, :PARAM.name, :FIELD.alias or :APP.name{(use == SqlUse.Handler ? ", or :ARG.name" : "")}).");
+                if (variable is null) errors.Add($"{label} uses {written}, which is not a bind variable (use :USER_SID, :USER_NAME, :USER_KEY, :USER_EMAIL, :USER_GROUPS, :NOW, :NOW_UTC, :PARAM.name, :FIELD.alias or :APP.name{(use == SqlUse.Handler ? ", or :ARG.name" : "")}).");
                 else if (variable.Kind == BindVariableKind.Arg && use != SqlUse.Handler)
                     errors.Add($"{label} cannot use {written}: :ARG. values are what a backing class passes with its own statements.");
                 else if (use == SqlUse.RowRestriction && variable.Kind is BindVariableKind.Param or BindVariableKind.Field)

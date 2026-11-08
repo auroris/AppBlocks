@@ -352,6 +352,11 @@ public static partial class CodeRecipes
         }
         code.AppendLine("    ];");
         code.AppendLine();
+        // Only Member Groups can admit anyone under Specific groups with no User Groups, so AppBlocks may refuse everyone else first.
+        var membersOnly = recipe.Access == DataSourceAccess.SpecificGroups && recipe.ReadUserGroups.Count == 0 && recipe.WriteUserGroups.Count == 0;
+        code.AppendLine("    // True has AppBlocks refuse everyone but a signed-in Member before any method below runs: 401 with no account, 403 for a backoffice User alone.");
+        code.AppendLine($"    public override bool RequireMember => {(membersOnly ? "true" : "false")};");
+        code.AppendLine();
         AppendAccess(code, recipe);
         code.AppendLine();
         code.AppendLine("    public override async Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct)");
@@ -394,7 +399,7 @@ public static partial class CodeRecipes
         code.AppendLine("        }, ct);");
         code.AppendLine("    }");
         code.AppendLine();
-        code.AppendLine($"    protected override async Task<FormResult> UpdateAsync(string key, {input} input, string? version, FormExecutionContext context, CancellationToken ct)");
+        code.AppendLine($"    protected override async Task<FormResult> UpdateAsync(string key, {input} input, string? checksum, FormExecutionContext context, CancellationToken ct)");
         code.AppendLine("    {");
         code.AppendLine("        if (await CallerAsync(context, ct) is not { } user || !CanWrite(user)) return FormResult.Denied();");
         code.AppendLine("        if (KeyValue(key) is not { } id) return FormResult.Missing();");
@@ -407,7 +412,7 @@ public static partial class CodeRecipes
         code.AppendLine("            await using var transaction = await connection.BeginTransactionAsync(ct);");
         code.AppendLine("            // Keep the read and write together, including the checksum check when enabled.");
         code.AppendLine("            if (await ReadAsync(connection, transaction, LockSql, id, user, ct) is not { } current) return FormResult.Missing();");
-        code.AppendLine("            if (current.Version is { } expected && expected != version) return FormResult.Conflict();");
+        code.AppendLine("            if (current.Checksum is { } expected && expected != checksum) return FormResult.Conflict();");
         if (updateSql is not null)
         {
             code.AppendLine("            await using (var command = Command(connection, transaction, UpdateSql))");
@@ -422,14 +427,14 @@ public static partial class CodeRecipes
         code.AppendLine("        }, ct);");
         code.AppendLine("    }");
         code.AppendLine();
-        code.AppendLine("    public override async Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct)");
+        code.AppendLine("    public override async Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct)");
         code.AppendLine("    {");
         code.AppendLine("        if (await CallerAsync(context, ct) is not { } user || !CanWrite(user)) return FormResult.Denied();");
         code.AppendLine("        if (KeyValue(key) is not { } id) return FormResult.Missing();");
         code.AppendLine("        return await RunAsync(async connection => {");
         code.AppendLine("            await using var transaction = await connection.BeginTransactionAsync(ct);");
         code.AppendLine("            if (await ReadAsync(connection, transaction, LockSql, id, user, ct) is not { } current) return FormResult.Missing();");
-        code.AppendLine("            if (current.Version is { } expected && expected != version) return FormResult.Conflict();");
+        code.AppendLine("            if (current.Checksum is { } expected && expected != checksum) return FormResult.Conflict();");
         code.AppendLine("            await using (var command = Command(connection, transaction, DeleteSql))");
         code.AppendLine("            {");
         code.AppendLine("                Add(command, \"key\", id);");
@@ -503,7 +508,7 @@ public static partial class CodeRecipes
         code.AppendLine("        var values = new Dictionary<string, object?>();");
         foreach (var column in columns)
             code.AppendLine($"        values[{Literal(column.Alias)}] = reader.IsDBNull({column.Index}) ? null : Show(reader.GetValue({column.Index}), {Literal(column.Kind)});");
-        code.AppendLine($"        return new FormRecord(Convert.ToString(values[{Literal(key.Alias)}], CultureInfo.InvariantCulture), UseChecksum ? Version(values) : null, values, Capabilities(user));");
+        code.AppendLine($"        return new FormRecord(Convert.ToString(values[{Literal(key.Alias)}], CultureInfo.InvariantCulture), UseChecksum ? Checksum(values) : null, values, Capabilities(user));");
         code.AppendLine("    }");
         code.AppendLine();
         code.AppendLine("    /// <summary>A database value in the form's JSON shape: text, a number, true or false, or ISO dates and times.</summary>");
@@ -529,8 +534,8 @@ public static partial class CodeRecipes
         code.AppendLine("        _ => Convert.ToString(value, CultureInfo.InvariantCulture),");
         code.AppendLine("    };");
         code.AppendLine();
-        code.AppendLine("    /// <summary>A fingerprint of the record as read: a change saved by someone else since gives a different one, and the save is refused.</summary>");
-        code.AppendLine("    private static string Version(IReadOnlyDictionary<string, object?> values)");
+        code.AppendLine("    /// <summary>A checksum of the record's values as read: a change saved by someone else since gives a different one, and the save is refused.</summary>");
+        code.AppendLine("    private static string Checksum(IReadOnlyDictionary<string, object?> values)");
         code.AppendLine("        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(values.OrderBy(pair => pair.Key, StringComparer.Ordinal)))))[..16];");
         code.AppendLine("}");
         return Lines(code);

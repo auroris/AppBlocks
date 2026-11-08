@@ -99,7 +99,7 @@ public sealed class ShuttleTests
         var state = await client.GetFromJsonAsync<JsonElement>(api);
         client.DefaultRequestHeaders.Add("RequestVerificationToken", state.GetProperty("antiforgeryToken").GetString());
         async Task<HttpResponseMessage> Send(object values, bool update = false) => await client.SendAsync(new HttpRequestMessage(update ? HttpMethod.Put : HttpMethod.Post, api + (update ? "/1" : "")) {
-            Content = JsonContent.Create(new { values, definitionVersion = state.GetProperty("definitionVersion").GetString(), version = "1", submissionKey = Guid.NewGuid().ToString() }),
+            Content = JsonContent.Create(new { values, definitionVersion = state.GetProperty("definitionVersion").GetString(), checksum = "1", submissionKey = Guid.NewGuid().ToString() }),
         });
         const string csv = "b,\"a,b\",\"say \"\"yes\"\"\",a";
         using (var created = await Send(new { items = csv, orders = "5,4" }))
@@ -137,7 +137,7 @@ public sealed class ShuttleTests
         public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Ok(new(null, null, new Dictionary<string, object?>(), new(Create: true))));
         public Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Ok(new(key, "1", Saved, new(Update: true))));
         public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct) { Saved = input.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.GetString()); return LoadAsync("1", context, ct); }
-        public Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct) => CreateAsync(input, context, ct);
-        public Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+        public Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct) => CreateAsync(input, context, ct);
+        public Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
     }
 }

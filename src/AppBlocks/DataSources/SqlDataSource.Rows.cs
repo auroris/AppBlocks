@@ -16,9 +16,9 @@ public enum RowOperation { Create, Update, Delete }
 
 /// <summary>
 /// One change of a batch: <see cref="RowOperation.Create"/> with the new row's values, <see cref="RowOperation.Update"/> with the
-/// row's key, the version the caller read and the values that changed, or <see cref="RowOperation.Delete"/> with the key and the version.
+/// row's key, the checksum the caller read and the values that changed, or <see cref="RowOperation.Delete"/> with the key and the checksum.
 /// </summary>
-public sealed record DataSourceChange(RowOperation Operation, string? Key, string? Version, JsonElement Values);
+public sealed record DataSourceChange(RowOperation Operation, string? Key, string? Checksum, JsonElement Values);
 
 /// <summary>
 /// What a list or a batch answers: the rows of the scope, in key order, and the record a new row starts from; or the
@@ -103,7 +103,7 @@ public sealed partial class SqlDataSource
         if (changes.Count > MaxChanges) return new(422, Errors: new Dictionary<string, string[]> { [""] = [$"Save at most {MaxChanges} rows at a time."] });
         if (!Guid.TryParse(context.SubmissionKey, out var submission)) return new(422, Errors: new Dictionary<string, string[]> { [""] = ["A submission identifier is required."] });
         if (Unaccepted(changes) is { } unaccepted) return unaccepted;
-        // One receipt for the whole batch, so a retried request neither writes twice nor fails on versions it already moved.
+        // One receipt for the whole batch, so a retried request neither writes twice nor fails on checksums its first attempt already changed.
         var (receipt, hash) = BatchReceipt(user, context, submission, changes);
         using var gate = await runtime.Receipts.EnterAsync(receipt, ct);
         if (runtime.Receipts.Find(receipt) is { } earlier)
@@ -149,7 +149,7 @@ public sealed partial class SqlDataSource
     /// <paramref name="index"/>; null when every change was applied. The caller commits on null.
     /// </summary>
     private async Task<DataSourceRowsResult?> ApplyAllAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, PlanColumn link, object? value,
-        IReadOnlyList<DataSourceChange> changes, Func<int, int?> index, DateTime now, DbConnection connection, DbTransaction transaction, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
+        IReadOnlyList<DataSourceChange> changes, Func<int, int?> index, DateTimeOffset now, DbConnection connection, DbTransaction transaction, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
     {
         for (var i = 0; i < changes.Count; i++)
         {
@@ -168,7 +168,7 @@ public sealed partial class SqlDataSource
     }
 
     private async Task<FormResult> ApplyAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, PlanColumn link, object? value,
-        DataSourceChange change, DateTime now, DbConnection connection, DbTransaction transaction, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
+        DataSourceChange change, DateTimeOffset now, DbConnection connection, DbTransaction transaction, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
     {
         var scope = new ScopeMatch(link, value);
         switch (change.Operation)
@@ -181,10 +181,10 @@ public sealed partial class SqlDataSource
             case RowOperation.Update:
                 if (change.Key is null || !TryParseKey(plan, change.Key, out var keys)) return FormResult.Missing();
                 if (change.Values.ValueKind != JsonValueKind.Object) return FormResult.Invalid("", "Row values must be an object.");
-                return await UpdateRecordAsync(plan, user, context, change.Key, keys, change.Values, change.Version, now, connection, transaction, scope, app, ct);
+                return await UpdateRecordAsync(plan, user, context, change.Key, keys, change.Values, change.Checksum, now, connection, transaction, scope, app, ct);
             case RowOperation.Delete:
                 if (change.Key is null || !TryParseKey(plan, change.Key, out var deleteKeys)) return FormResult.Missing();
-                return await DeleteRecordAsync(plan, user, context, change.Key, deleteKeys, change.Version, connection, transaction, scope, app, ct);
+                return await DeleteRecordAsync(plan, user, context, change.Key, deleteKeys, change.Checksum, connection, transaction, scope, app, ct);
             default:
                 return FormResult.Invalid("", "Each change is a create, an update or a delete.");
         }

@@ -1,0 +1,105 @@
+using System.Security.Claims;
+using System.Text.Encodings.Web;
+using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.Extensions.Options;
+using AppBlocks.DataSources;
+
+namespace AppBlocks.Authentication;
+
+/// <summary>
+/// Authorization for a companion's own controllers and endpoints that serve signed-in Umbraco Members. Mark an action or controller
+/// <c>[Authorize(Policy = AppBlocksAuthorization.MemberPolicy)]</c>, or call <c>RequireAuthorization(AppBlocksAuthorization.MemberPolicy)</c>
+/// on a mapped endpoint. The policy reads Umbraco's Member cookie and admits a Member whose account is approved and not locked out, read
+/// afresh on every request. On an API-style request it answers 401 to a caller with no Member session and 403 to a Member it refuses,
+/// where Umbraco's Member cookie would redirect to the login page; other requests keep that redirect.
+/// </summary>
+public static class AppBlocksAuthorization
+{
+    /// <summary>The policy name: a signed-in, approved, unlocked Umbraco Member.</summary>
+    public const string MemberPolicy = "AppBlocks.Member";
+
+    /// <summary>The authentication scheme the policy uses: Umbraco's Member cookie, with 401 and 403 for API-style requests.</summary>
+    public const string MemberScheme = "AppBlocks.Member";
+
+    /// <summary>Where a signed-in Member's script fetches an antiforgery token for a companion's own endpoints.</summary>
+    public const string AntiforgeryTokenPath = "/api/antiforgery/token";
+
+    /// <summary>
+    /// Whether a request expects an API answer rather than a page: its path is under <c>/api/</c>, its endpoint is an
+    /// <c>[ApiController]</c>, it accepts JSON, or it says it was made by script with <c>X-Requested-With: XMLHttpRequest</c>.
+    /// </summary>
+    public static bool IsApiRequest(HttpContext context)
+    {
+        if (context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)) return true;
+        if (context.GetEndpoint()?.Metadata.GetMetadata<IApiBehaviorMetadata>() is not null) return true;
+        if (context.Request.Headers.XRequestedWith == "XMLHttpRequest") return true;
+        return context.Request.Headers.Accept.Any(value => value?.Contains("json", StringComparison.OrdinalIgnoreCase) == true);
+    }
+
+    internal static void Add(IServiceCollection services)
+    {
+        services.AddAuthentication().AddScheme<AuthenticationSchemeOptions, MemberAuthenticationHandler>(MemberScheme, null);
+        services.AddAuthorization(options => options.AddPolicy(MemberPolicy, policy => policy
+            .AddAuthenticationSchemes(MemberScheme).RequireAuthenticatedUser().AddRequirements(new SignedInMemberRequirement())));
+        services.AddSingleton<IAuthorizationHandler, SignedInMemberHandler>();
+    }
+
+    /// <summary>
+    /// Maps <see cref="AntiforgeryTokenPath"/>: for a signed-in Member, <c>{ token, headerName }</c> with <c>Cache-Control: no-store</c>,
+    /// the token bound to that Member as the blocks' own tokens are. A script sends it in the named header with each change it posts.
+    /// </summary>
+    internal static void MapAntiforgeryToken(IEndpointRouteBuilder endpoints)
+        => endpoints.MapGet(AntiforgeryTokenPath, (HttpContext http, IAntiforgery antiforgery) => {
+            http.Response.Headers.CacheControl = "no-store";
+            var tokens = antiforgery.GetAndStoreTokens(http);
+            return Results.Json(new { token = tokens.RequestToken, headerName = tokens.HeaderName });
+        }).RequireAuthorization(MemberPolicy);
+}
+
+/// <summary>A signed-in Umbraco Member whose account is approved and not locked out.</summary>
+public sealed class SignedInMemberRequirement : IAuthorizationRequirement;
+
+/// <summary>Reads the Member afresh through <see cref="IDataSourceUserResolver"/>, as the blocks do, so a locked-out or unapproved account is refused at once.</summary>
+internal sealed class SignedInMemberHandler(IHttpContextAccessor accessor) : AuthorizationHandler<SignedInMemberRequirement>
+{
+    protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context, SignedInMemberRequirement requirement)
+    {
+        if (ApplicationAccessPolicy.MemberIdentity(context.User) is not { } identity) return;
+        var http = context.Resource as HttpContext ?? accessor.HttpContext;
+        if (http?.RequestServices.GetService<IDataSourceUserResolver>() is not { } users) return;
+        if (await users.ResolveAsync(new ClaimsPrincipal(identity), http.RequestAborted) is { IsMember: true }) context.Succeed(requirement);
+    }
+}
+
+/// <summary>
+/// Umbraco's Member cookie under another name: it authenticates exactly as that cookie does, and answers a challenge with 401 and a
+/// forbid with 403 on an API-style request (<see cref="AppBlocksAuthorization.IsApiRequest"/>), passing any other request to the cookie.
+/// </summary>
+internal sealed class MemberAuthenticationHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
+    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+{
+    protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
+    {
+        var member = await Context.AuthenticateAsync(IdentityConstants.ApplicationScheme);
+        if (member.Succeeded && member.Principal.Identity?.IsAuthenticated == true)
+            return AuthenticateResult.Success(new AuthenticationTicket(member.Principal, member.Properties, Scheme.Name));
+        return member.Failure is { } failure ? AuthenticateResult.Fail(failure) : AuthenticateResult.NoResult();
+    }
+
+    protected override Task HandleChallengeAsync(AuthenticationProperties properties)
+        => AppBlocksAuthorization.IsApiRequest(Context) ? Answer(StatusCodes.Status401Unauthorized) : Context.ChallengeAsync(IdentityConstants.ApplicationScheme, properties);
+
+    protected override Task HandleForbiddenAsync(AuthenticationProperties properties)
+        => AppBlocksAuthorization.IsApiRequest(Context) ? Answer(StatusCodes.Status403Forbidden) : Context.ForbidAsync(IdentityConstants.ApplicationScheme, properties);
+
+    private Task Answer(int status)
+    {
+        Response.StatusCode = status;
+        Response.Headers.CacheControl = "no-store";
+        return Task.CompletedTask;
+    }
+}

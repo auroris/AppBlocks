@@ -25,7 +25,8 @@ AppBlocks gives Umbraco editors blocks that work with real application data. The
 - **Interactive reports.** The optional **AppBlocks.InteractiveReports** package adds a block powered by [Interactive Reports](https://github.com/auroris/Interactive-Reports). Pick a table or write a SELECT, and readers can search, filter, sort, chart, save and download.
 - **Documents and printing.** The optional **AppBlocks.Documents** package produces template-based HTML and PDF documents, with optional direct-to-printer output through [Pressroom](https://github.com/auroris/Pressroom).
 - **Umbraco's access rules first.** Blocks follow their page's Public Access. Add group rules, row restrictions and C# policies only when a rule goes beyond the page.
-- **Your own database.** Application data goes in a separate SQLite file by default, away from Umbraco's. Connect SQL Server, PostgreSQL or Oracle from the backoffice, with connection strings encrypted at rest. SQLite and SQL Server drivers come with Umbraco; a site installs `Npgsql` or `Oracle.ManagedDataAccess.Core` for the others.
+- **Your own database.** Application data goes in a separate SQLite file by default, away from Umbraco's. Connect SQL Server, PostgreSQL or Oracle from the backoffice, with connection strings encrypted at rest. SQLite and SQL Server drivers come with Umbraco; a site installs `Npgsql` or `Oracle.ManagedDataAccess.Core` for the others. An application database of your own brings its schema up to date on first open, with ensure scripts at every start and run-once migrations recorded in its version table.
+- **Room for companion packages.** A package can add blocks that stay out of caches when their data changes, API controllers for signed-in Members with 401 and 403 answers and an antiforgery token endpoint, data source policies scoped to its own aliases, backing classes that answer API endpoints from C#, and content nodes it generates and keeps current from code.
 - **Keeps working when it can't create tables.** If the database account isn't allowed to, the backoffice shows the grant or script to run, and everything else carries on.
 
 ![A form on the same site: order fields in a responsive layout, file attachments, and editable order lines](docs/images/form.png)
@@ -49,10 +50,10 @@ Sites using Umbraco's conventional `blockgrid/Components` or `blocklist/Componen
 
 | Guide | What it covers |
 | --- | --- |
-| [Adding AppBlocks to a site](docs/site-integration.md) | Installation, rendering, styling, backoffice previews, access and caching |
+| [Adding AppBlocks to a site](docs/site-integration.md) | Installation, rendering, styling, backoffice previews, access and caching, and companion packages' blocks, Member controllers and generated nodes |
 | [Business rules](docs/business-rules.md) | Identity, groups, ownership, validation, and authorization scenarios. Also under **Settings → AppBlocks → Business rules** |
 | [Backing Classes](docs/csharp-editor.md) | Writing form classes and backing classes in the backoffice on a development site, compiled while it runs, and the wizard that writes them for a table |
-| [Connections](docs/connections.md) | The default database, extra connections, upload storage and Oracle modes |
+| [Connections](docs/connections.md) | The default database, extra connections, application databases and their schema scripts, upload storage and Oracle modes |
 | [API endpoints](docs/api-endpoints.md) | Rows of a data source as JSON over GET at a route you define: parameters, access without a page, shapes and limits |
 | [Database setup](docs/database-setup.md) | The tables AppBlocks creates, and what to do when the database account may not |
 | [Anti-spam](docs/anti-spam.md) | The Anti-spam block, its keys, privacy and rate limits |

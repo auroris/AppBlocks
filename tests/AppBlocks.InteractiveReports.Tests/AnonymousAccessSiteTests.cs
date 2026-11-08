@@ -206,7 +206,7 @@ public sealed class AnonymousAccessSiteTests
         Assert.Equal(calls, site.Forms.Created.Count);
 
         // There is nothing to update: an update loads its record first, and this class keeps none.
-        using (var update = await Send(visitor, HttpMethod.Put, api + "/1", token, new { definitionVersion = form.GetProperty("definitionVersion").GetString(), version = "1", values = new { name = "Pat" }, submissionKey = Guid.NewGuid() }))
+        using (var update = await Send(visitor, HttpMethod.Put, api + "/1", token, new { definitionVersion = form.GetProperty("definitionVersion").GetString(), checksum = "1", values = new { name = "Pat" }, submissionKey = Guid.NewGuid() }))
             Assert.Equal(HttpStatusCode.NotFound, update.StatusCode);
     }
 
@@ -696,7 +696,7 @@ public sealed class AnonymousAccessSiteTests
     }
 
     private static Task<HttpResponseMessage> Post(HttpClient client, string url, string? token, JsonElement form, object values, Dictionary<string, object> formData, string? submissionKey = null)
-        => Send(client, HttpMethod.Post, url, token, new { definitionVersion = form.GetProperty("definitionVersion").GetString(), version = (string?)null, values, submissionKey = submissionKey ?? Guid.NewGuid().ToString(), formData });
+        => Send(client, HttpMethod.Post, url, token, new { definitionVersion = form.GetProperty("definitionVersion").GetString(), checksum = (string?)null, values, submissionKey = submissionKey ?? Guid.NewGuid().ToString(), formData });
 
     private static Task<HttpResponseMessage> Send(HttpClient client, HttpMethod method, string url, string? token, object? body = null)
     {

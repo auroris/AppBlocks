@@ -20,9 +20,9 @@ const block = '0c1d2e3f-4a5b-4c6d-8e7f-901234567890';
 const fields = [{ key: 'item', label: 'Item', kind: 'text', required: true, readOnly: false, maxLength: 50 }];
 const list = (rows, owner = null) => ({
     owner: { alias: 'orders', key: owner }, dataSource: 'orders.lines', revision: 'tabular:v1', canAdd: true, canUpdate: true, canDelete: true, maxRows: 10, fields, rows,
-    newRow: { key: null, version: null, values: { item: null }, capabilities: { create: true } }, antiforgeryToken: 'rows-token',
+    newRow: { key: null, checksum: null, values: { item: null }, capabilities: { create: true } }, antiforgeryToken: 'rows-token',
 });
-const row = (key, item) => ({ key, version: '1', values: { item }, capabilities: { update: true, delete: true } });
+const row = (key, item) => ({ key, checksum: '1', values: { item }, capabilities: { update: true, delete: true } });
 
 const tabular = owner => `<section class="app-tabular" data-app-tabular data-api="/api/tabular/page/${block}" data-block="${block}" data-owner="${owner}" data-key-parameter="id"
     data-read-only="false" data-max-rows="10" data-empty-message="No lines yet."><h3>Lines</h3>
@@ -31,7 +31,7 @@ const tabular = owner => `<section class="app-tabular" data-app-tabular data-api
     <div class="app-tabular-toolbar" hidden><button type="button" form="" data-tabular-add>Add line</button><button type="button" form="" data-tabular-save>Save lines</button></div></section>`;
 
 /** A page with an order form and its lines, or the lines alone; the server is these routes, and every request is recorded. */
-async function mount({ record = { key: null, version: null, values: { customer: '' }, capabilities: { create: true } }, inForm = true, answer } = {}) {
+async function mount({ record = { key: null, checksum: null, values: { customer: '' }, capabilities: { create: true } }, inForm = true, answer } = {}) {
     const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
     const requests = [], errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -61,7 +61,7 @@ async function mount({ record = { key: null, version: null, values: { customer: 
 test('a new order takes lines that go with its own save, and the answer shows them saved', async () => {
     const { page, requests, errors } = await mount({
         answer: body => ({ json: {
-            record: { key: '7', version: '1', values: body.values, capabilities: { update: true, delete: true } },
+            record: { key: '7', checksum: '1', values: body.values, capabilities: { update: true, delete: true } },
             details: [{ block, list: list([row('11', 'Bolt')], '7') }],
         } }),
     });
@@ -103,7 +103,7 @@ test('a refused line is marked where it is, every value stays, and the retry reu
     const { page, requests, errors } = await mount({
         answer: () => ++attempts === 1
             ? { status: 422, json: { status: 422, block, index: 1, errors: { item: ['Use a part number.'] } } }
-            : { json: { record: { key: '7', version: '1', values: { customer: 'Initech' }, capabilities: { update: true } }, details: [{ block, list: list([row('11', 'Bolt'), row('12', 'Nut')], '7') }] } },
+            : { json: { record: { key: '7', checksum: '1', values: { customer: 'Initech' }, capabilities: { update: true } }, details: [{ block, list: list([row('11', 'Bolt'), row('12', 'Nut')], '7') }] } },
     });
     try {
         await page.getByRole('button', { name: 'Add line' }).waitFor();
@@ -128,7 +128,7 @@ test('a refused line is marked where it is, every value stays, and the retry reu
 });
 
 test('on its own, or in a form the caller cannot save, the block saves its rows itself', async () => {
-    for (const options of [{ inForm: false }, { record: { key: '4', version: '1', values: { customer: 'Acme' }, capabilities: { update: false } } }]) {
+    for (const options of [{ inForm: false }, { record: { key: '4', checksum: '1', values: { customer: 'Acme' }, capabilities: { update: false } } }]) {
         const { page, requests, errors } = await mount({ ...options, answer: () => ({ status: 500, json: {} }) });
         try {
             const save = page.getByRole('button', { name: 'Save lines' });
@@ -138,7 +138,7 @@ test('on its own, or in a form the caller cannot save, the block saves its rows 
             await page.locator('.app-tabular-message').getByText('Saved.').waitFor();
             const posted = requests.filter(request => request.method === 'POST');
             assert.deepEqual(posted.map(request => request.path), [`/api/tabular/page/${block}`]);
-            assert.deepEqual(posted[0].body.changes, [{ operation: 'update', key: '1', version: '1', values: { item: 'Bolt M8' } }]);
+            assert.deepEqual(posted[0].body.changes, [{ operation: 'update', key: '1', checksum: '1', values: { item: 'Bolt M8' } }]);
             assert.deepEqual(errors, []);
         } finally { await page.close(); }
     }

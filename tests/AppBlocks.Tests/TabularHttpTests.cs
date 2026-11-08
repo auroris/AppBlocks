@@ -71,14 +71,14 @@ public sealed class TabularHttpTests
         var (first, second) = (list.Rows[0], list.Rows[1]);
         var saved = await lines.SaveAsync([
             new("create", Values: new { item = "Gasket", quantity = "3", unitPrice = "0.50", notes = (string?)null }),
-            new("update", Key(first), Version(first), new { quantity = "7" }),
-            new("delete", Key(second), Version(second)),
+            new("update", Key(first), Checksum(first), new { quantity = "7" }),
+            new("delete", Key(second), Checksum(second)),
         ], "id=4");
         Assert.True(saved.IsSuccess, saved.Body.ToString());
         Assert.Equal(2, saved.Rows.Count);
         Assert.Equal(Key(first), Key(saved.Rows[0]));
         Assert.Equal(7m, Number(saved.Rows[0], "quantity"));
-        Assert.NotEqual(Version(first), Version(saved.Rows[0]));
+        Assert.NotEqual(Checksum(first), Checksum(saved.Rows[0]));
         var created = saved.Rows[1];
         Assert.Equal("Gasket", created.GetProperty("values").GetProperty("item").GetString());
         Assert.Equal(0.5m, Number(created, "unitPrice"));
@@ -94,7 +94,7 @@ public sealed class TabularHttpTests
         var count = Sample(site, "SELECT COUNT(*) FROM ORDER_LINES");
         var invalid = await lines.SaveAsync([
             new("create", Values: new { item = "Never written" }),
-            new("update", Key(first), Version(saved.Rows[0]), new { quantity = "0" }),
+            new("update", Key(first), Checksum(saved.Rows[0]), new { quantity = "0" }),
         ], "id=4");
         Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.Response.StatusCode);
         Assert.Equal(1, invalid.Index);
@@ -102,8 +102,8 @@ public sealed class TabularHttpTests
         Assert.Equal(0L, Sample(site, "SELECT COUNT(*) FROM ORDER_LINES WHERE ITEM = 'Never written'"));
         Assert.Equal(count, Sample(site, "SELECT COUNT(*) FROM ORDER_LINES"));
 
-        // A stale version is a conflict at its index; another order's line is not found here, at its index too.
-        var stale = await lines.SaveAsync([new("update", Key(first), Version(first), new { quantity = "8" })], "id=4");
+        // A stale checksum is a conflict at its index; another order's line is not found here, at its index too.
+        var stale = await lines.SaveAsync([new("update", Key(first), Checksum(first), new { quantity = "8" })], "id=4");
         Assert.Equal(HttpStatusCode.Conflict, stale.Response.StatusCode);
         Assert.Equal(0, stale.Index);
         Assert.Contains(stale.Errors[""], e => e.Contains("changed"));
@@ -136,17 +136,17 @@ public sealed class TabularHttpTests
 
         // A retried submission answers with the rows and writes nothing again; the same key with other changes is refused.
         var retryKey = Guid.NewGuid().ToString();
-        var version = Version((await lines.ListAsync("id=4")).Rows[0]);
-        TabularChange[] retried = [new("update", Key(first), version, new { notes = "Checked twice" }), new("create", Values: new { item = "Pulley" })];
+        var checksum = Checksum((await lines.ListAsync("id=4")).Rows[0]);
+        TabularChange[] retried = [new("update", Key(first), checksum, new { notes = "Checked twice" }), new("create", Values: new { item = "Pulley" })];
         var once = await lines.SaveAsync(retried, "id=4", retryKey);
         Assert.True(once.IsSuccess, once.Body.ToString());
         var rowsAfterOnce = Sample(site, "SELECT COUNT(*) FROM ORDER_LINES");
-        var versionAfterOnce = Version(once.Rows.Single(row => Key(row) == Key(first)));
+        var checksumAfterOnce = Checksum(once.Rows.Single(row => Key(row) == Key(first)));
         var twice = await lines.SaveAsync(retried, "id=4", retryKey);
         Assert.True(twice.IsSuccess, twice.Body.ToString());
         Assert.Equal(once.Rows.Select(Key), twice.Rows.Select(Key));
         Assert.Equal(rowsAfterOnce, Sample(site, "SELECT COUNT(*) FROM ORDER_LINES"));
-        Assert.Equal(versionAfterOnce, Version((await lines.ListAsync("id=4")).Rows.Single(row => Key(row) == Key(first))));
+        Assert.Equal(checksumAfterOnce, Checksum((await lines.ListAsync("id=4")).Rows.Single(row => Key(row) == Key(first))));
         Assert.Equal(1L, Sample(site, "SELECT COUNT(*) FROM ORDER_LINES WHERE ITEM = 'Pulley' AND CREATED_BY = 'lines'"));
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await lines.SaveAsync([new("create", Values: new { item = "Other" })], "id=4", retryKey)).Response.StatusCode);
 
@@ -189,7 +189,7 @@ public sealed class TabularHttpTests
     /// <summary>A number cell's value, which the engine sends as invariant text so no precision is lost.</summary>
     private static decimal Number(JsonElement row, string column)
         => decimal.Parse(row.GetProperty("values").GetProperty(column).GetString()!, System.Globalization.CultureInfo.InvariantCulture);
-    private static string Version(JsonElement row) => row.GetProperty("version").GetString()!;
+    private static string Checksum(JsonElement row) => row.GetProperty("checksum").GetString()!;
 
     /// <summary>The keys of an order's lines, in key order.</summary>
     private static string[] Keys(BlockSite site, int order)

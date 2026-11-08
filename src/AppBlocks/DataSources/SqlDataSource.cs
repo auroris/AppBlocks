@@ -128,12 +128,12 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
 
     /// <summary>
     /// One insert inside the caller's transaction: the defaults fill the row, the backing class may change it or write it
-    /// itself, the audit columns and the version are set, the required fields are checked, the policies are asked, the row
+    /// itself, the audit columns are set, the required fields are checked, the policies are asked, the row
     /// is written and read back through the restriction. The caller commits on 200; any other result means nothing should be.
     /// </summary>
     /// <param name="details">The detail blocks of a master/detail submission, which the backing class sees with the master.</param>
     private async Task<FormResult> InsertRecordAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context,
-        Dictionary<PlanColumn, object?> values, DateTime now, DbConnection connection, DbTransaction transaction, IReadOnlyDictionary<string, object?>? app, CancellationToken ct,
+        Dictionary<PlanColumn, object?> values, DateTimeOffset now, DbConnection connection, DbTransaction transaction, IReadOnlyDictionary<string, object?>? app, CancellationToken ct,
         IReadOnlyList<DataSourceDetail>? details = null)
     {
         var binder = new Binder(plan, user, context, now, values, app);
@@ -158,8 +158,8 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         }
         if (plan.CreatedBy is { } createdBy) row[createdBy] = user.Name;
         if (plan.UpdatedBy is { } updatedBy) row[updatedBy] = user.Name;
-        if (plan.CreatedAt is { } createdAt) row[createdAt] = FieldValues.FromValue(now, createdAt.Kind, out _);
-        if (plan.UpdatedAt is { } updatedAt) row[updatedAt] = FieldValues.FromValue(now, updatedAt.Kind, out _);
+        if (plan.CreatedAt is { } createdAt) row[createdAt] = FieldValues.FromValue(now.DateTime, createdAt.Kind, out _);
+        if (plan.UpdatedAt is { } updatedAt) row[updatedAt] = FieldValues.FromValue(now.DateTime, updatedAt.Kind, out _);
         // Required and still empty after the defaults, with nothing in the database to fill it.
         var missing = plan.Columns.Where(c => c.Required && c.Target is { HasDefault: false, AutoValue: false, Computed: false }
             && (!row.TryGetValue(c, out var v) || v is null)).ToArray();
@@ -177,7 +177,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         return FormResult.Ok(Record(plan, created, user));
     }
 
-    public async Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct)
+    public async Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct)
     {
         if (Ready is not { } plan) return Unavailable();
         if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !definition.AllowUpdate || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
@@ -186,27 +186,27 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         var now = runtime.Now();
         var app = await AppAsync(context, ct);
         return await RunAsync(plan, write: true, async (connection, transaction) => {
-            var updated = await UpdateRecordAsync(plan, user, context, key, keys, input, version, now, connection, transaction!, null, app, ct);
+            var updated = await UpdateRecordAsync(plan, user, context, key, keys, input, checksum, now, connection, transaction!, null, app, ct);
             if (updated.Status == 200) await transaction!.CommitAsync(ct);
             return updated;
         }, ct);
     }
 
     /// <summary>
-    /// One update inside the caller's transaction, on the locked row: an enabled version check must pass, only what differs from
+    /// One update inside the caller's transaction, on the locked row: an enabled checksum check must pass, only what differs from
     /// the stored record is checked and written, the backing class may change the row or write it itself, a key or a
     /// scope's link field cannot change, and the row is read back through the restriction. A row outside
     /// <paramref name="scope"/> is not found. The caller commits on 200.
     /// </summary>
     /// <param name="details">The detail blocks of a master/detail submission, which the backing class sees with the master.</param>
     private async Task<FormResult> UpdateRecordAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, string key, object?[] keys,
-        JsonElement input, string? version, DateTime now, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct,
+        JsonElement input, string? checksum, DateTimeOffset now, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct,
         IReadOnlyList<DataSourceDetail>? details = null)
     {
         var binder = new Binder(plan, user, context, now, null, app);
         await LockAsync(plan, connection, transaction, keys, ct);
         if (await ReadAsync(plan, connection, transaction, keys, binder, ct) is not { } current || !InScope(current, scope)) return FormResult.Missing();
-        if (Token(plan, current) is { } expected && expected != version) return FormResult.Conflict();
+        if (Token(plan, current) is { } expected && expected != checksum) return FormResult.Conflict();
         // Only what differs from the stored record is checked and written: the endpoint sends every field back.
         if (Parse(plan, input, current.Values, out var rejected) is not { } values) return rejected!;
         if (plan.Keys.FirstOrDefault(values.ContainsKey) is { } changedKey)
@@ -244,7 +244,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
                 await using var command = parameters.Command(connection, transaction, statement.Render(parameters, binder.With(proposed).Value));
                 await command.ExecuteNonQueryAsync(ct);
             }
-            // Nothing changed, so nothing is written: no new version and no audit entry.
+            // Nothing changed, so nothing is written: the checksum stays the same and no audit entry is made.
             else if (changes.Length == 0) return FormResult.Ok(Record(plan, current, user));
             else if (await UpdateRowAsync(plan, connection, transaction, keys, changes, user, now, binder, ct) != 1) return FormResult.Conflict();
         }
@@ -253,30 +253,30 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         return FormResult.Ok(Record(plan, updated, user));
     }
 
-    public async Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct)
+    public async Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct)
     {
         if (Ready is not { } plan) return Unavailable();
         if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !definition.AllowDelete || !plan.Writable || !CanWrite(user)) return FormResult.Denied();
         if (!TryParseKey(plan, key, out var keys)) return FormResult.Missing();
         var app = await AppAsync(context, ct);
         return await RunAsync(plan, write: true, async (connection, transaction) => {
-            var deleted = await DeleteRecordAsync(plan, user, context, key, keys, version, connection, transaction!, null, app, ct);
+            var deleted = await DeleteRecordAsync(plan, user, context, key, keys, checksum, connection, transaction!, null, app, ct);
             if (deleted.Status == 204) await transaction!.CommitAsync(ct);
             return deleted;
         }, ct);
     }
 
     /// <summary>
-    /// One delete inside the caller's transaction, on the locked row, with any enabled version check, the backing class and the
+    /// One delete inside the caller's transaction, on the locked row, with any enabled checksum check, the backing class and the
     /// policies; a row outside <paramref name="scope"/> is not found. The caller commits on 204.
     /// </summary>
     private async Task<FormResult> DeleteRecordAsync(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, string key, object?[] keys,
-        string? version, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
+        string? checksum, DbConnection connection, DbTransaction transaction, ScopeMatch? scope, IReadOnlyDictionary<string, object?>? app, CancellationToken ct)
     {
         var binder = new Binder(plan, user, context, runtime.Now(), null, app);
         await LockAsync(plan, connection, transaction, keys, ct);
         if (await ReadAsync(plan, connection, transaction, keys, binder, ct) is not { } current || !InScope(current, scope)) return FormResult.Missing();
-        if (Token(plan, current) is { } expected && expected != version) return FormResult.Conflict();
+        if (Token(plan, current) is { } expected && expected != checksum) return FormResult.Conflict();
         var outcome = DataSourceOutcome.Continue;
         if (Handler is not null)
         {
@@ -366,9 +366,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
         CancellationToken ct)
     {
         var request = new DataSourceRequest(definition.Alias, action, user, context, key, current, proposed, connection, transaction);
-        foreach (var policy in policies)
-            if (!await policy.IsAllowedAsync(request, ct)) return false;
-        return true;
+        return await policies.AllowAsync(request, ct);
     }
 
     private DataSourceOperation Operation(DataSourcePlan plan, DataSourceAction action, DataSourceUser user, FormExecutionContext context,
@@ -403,7 +401,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     /// <summary>
     /// The row a write hook left. A value the class did not change keeps the engine's own; one it changed or added is converted and
     /// checked by its field's rules, as a submitted value is; a field it removed is left out. A class may write a read-only field of
-    /// the written table, never the version, an audit column, or a column the table does not let anyone write.
+    /// the written table, never an audit column or a column the table does not let anyone write.
     /// </summary>
     private static Dictionary<PlanColumn, object?> Written(DataSourcePlan plan, IReadOnlyDictionary<PlanColumn, object?> before,
         IReadOnlyDictionary<string, object?> shown, IDictionary<string, object?> after)
@@ -594,12 +592,12 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
 
     /// <summary>The generated update: changed fields, audit columns, and a WHERE that only the read row passes.</summary>
     private static Task<int> UpdateRowAsync(DataSourcePlan plan, DbConnection connection, DbTransaction transaction, object?[] keys,
-        IEnumerable<KeyValuePair<PlanColumn, object?>> changes, DataSourceUser user, DateTime now, Binder binder, CancellationToken ct)
+        IEnumerable<KeyValuePair<PlanColumn, object?>> changes, DataSourceUser user, DateTimeOffset now, Binder binder, CancellationToken ct)
     {
         var parameters = new SqlParameters(plan.Dialect);
         var set = changes.Select(c => (c.Key.Target!.Name, parameters.Add(ToDatabase(plan, c.Key, c.Value)))).ToList();
         if (plan.UpdatedBy is { } by) set.Add((by.Target!.Name, parameters.Add(ToDatabase(plan, by, user.Name))));
-        if (plan.UpdatedAt is { } at) set.Add((at.Target!.Name, parameters.Add(ToDatabase(plan, at, FieldValues.FromValue(now, at.Kind, out _)))));
+        if (plan.UpdatedAt is { } at) set.Add((at.Target!.Name, parameters.Add(ToDatabase(plan, at, FieldValues.FromValue(now.DateTime, at.Kind, out _)))));
         var (targetKeys, exists) = Where(plan, parameters, keys, binder);
         return CountAsync(plan, parameters, connection, transaction, plan.Dialect.Update(plan.Target!.Name, set, targetKeys, exists), ct);
     }
@@ -653,7 +651,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     }
 
     /// <summary>The values of the bind variables for one operation: the caller's facts, the request's parameters, the clock and the record's fields.</summary>
-    private sealed class Binder(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, DateTime now, IReadOnlyDictionary<PlanColumn, object?>? fields, IReadOnlyDictionary<string, object?>? app)
+    private sealed class Binder(DataSourcePlan plan, DataSourceUser user, FormExecutionContext context, DateTimeOffset now, IReadOnlyDictionary<PlanColumn, object?>? fields, IReadOnlyDictionary<string, object?>? app)
     {
         public Binder With(IReadOnlyDictionary<PlanColumn, object?> values) => new(plan, user, context, now, values, app);
 
@@ -663,7 +661,8 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
             BindVariableKind.UserKey => user.Key,
             BindVariableKind.UserEmail => user.Email,
             BindVariableKind.UserGroups => user.Groups,
-            BindVariableKind.Now => plan.Dialect.Now(now),
+            BindVariableKind.Now => plan.Dialect.Now(now.DateTime),
+            BindVariableKind.NowUtc => plan.Dialect.NowUtc(now.UtcDateTime),
             BindVariableKind.Param => Parameter(variable.Name!),
             BindVariableKind.App => app?.GetValueOrDefault(variable.Name!),
             BindVariableKind.Arg => null,
@@ -676,7 +675,9 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
             valid = true;
             if (value.Variable is not { } variable) return value.Literal;
             var raw = variable.Kind switch {
-                BindVariableKind.Now => now,
+                BindVariableKind.Now => now.DateTime,
+                // A text field takes the ISO form with Z, which sorts as text; the others take the UTC date, time or moment.
+                BindVariableKind.NowUtc => value.Column.Kind == FieldKinds.Text ? FieldValues.UtcText(now) : now.UtcDateTime,
                 BindVariableKind.Param => Parameter(variable.Name!),
                 BindVariableKind.App => app?.GetValueOrDefault(variable.Name!),
                 BindVariableKind.Field => Field(variable.Name!) is { } column && fields?.TryGetValue(column, out var current) == true ? FieldValues.ToJson(current) : null,

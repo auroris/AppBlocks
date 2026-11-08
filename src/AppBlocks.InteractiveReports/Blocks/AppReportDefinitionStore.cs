@@ -177,7 +177,7 @@ public sealed class AppReportDefinitionStore(
 
     private async Task<bool> AllowsAsync(FormDefinition form, System.Security.Claims.ClaimsPrincipal caller, bool update, CancellationToken ct)
     {
-        if (form.ViewOnly) return false;
+        if (form.ViewOnly || FormResourceAccess.Refusal(form.Resource, caller) is not null) return false;
         // A data source answers from its own settings: the allow flag, the write groups, anonymous writes and :USER_ bindings in its writes.
         if (form.Resource is SqlDataSource source) return (update ? source.Definition.AllowUpdate : source.Definition.AllowInsert) && await source.MayWriteAsync(caller, ct);
         // A form class is asked through its Initialize, which the form page asks too and which must be safe to repeat, with no query

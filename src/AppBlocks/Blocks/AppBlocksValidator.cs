@@ -21,7 +21,8 @@ namespace AppBlocks.Blocks;
 /// </summary>
 public sealed class AppBlocksValidator(FormResourceRegistry resources, PublishedDataCatalog? definitions = null, IContentService? contents = null,
     IOptions<AttachmentSettings>? attachments = null, ScheduleSources? schedules = null,
-    IContentTypeService? contentTypes = null, IEnumerable<IAppBlockPlugin>? plugins = null, AntiSpamGate? antiSpam = null) : INotificationAsyncHandler<ContentPublishingNotification>
+    IContentTypeService? contentTypes = null, IEnumerable<IAppBlockPlugin>? plugins = null, AntiSpamGate? antiSpam = null,
+    DataSources.BindVariableProviders? providers = null) : INotificationAsyncHandler<ContentPublishingNotification>
 {
     private static readonly string[] Aliases = ["appForm", "appFormInterface", "appFieldset", "appActions", AppBlockSchema.AttachmentsAlias, AppBlockSchema.AntiSpamAlias,
         AppBlockSchema.ScheduleAlias, AppBlockSchema.TabularAlias, ..AppBlockSchema.LayoutAliases, ..AppBlockSchema.ContentAliases, ..AppBlockSchema.FieldAliases];
@@ -156,6 +157,10 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
             else if (AppBlockSchema.FieldAliases.Contains(alias)) {
                 var binding = Text(child, "field");
                 if (!fields.TryAdd(binding, child)) errors.Add($"Field '{binding}' appears more than once.");
+                // A default of :APP.name that no provider declares would leave the field empty; a warning, as the provider is code that may come later.
+                if (providers is not null && Text(child, "defaultValue").Trim() is var initial && initial.StartsWith(":APP.", StringComparison.OrdinalIgnoreCase)
+                    && providers.UndeclaredWarning([initial[5..]]) is { } undeclared)
+                    warnings?.Add($"The default of '{binding}': {undeclared}");
                 var field = resource.Fields.FirstOrDefault(f => f.Key == binding);
                 if (field is null) errors.Add($"'{binding}' is not a field of {resource.Alias}.");
                 else if (!Compatible(alias, field, Text(child, "listOfValues").Length > 0)) errors.Add($"The block for '{binding}' does not match its {field.Kind} type.");

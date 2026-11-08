@@ -74,6 +74,7 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
         {
             if (form is null) return BlockOwnerScope.Refused(422, $"This {words.BlockName} block is not inside a form and names no owner.");
             resource = form.Resource;
+            if (FormResourceAccess.Refusal(resource, user) is { } refused) return BlockOwnerScope.Refused(refused, $"Sign in as a member to use {words.These}.");
             if (newRecord) return new(200, null, user, item, form, resource, null, null, parameters);
             key = Single(request.Request.Query[form.KeyParameter]);
             if (key is null) return BlockOwnerScope.Refused(404, $"Save the record before adding {words.Things}.");
@@ -83,6 +84,7 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
             if (newRecord) return BlockOwnerScope.Refused(422, $"This {words.BlockName} block names its own owner, so it has no {words.Things} before that record exists.");
             if (await resources.FindAsync(ownerResource.Trim()) is not { } named) return BlockOwnerScope.Refused(422, $"The owner resource {ownerResource} is not registered.");
             resource = named;
+            if (FormResourceAccess.Refusal(resource, user) is { } refused) return BlockOwnerScope.Refused(refused, $"Sign in as a member to use {words.These}.");
             key = await OwnerKeyAsync(ownerKey, form, parameters, user, pageKey, request, ct);
             if (key is null) return BlockOwnerScope.Refused(404, $"The record {words.These} belong to is not known yet.");
         }
@@ -107,7 +109,7 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
             return parameters.FirstOrDefault(p => p.Key.Equals(text[7..], StringComparison.OrdinalIgnoreCase)).Value is { Length: > 0 } value ? value : null;
         if (text.StartsWith(":FIELD.", StringComparison.OrdinalIgnoreCase))
         {
-            if (form is null || Single(request.Request.Query[form.KeyParameter]) is not { } recordKey) return null;
+            if (form is null || Single(request.Request.Query[form.KeyParameter]) is not { } recordKey || FormResourceAccess.Refusal(form.Resource, user) is not null) return null;
             var record = await form.Resource.LoadAsync(recordKey, new FormExecutionContext(user, pageKey, form.Block.ContentKey, form.Revision, Parameters: parameters), ct);
             if (record.Record is null || !record.Record.Values.TryGetValue(text[7..], out var field)) return null;
             return Text(field);

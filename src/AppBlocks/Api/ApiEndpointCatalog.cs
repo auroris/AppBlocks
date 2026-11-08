@@ -215,7 +215,8 @@ public sealed class ApiEndpointCatalog(IUmbracoContextFactory contexts, IDocumen
 /// Publishing an endpoint checks it as a request would read it, against its source's schema, and refuses a route another published
 /// endpoint, or another endpoint in the same publish, already answers, and an alias another one has.
 /// </summary>
-public sealed class ApiEndpointValidator(ApiEndpointCatalog catalog, IMemberGroupService groups) : INotificationAsyncHandler<ContentPublishingNotification>
+public sealed class ApiEndpointValidator(ApiEndpointCatalog catalog, IMemberGroupService groups, BindVariableProviders? providers = null)
+    : INotificationAsyncHandler<ContentPublishingNotification>
 {
     public async Task HandleAsync(ContentPublishingNotification notification, CancellationToken cancellationToken)
     {
@@ -235,6 +236,9 @@ public sealed class ApiEndpointValidator(ApiEndpointCatalog catalog, IMemberGrou
                 if (others.Any(other => other.Alias.Equals(endpoint.Alias, StringComparison.OrdinalIgnoreCase)))
                     errors.Add("Another published endpoint already uses this alias.");
                 batch.Add(endpoint);
+                // A selected data source was checked when it was published; the endpoint's own SQL is checked here.
+                if (errors.Count == 0 && !endpoint.PicksSource && providers?.UndeclaredWarning(endpoint.Source.ApplicationNames()) is { } warning)
+                    notification.Messages.Add(new EventMessage("API endpoint", node.Name + ": " + warning, EventMessageType.Warning));
             }
             if (errors.Count > 0) notification.CancelOperation(new EventMessage("API endpoint", node.Name + ": " + string.Join(" ", errors), EventMessageType.Error));
         }

@@ -67,10 +67,12 @@ public static class ApplicationDatabase
     /// <summary>
     /// Ensures a schema on an open connection, once per process per connection string and schema id: creates the
     /// version table <c>APP_SCHEMA</c> (<c>SCRIPT</c>, <c>HASH</c>, <c>APPLIED_AT</c>) if missing, runs every script of
-    /// the connection's dialect in file-name order, each in its own transaction with its row, then the C# steps.
-    /// Scripts are idempotent "ensure" scripts, so every process start runs them all; the table records each script's
-    /// SHA-256 and when the last start applied it. A failure throws <see cref="ApplicationSchemaException"/> naming the
-    /// script, and the next call tries again.
+    /// the connection's dialect in file-name order, each in its own transaction with its row, then the run-once scripts of
+    /// its <c>migrations</c> folder that have no row yet, then the C# steps. Ensure scripts are idempotent, so every process
+    /// start runs them all; the table records each one's SHA-256 and when the last start applied it. A run-once script or
+    /// step runs once per database, recorded as <c>migrations/&lt;file&gt;</c> or <c>once/&lt;name&gt;</c>; a run-once script
+    /// whose text no longer matches its recorded hash stops the ensure with an <see cref="ApplicationSchemaException"/>
+    /// naming it. Any failure throws <see cref="ApplicationSchemaException"/> naming the script, and the next call tries again.
     /// </summary>
     public static Task EnsureAsync(DbConnection connection, ApplicationSchema schema, CancellationToken ct = default)
         => EnsureOnceAsync(connection, schema, sync: false, ct);
@@ -155,18 +157,41 @@ public static class ApplicationDatabase
             if (memo.Done) return null;
             var dialect = Dialect(connection);
             var scripts = schema.Scripts(dialect);
+            var migrations = schema.Migrations(dialect);
             await ExecuteAsync(connection, null, dialect, VersionTable(dialect), sync, ct);
             foreach (var (name, content) in scripts) await RunAsync(connection, dialect, name, content, sync, ct);
+            var applied = migrations.Count > 0 || schema.Steps.Any(step => step.Once is not null)
+                ? await AppliedAsync(connection, dialect, sync, ct) : new Dictionary<string, string>();
+            var ran = scripts.Count;
+            foreach (var (name, content) in migrations)
+            {
+                var key = ApplicationSchema.MigrationsFolder + "/" + name;
+                var label = $"run-once script {dialect}/{key}";
+                var hash = MigrationHash(content);
+                if (applied.TryGetValue(key, out var recorded)) { Unchanged(label, recorded, hash); continue; }
+                var statements = Statements(dialect, Text(content)).ToArray();
+                if (await RunOnceAsync(connection, dialect, key, hash, label, async transaction => {
+                        foreach (var statement in statements) await ExecuteAsync(connection, transaction, dialect, statement, sync, ct);
+                    }, sync, ct)) ran++;
+            }
             foreach (var step in schema.Steps)
             {
-                try { step(connection, dialect); }
+                if (step.Once is { } once)
+                {
+                    var key = "once/" + step.Name;
+                    if (applied.ContainsKey(key)) continue;
+                    await RunOnceAsync(connection, dialect, key, MigrationHash(Encoding.UTF8.GetBytes(step.Name!)), $"run-once step {step.Name} of schema {schema.Id}",
+                        transaction => { once(connection, transaction, dialect); return Task.CompletedTask; }, sync, ct);
+                    continue;
+                }
+                try { step.Always!(connection, dialect); }
                 catch (Exception error) when (error is not OperationCanceledException)
                 {
                     throw new ApplicationSchemaException($"A step of schema {schema.Id} failed: {error.Message}", error);
                 }
             }
             memo.Done = true;
-            return scripts.Count;
+            return ran;
         }
         finally { memo.Gate.Release(); }
     }
@@ -177,7 +202,7 @@ public static class ApplicationDatabase
         var transaction = sync ? connection.BeginTransaction() : await connection.BeginTransactionAsync(ct);
         try
         {
-            foreach (var statement in Statements(dialect, Encoding.UTF8.GetString(content).TrimStart('﻿')))
+            foreach (var statement in Statements(dialect, Text(content)))
             {
                 try { await ExecuteAsync(connection, transaction, dialect, statement, sync, ct); }
                 catch (SqliteException error) when (error.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase) && AddColumn.IsMatch(statement)) { }
@@ -198,6 +223,76 @@ public static class ApplicationDatabase
             if (sync) transaction.Dispose(); else await transaction.DisposeAsync();
         }
     }
+
+    private static string Text(byte[] content) => Encoding.UTF8.GetString(content).TrimStart('﻿');
+
+    /// <summary>
+    /// A run-once script's hash: SHA-256 of its text with any byte order mark removed and CRLF line endings read as LF, so a checkout
+    /// that converts line endings is the same script.
+    /// </summary>
+    internal static string MigrationHash(byte[] content) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Text(content).Replace("\r\n", "\n"))));
+
+    /// <summary>A run-once script that ran under one hash and now has another is not run again, and the ensure stops until someone decides.</summary>
+    private static void Unchanged(string label, string recorded, string hash)
+    {
+        if (!recorded.Equals(hash, StringComparison.OrdinalIgnoreCase))
+            throw new ApplicationSchemaException($"The {label} has changed since it ran (recorded hash {recorded}, now {hash}). A script that ran once is not run again: "
+                + "restore it as it was and put the change in a new script, or, after checking the database by hand, delete its APP_SCHEMA row so it runs again.");
+    }
+
+    /// <summary>The hashes of what <c>APP_SCHEMA</c> records, by script.</summary>
+    private static async Task<Dictionary<string, string>> AppliedAsync(DbConnection connection, string dialect, bool sync, CancellationToken ct)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT SCRIPT, HASH FROM APP_SCHEMA";
+        var applied = new Dictionary<string, string>(StringComparer.Ordinal);
+        using var reader = sync ? command.ExecuteReader() : await command.ExecuteReaderAsync(ct);
+        while (sync ? reader.Read() : await reader.ReadAsync(ct)) applied[reader.GetString(0)] = reader.GetString(1);
+        return applied;
+    }
+
+    /// <summary>
+    /// Runs something once with its <c>APP_SCHEMA</c> row in one transaction. The row goes in first, so a second process starting at the same
+    /// moment waits on it and then finds it, rather than running the work twice. Oracle commits around DDL, so there the row goes in last,
+    /// as only a finished script may leave one. Returns false when another process had already recorded it.
+    /// </summary>
+    private static async Task<bool> RunOnceAsync(DbConnection connection, string dialect, string key, string hash, string label,
+        Func<DbTransaction, Task> work, bool sync, CancellationToken ct)
+    {
+        var rowFirst = dialect != "oracle";
+        var transaction = sync ? connection.BeginTransaction() : await connection.BeginTransactionAsync(ct);
+        try
+        {
+            if (rowFirst)
+            {
+                try { await RecordAsync(connection, transaction, dialect, key, hash, sync, ct); }
+                catch (DbException) when (!ct.IsCancellationRequested)
+                {
+                    // Most likely another process recorded it while this one waited; its row decides.
+                    if (sync) transaction.Rollback(); else await transaction.RollbackAsync(ct);
+                    if ((await AppliedAsync(connection, dialect, sync, ct)).TryGetValue(key, out var recorded)) { Unchanged(label, recorded, hash); return false; }
+                    throw;
+                }
+            }
+            await work(transaction);
+            if (!rowFirst) await RecordAsync(connection, transaction, dialect, key, hash, sync, ct);
+            if (sync) transaction.Commit(); else await transaction.CommitAsync(ct);
+            return true;
+        }
+        catch (Exception error) when (error is not (OperationCanceledException or ApplicationSchemaException))
+        {
+            throw new ApplicationSchemaException($"The {label} failed: {error.Message}", error);
+        }
+        finally
+        {
+            if (sync) transaction.Dispose(); else await transaction.DisposeAsync();
+        }
+    }
+
+    private static Task<int> RecordAsync(DbConnection connection, DbTransaction transaction, string dialect, string key, string hash, bool sync, CancellationToken ct)
+        => ExecuteAsync(connection, transaction, dialect,
+            $"INSERT INTO APP_SCHEMA (SCRIPT, HASH, APPLIED_AT) VALUES ({Marker(dialect, "script")}, {Marker(dialect, "hash")}, {Marker(dialect, "at")})",
+            sync, ct, ("script", key), ("hash", hash), ("at", DateTime.UtcNow));
 
     /// <summary>
     /// A script as the provider can run it: SQL Server batches between lines that are exactly <c>GO</c>, SQLite one
@@ -267,7 +362,7 @@ public static class ApplicationDatabase
 }
 
 /// <summary>
-/// A schema script or step that failed. It is a <see cref="DbException"/>, so the data source engine answers as it
-/// does for a database it cannot open, and the next open tries the schema again.
+/// A schema script or step that failed, or a run-once script that changed after it ran. It is a <see cref="DbException"/>, so the
+/// data source engine answers as it does for a database it cannot open, and the next open tries the schema again.
 /// </summary>
-public sealed class ApplicationSchemaException(string message, Exception inner) : DbException(message, inner);
+public sealed class ApplicationSchemaException(string message, Exception? inner = null) : DbException(message, inner);

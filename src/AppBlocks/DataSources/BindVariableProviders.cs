@@ -15,6 +15,12 @@ public interface IBindVariableProvider
 {
     /// <summary>The values for this operation, by name in any letter case; null or empty when the provider has none. A value is bound as it is: text, a number, a date or null.</summary>
     ValueTask<IReadOnlyDictionary<string, object?>?> ResolveAsync(FormExecutionContext context, CancellationToken ct);
+
+    /// <summary>
+    /// The names this provider answers, such as <c>tenant</c>, so publishing can warn about an <c>:APP.</c> name that nobody answers,
+    /// which would bind NULL. Empty, the default, declares nothing: the provider may answer any name, and publishing checks no name.
+    /// </summary>
+    IReadOnlyCollection<string> Names => [];
 }
 
 /// <summary>
@@ -29,6 +35,26 @@ public sealed class BindVariableProviders(IEnumerable<IBindVariableProvider>? pr
     public static readonly IReadOnlyDictionary<string, object?> None = new Dictionary<string, object?>();
 
     public bool Any => Providers.Length > 0;
+
+    /// <summary>
+    /// Every name the providers declare (<see cref="IBindVariableProvider.Names"/>), ignoring case; null when there is no provider, or
+    /// when any provider declares none, since that one may answer any name and nothing can be called unanswered.
+    /// </summary>
+    public IReadOnlySet<string>? DeclaredNames => Providers.Length == 0 || Providers.Any(provider => provider.Names.Count == 0) ? null
+        : Providers.SelectMany(provider => provider.Names).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The warning publishing gives for <c>:APP.</c> names that no provider declares, or null when every name is declared or the
+    /// declared names are not known (<see cref="DeclaredNames"/>).
+    /// </summary>
+    public string? UndeclaredWarning(IEnumerable<string> names)
+    {
+        if (DeclaredNames is not { } declared) return null;
+        var missing = names.Where(name => !declared.Contains(name)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        return missing.Length == 0 ? null
+            : $"{string.Join(", ", missing.Select(name => ":APP." + name))} {(missing.Length == 1 ? "is" : "are")} not declared by any bind variable provider, so "
+              + $"{(missing.Length == 1 ? "it binds" : "they bind")} NULL. The providers declare {string.Join(", ", declared.Order(StringComparer.OrdinalIgnoreCase).Select(name => ":APP." + name))}.";
+    }
 
     public async ValueTask<IReadOnlyDictionary<string, object?>> ResolveAsync(FormExecutionContext context, CancellationToken ct)
     {

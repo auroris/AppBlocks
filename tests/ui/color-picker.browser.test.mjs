@@ -20,7 +20,7 @@ async function mount({ value = null, key = null, defaultValue, required = false,
     const page = await browser.newPage({ viewport: { width: 720, height: 480 } });
     const errors = [], posted = [];
     page.on('pageerror', error => errors.push(error.message));
-    const record = values => ({ key, version: '1', values, capabilities: { create: writable, update: writable } });
+    const record = values => ({ key, checksum: '1', values, capabilities: { create: writable, update: writable } });
     await page.route('**/*', async route => {
         const url = new URL(route.request().url());
         const asset = await runtimeAsset(url.pathname); if (asset) return route.fulfill(asset);

@@ -56,6 +56,8 @@ public sealed class OracleDialect : SqlDialect
         };
     }
     public override object Now(DateTime now) => new TypedValue(now, DbType.DateTime);
+    // The UTC wall time as a DATE, as SYS_EXTRACT_UTC(SYSTIMESTAMP) gives it.
+    public override object NowUtc(DateTime utc) => new TypedValue(DateTime.SpecifyKind(utc, DateTimeKind.Unspecified), DbType.DateTime);
 
     private DbCommand Command(DbConnection connection, string text)
     {

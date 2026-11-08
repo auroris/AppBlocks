@@ -34,6 +34,13 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
         var parameters = new SqlParameters(plan.Dialect);
         var now = runtime.Now();
         object? Value(BindVariable variable) => Bind(variable, user, context.Parameters, now, plan.Dialect, app);
+        if (definition.Handler is { } named && handlers?.Find(named) is { } handler)
+        {
+            var operation = new DataSourceOperation(definition.Alias, DataSourceAction.Query, user, context, plan.Dialect.Kind) { Connection = connection };
+            await using var helper = new DataSourceSql(plan, operation, Value, token => runtime.OpenAsync(definition.Connection, token));
+            operation.Sql = helper;
+            if (await handler.ReadAsync(operation, ct) is { } supplied) return Supplied(plan, supplied, maximumRows, order, firstRows);
+        }
         var from = plan.From(parameters, Value);
         var predicate = plan.Restriction?.Render(parameters, Value) ?? "1 = 1";
         var sql = plan.Dialect.Select(from, plan.Columns.Select(c => c.Column), [], predicate, firstRows || maximumRows == int.MaxValue ? maximumRows : maximumRows + 1, order);
@@ -49,6 +56,63 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
             rows.Add(row);
         }
         return new(plan.Columns.Select(c => new DataSourceQueryColumn(c.Column, c.Field, c.Kind)).ToArray(), rows);
+    }
+
+    /// <summary>
+    /// Rows a backing class answered with (<see cref="IDataSourceHandler.ReadAsync"/>), shaped as the row source's would be: one entry per
+    /// column of the plan, found by name in any letter case, sorted by <paramref name="order"/> and held to the row limit.
+    /// </summary>
+    private static DataSourceQueryResult Supplied(DataSourcePlan plan, IReadOnlyList<IReadOnlyDictionary<string, object?>> supplied, int maximumRows,
+        IReadOnlyList<(string Column, bool Descending)>? order, bool firstRows)
+    {
+        IEnumerable<IReadOnlyDictionary<string, object?>> sequence = supplied;
+        if (order is { Count: > 0 })
+        {
+            IOrderedEnumerable<IReadOnlyDictionary<string, object?>>? sorted = null;
+            foreach (var (column, descending) in order)
+            {
+                object? Key(IReadOnlyDictionary<string, object?> row) => Lookup(row, column);
+                sorted = sorted is null
+                    ? descending ? sequence.OrderByDescending(Key, SuppliedValueComparer.Instance) : sequence.OrderBy(Key, SuppliedValueComparer.Instance)
+                    : descending ? sorted.ThenByDescending(Key, SuppliedValueComparer.Instance) : sorted.ThenBy(Key, SuppliedValueComparer.Instance);
+            }
+            sequence = sorted!;
+        }
+        var rows = new List<IReadOnlyDictionary<string, object?>>();
+        foreach (var source in sequence)
+        {
+            if (rows.Count == maximumRows && firstRows) break;
+            if (rows.Count == maximumRows) throw new DataSourceException($"The backing class returned more than {maximumRows} rows. Narrow the query or increase its row limit.");
+            var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var column in plan.Columns) row[column.Column] = Lookup(source, column.Column);
+            rows.Add(row);
+        }
+        return new(plan.Columns.Select(c => new DataSourceQueryColumn(c.Column, c.Field, c.Kind)).ToArray(), rows);
+
+        static object? Lookup(IReadOnlyDictionary<string, object?> row, string column)
+            => row.TryGetValue(column, out var value) ? value is DBNull ? null : value
+                : row.FirstOrDefault(pair => pair.Key.Equals(column, StringComparison.OrdinalIgnoreCase)).Value is var found && found is not DBNull ? found : null;
+    }
+
+    /// <summary>Orders values a class returns: nulls first, numbers by value whatever their type, then like types by their own order, then text ignoring case.</summary>
+    private sealed class SuppliedValueComparer : IComparer<object?>
+    {
+        public static readonly SuppliedValueComparer Instance = new();
+
+        public int Compare(object? x, object? y)
+        {
+            if (x is null || y is null) return x is null ? y is null ? 0 : -1 : 1;
+            if (Number(x) is { } a && Number(y) is { } b) return a.CompareTo(b);
+            if (x.GetType() == y.GetType() && x is IComparable comparable) return comparable.CompareTo(y);
+            return string.Compare(Convert.ToString(x, CultureInfo.InvariantCulture), Convert.ToString(y, CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static decimal? Number(object value) => value switch {
+            decimal number => number, int number => number, long number => number, short number => number, byte number => number,
+            double number when double.IsFinite(number) && Math.Abs(number) < 7.9e27 => (decimal)number,
+            float number when float.IsFinite(number) && Math.Abs(number) < 7.9e27f => (decimal)number,
+            _ => null,
+        };
     }
 
     /// <summary>The check a report request makes before its own query, which has no connection to offer the policies.</summary>
@@ -76,9 +140,8 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
             operation.Sql = sql;
             if ((await handler.QueryAsync(operation, ct)).Kind == DataSourceOutcomeKind.Refused) throw new UnauthorizedAccessException();
         }
-        foreach (var policy in policies)
-            if (!await policy.IsAllowedAsync(new DataSourceRequest(definition.Alias, DataSourceAction.Query, user, context, null, null, null, connection), ct))
-                throw new UnauthorizedAccessException();
+        if (!await policies.AllowAsync(new DataSourceRequest(definition.Alias, DataSourceAction.Query, user, context, null, null, null, connection), ct))
+            throw new UnauthorizedAccessException();
         return user;
     }
 
@@ -107,10 +170,11 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
         _ => false,
     };
 
-    internal static object? Bind(BindVariable variable, DataSourceUser user, IReadOnlyDictionary<string, string>? parameters, DateTime now, SqlDialect dialect, IReadOnlyDictionary<string, object?>? app = null)
+    internal static object? Bind(BindVariable variable, DataSourceUser user, IReadOnlyDictionary<string, string>? parameters, DateTimeOffset now, SqlDialect dialect, IReadOnlyDictionary<string, object?>? app = null)
         => variable.Kind switch {
             BindVariableKind.UserSid => user.Sid, BindVariableKind.UserName => user.Name, BindVariableKind.UserKey => user.Key,
-            BindVariableKind.UserEmail => user.Email, BindVariableKind.UserGroups => user.Groups, BindVariableKind.Now => dialect.Now(now),
+            BindVariableKind.UserEmail => user.Email, BindVariableKind.UserGroups => user.Groups,
+            BindVariableKind.Now => dialect.Now(now.DateTime), BindVariableKind.NowUtc => dialect.NowUtc(now.UtcDateTime),
             BindVariableKind.Param => parameters?.FirstOrDefault(pair => pair.Key.Equals(variable.Name, StringComparison.OrdinalIgnoreCase)).Value,
             BindVariableKind.App => app?.GetValueOrDefault(variable.Name!),
             _ => null,

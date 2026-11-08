@@ -124,15 +124,29 @@ public sealed class PackageTests
         valuesType.GetProperty("TitleWithCharacters")!.SetValue(values, "O'Brien; DROP TABLE SampleForm; --");
         valuesType.GetProperty("Amount")!.SetValue(values, 123.45m);
         valuesType.GetProperty("Done")!.SetValue(values, true);
-        async Task<bool> Save(long version) => await (Task<bool>)type.GetMethod("UpsertAsync")!.Invoke(repository, ["record-1", version, values, principal, CancellationToken.None])!;
-        Assert.True(await Save(0));
-        Assert.False(await Save(0));
-        var read = (Task)type.GetMethod("ReadAsync")!.Invoke(repository, ["record-1", principal, CancellationToken.None])!;
-        await read;
-        var record = read.GetType().GetProperty("Result")!.GetValue(read)!;
+        async Task<bool> Save(string? checksum) => await (Task<bool>)type.GetMethod("SaveAsync")!.Invoke(repository, ["record-1", checksum, values, principal, CancellationToken.None])!;
+        async Task<object> Read()
+        {
+            var read = (Task)type.GetMethod("ReadAsync")!.Invoke(repository, ["record-1", principal, CancellationToken.None])!;
+            await read;
+            return read.GetType().GetProperty("Result")!.GetValue(read)!;
+        }
+        string Checksum(object record) => (string)recordType.GetProperty("Checksum")!.GetValue(record)!;
+        Assert.True(await Save(null));
+        Assert.False(await Save(null));
+        var record = await Read();
         var actualValues = recordType.GetProperty("Values")!.GetValue(record);
         Assert.Equal("O'Brien; DROP TABLE SampleForm; --", valuesType.GetProperty("TitleWithCharacters")!.GetValue(actualValues));
-        Assert.True(await Save(1)); Assert.False(await Save(1));
+        Assert.DoesNotContain("Version", (string)type.GetField("ExampleSchema")!.GetRawConstantValue()!);
+        // The checksum read with the record saves once; after that save changed the row, it is stale.
+        var first = Checksum(record);
+        Assert.Equal(first, Checksum(await Read()));
+        valuesType.GetProperty("Amount")!.SetValue(values, 99m);
+        Assert.True(await Save(first));
+        Assert.False(await Save(first));
+        var second = Checksum(await Read());
+        Assert.NotEqual(first, second);
+        Assert.True(await Save(second));
         var denied = (Task)type.GetMethod("ReadAsync")!.Invoke(repository, ["record-1", new ClaimsPrincipal(), CancellationToken.None])!;
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => denied);
     }

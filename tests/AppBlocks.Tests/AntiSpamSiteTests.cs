@@ -169,7 +169,7 @@ public sealed class AntiSpamSiteTests
         var form = await Load(visitor, Standin + "?id=1");
         var (loads, updates) = (site.Calls.Count("load"), site.Calls.Count("update"));
         object Body(params (string Name, string Value)[] controls) => new {
-            values = new { name = "Pat" }, definitionVersion = form.GetProperty("definitionVersion").GetString(), version = "1", formData = controls.ToDictionary(c => c.Name, c => c.Value),
+            values = new { name = "Pat" }, definitionVersion = form.GetProperty("definitionVersion").GetString(), checksum = "1", formData = controls.ToDictionary(c => c.Name, c => c.Value),
         };
         using (var missing = await Json(visitor, HttpMethod.Put, Standin + "/1", form, Body()))
         {
@@ -398,7 +398,7 @@ public sealed class AntiSpamSiteTests
         var form = await Load(visitor, Plain);
         var version = form.GetProperty("definitionVersion").GetString();
         var creates = site.Calls.Count("create");
-        string Body(int length) => JsonSerializer.Serialize(new { values = new { message = new string('m', length) }, definitionVersion = version, version = "1" });
+        string Body(int length) => JsonSerializer.Serialize(new { values = new { message = new string('m', length) }, definitionVersion = version, checksum = "1" });
 
         // Generous: a very long message, at the limit but not over it, is parsed and reaches the class.
         var room = (int)FormEndpoints.DefaultMaxBodySize - Body(0).Length;

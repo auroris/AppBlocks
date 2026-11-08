@@ -516,8 +516,8 @@ internal sealed class ContactResource(RecordedForms recorded) : IFormResource
         if (context.FormData.GetValueOrDefault("g-recaptcha-response") != "good-token") return Task.FromResult(FormResult.Invalid("", "Please confirm you are not a robot."));
         return Task.FromResult(FormResult.Ok(Fresh()));
     }
-    public Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
-    public Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+    public Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+    public Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
 }
 
 /// <summary>A class that decides for itself that anonymous visitors may not use it, on every operation.</summary>
@@ -531,8 +531,8 @@ internal sealed class RefusingResource : IFormResource
     public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => Answer(context);
     public Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct) => Answer(context);
     public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct) => Answer(context);
-    public Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct) => Answer(context);
-    public Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct) => Answer(context);
+    public Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct) => Answer(context);
+    public Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct) => Answer(context);
 }
 
 /// <summary>A record anyone can load. Its class says nothing about files.</summary>
@@ -545,8 +545,8 @@ internal class ClosedRecords : IFormResource
         => Task.FromResult(FormResult.Ok(new(key, "1", new Dictionary<string, object?> { ["name"] = "A record" }, new())));
     public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
     public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
-    public Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
-    public Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+    public Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+    public Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
 }
 
 /// <summary>The same record, whose class explicitly lets anyone change its files.</summary>

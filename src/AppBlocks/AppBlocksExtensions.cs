@@ -49,6 +49,8 @@ public static class AppBlocksExtensions
         // Also resolvable on its own, so a site's import tool can install the definitions before it imports what uses them.
         services.AddTransient<Setup.SchemaInstaller>();
         services.AddTransient<Setup.SchemaUsage>();
+        // For packages that generate content nodes from code, such as their API endpoints and lists of values.
+        services.AddTransient<Setup.OwnedNodeInstaller>();
         builder.PackageMigrationPlans().Add<Setup.AppBlocksMigrationPlan>();
         services.TryAddScoped<ApplicationAccessPolicy>();
         services.AddControllersWithViews().AddApplicationPart(typeof(AppBlocksExtensions).Assembly);
@@ -70,6 +72,8 @@ public static class AppBlocksExtensions
         builder.AddAntiSpam();
         services.AddScoped<DataSourcePreview>();
         services.AddSingleton<IAuthorizationHandler, AppPageAuthorizationHandler>();
+        // The Member policy and antiforgery token endpoint a companion's own controllers use.
+        AppBlocksAuthorization.Add(services);
         Decorate<IAuthorizationPolicyProvider>(services, (_, inner) => new AppPagePolicyProvider(inner));
         builder.AddNotificationAsyncHandler<ContentPublishingNotification, AppBlocksValidator>();
         // Bound at startup, so a value that is not AppBlocksPages, AllPages or Off is reported then rather than on the first page.
@@ -95,6 +99,7 @@ public static class AppBlocksExtensions
         endpoints.MapAttachments();
         endpoints.MapTabular();
         endpoints.MapApiEndpoints();
+        AppBlocksAuthorization.MapAntiforgeryToken(endpoints);
     }
 
 }

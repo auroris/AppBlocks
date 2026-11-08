@@ -92,6 +92,18 @@ public sealed record DataSourceDefinition
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Handler { get; init; }
 
+    /// <summary>The <c>:APP.</c> names the row source, row restriction, custom statements and insert defaults use, as written.</summary>
+    public IReadOnlyList<string> ApplicationNames()
+    {
+        var names = new List<string>();
+        foreach (var (text, use) in new[] { (SqlTemplate.IsQuery(Source) ? Source : null, SqlUse.RowSource), (RowRestriction, SqlUse.RowRestriction),
+            (CustomStatements.Insert, SqlUse.Statement), (CustomStatements.Update, SqlUse.Statement), (CustomStatements.Delete, SqlUse.Statement) })
+            if (text is not null && SqlTemplate.Parse(text, use, "", new List<string>()) is { } template)
+                names.AddRange(template.Variables.Where(v => v.Kind == BindVariableKind.App).Select(v => v.Name!));
+        names.AddRange(InsertDefaults.Select(d => d.Variable).Where(v => v?.Kind == BindVariableKind.App).Select(v => v!.Name!));
+        return names.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     /// <summary>A hash of every setting, so a changed definition gets a new plan and invalidates loaded forms.</summary>
     public string ComputeFingerprint() => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(this)));
 

@@ -29,7 +29,7 @@ Two things apply to every layer. First, Umbraco's Public Access is the baseline,
 
 | Block on an unprotected page | What an anonymous visitor gets |
 | --- | --- |
-| Form bound to your C# class | Whatever the class decides. A class returning `Denied()` shows them a sign-in notice |
+| Form bound to your C# class | Whatever the class decides. A class returning `Denied()`, or one that sets `RequireMember`, shows them a sign-in notice |
 | Form on the data source engine | Read-only access when its SQL data source is Public; otherwise a sign-in notice |
 | Report | Public: they can view, query and export. Saved views are hidden. A report whose SQL uses `:USER_` bind variables shows a sign-in notice. `IReportAccessPolicy` and `IDataSourcePolicy` can still refuse |
 | Attachments | They can read the files if the owning record loads for them. They can change the files only if the owner's class implements `IAttachmentOwner` and allows it |
@@ -56,6 +56,19 @@ if (principal.Identity?.IsAuthenticated != true)
 var loginName = principal.Identity.Name;
 var authenticationId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
 ```
+
+A class meant for signed-in Members only can say so instead, and AppBlocks turns everyone else away before any operation runs. Set `RequireMember` to `true`: as a property of a class that implements `IFormResource`, or as an override on `FormResource<TCreate, TUpdate>`. The form endpoints then answer 401 to a caller with no account and 403 to a backoffice User with no Member session, without calling Initialize, Load, Create, Update or Delete. An anonymous visitor sees the form's sign-in notice in place of the form, and an Attachments or Tabular form block whose owner is the class refuses them the same way. The class still decides which Members may do what.
+
+```csharp
+public sealed class LeaveRequests(/* ... */) : FormResource<LeaveInput, LeaveInput>
+{
+    public override string Alias => "leave-requests";
+    public override bool RequireMember => true;
+    // Every operation can now rely on context.Member holding a Member identity.
+}
+```
+
+`RequireMember` is false unless a class sets it, which keeps an existing class's behaviour.
 
 Member IDs and User IDs belong to different account stores. Use AppBlocks' resolver when you need a stable application key or current account information:
 
@@ -191,7 +204,18 @@ In C#, the required `DataSourceDefinition.Access` property must be `DataSourceAc
 
 Fresh installations include the required Access editor. Existing sites retain their installed document types: add the mandatory `access` property to `sqlDataSource` using the **Application: Data source access** radio-button data type, with the choices **Public**, **Not public**, and **Specific groups**, or apply the updated packaged schema through the site's schema-management process. Set and publish an explicit Access value on every existing source. Previously published sources with no value are unavailable until corrected, including sources that already have Read groups. Public as the starting value comes from the AppBlocks backoffice extension rather than the stored definitions, so it applies on existing sites as soon as the package is updated, and only to sources created in the backoffice: opening an existing source never fills in its Access.
 
-**Row restriction** limits rows without any C#. It is added to every fetch and write, for example `OWNER_KEY = :USER_KEY` or `REGION IN (:USER_GROUPS)`, and a write that would leave the restriction is refused. It may use `:USER_KEY`, `:USER_SID`, `:USER_NAME`, `:USER_EMAIL`, `:USER_GROUPS` and `:NOW`. `:USER_GROUPS` holds the account's group display names, so a Member and a backoffice User are matched against different lists.
+**Row restriction** limits rows without any C#. It is added to every fetch and write, for example `OWNER_KEY = :USER_KEY` or `REGION IN (:USER_GROUPS)`, and a write that would leave the restriction is refused. It may use `:USER_KEY`, `:USER_SID`, `:USER_NAME`, `:USER_EMAIL`, `:USER_GROUPS`, `:NOW` and `:NOW_UTC`. `:USER_GROUPS` holds the account's group display names, so a Member and a backoffice User are matched against different lists.
+
+**The clock** has two bind variables, read once per operation so they name the same moment. `:NOW` is the web server's local wall time, the value the audit columns record. `:NOW_UTC` is that moment in UTC, for an application that stores UTC stamps; it needs no zone conversion in SQL, so it stays correct in the autumn hour that repeats. Each dialect binds it in the form its UTC stamps compare with:
+
+| Database | `:NOW_UTC` binds | Compare with |
+|---|---|---|
+| SQLite | ISO-8601 text with `Z`, such as `2026-11-01T07:30:00Z` | Text stamps in the same form, which sort in time order, or SQLite's date functions, which read the `Z` as UTC |
+| SQL Server | A `datetime2` holding the UTC wall time, as `SYSUTCDATETIME()` returns | `datetime2` UTC columns; a `datetimeoffset` column compares as the same moment |
+| PostgreSQL | A `timestamptz` | `timestamptz` columns |
+| Oracle | A `DATE` holding the UTC wall time, as `SYS_EXTRACT_UTC(SYSTIMESTAMP)` returns | `DATE` or `TIMESTAMP` UTC columns |
+
+A posting window stored as UTC text in SQLite becomes a row source condition such as `WHERE POST_FROM <= :NOW_UTC AND (POST_UNTIL IS NULL OR POST_UNTIL > :NOW_UTC)`. Field defaults and insert defaults accept both names. As a default, `:NOW_UTC` fills a date or time field with the UTC date or time, and a date-time or text field with the ISO form with `Z`.
 
 **Application bind variables** are values your own code computes for an operation, written `:APP.name`. Register an `IBindVariableProvider`; it receives the execution context, the page key and form key, the signed-in person and the request's parameters, and answers with named values. Because they come from the application and not from the browser, they may filter a row source, appear in a row restriction and fill insert defaults, which `:PARAM.` never may. A site that gives each tenant a copy of the same pages decides the tenant from the page in one place and writes one data source for every copy, `WHERE TENANT_ID = :APP.tenant`; a field default of `:APP.tenant` hands the same value to a form class. A name no provider answers binds NULL.
 
@@ -217,6 +241,14 @@ public sealed class TenantProvider(IPublishedContentCache pages, IDocumentNaviga
 ```
 
 Register it with `services.AddScoped<IBindVariableProvider, TenantProvider>()`. A property on the tenant's page type is the explicit way; matching the ancestor's content type alias instead works the same way. The values are resolved once per operation and once per batch of rows, so every row of a save sees the same answer. Field defaults are resolved once per page before any form, so there the context carries the page and an empty form key, and a block report's providers see its page and block. The [worked example](activity-schedule-example.md) builds a whole application on this rule.
+
+A provider can also declare the names it answers, by implementing `Names`, which `IBindVariableProvider` otherwise answers with an empty list:
+
+```csharp
+public IReadOnlyCollection<string> Names => ["tenant"];
+```
+
+When every registered provider declares its names, publishing checks each `:APP.` name in a data source, an API endpoint's own SQL, a list of values' own SQL and a field default against them, and warns about one no provider declares, such as `:APP.tennant`. The publish goes ahead, because providers are code that may be deployed after the content that names their values, and the name binds NULL until a provider answers it. A provider that declares nothing may answer any name, so while one is registered nothing is checked. A data source's **Test** lists the declared names, so an editor can give them sample values such as `{"APP.tenant": "4wing"}`, and shows the same warning. Classes in the C# folder declare names the same way.
 
 By default, whoever can read a record can read its files and, for a custom resource, change them too if they are signed in. An anonymous visitor can change them only through this interface. They are not told which account filed a file, only that someone signed in did. Implement `IAttachmentOwner` on the resource when the rule for changing files is narrower. The data source engine already limits changes to its write groups.
 
@@ -480,7 +512,7 @@ if (stored.Status != "Draft")
     return FormResult.Invalid("", "Submitted records cannot be edited.");
 ```
 
-Read these values and perform the write in the same transaction, using the engine's concurrency checks or an explicit version predicate. Apply ownership to reads and deletes too. Filter list queries at the database so records belonging to other accounts are never returned.
+Read these values and perform the write in the same transaction, using the engine's concurrency checks or a checksum of the row's values compared inside that transaction. Apply ownership to reads and deletes too. Filter list queries at the database so records belonging to other accounts are never returned.
 
 For the built-in data-source engine, implement `IDataSourcePolicy`. Each registered policy must allow an operation:
 
@@ -510,6 +542,13 @@ public sealed class DraftOrderPolicy : IDataSourcePolicy
 
 Register it with `builder.Services.AddScoped<IDataSourcePolicy, DraftOrderPolicy>()` in your application's startup or composer. Write policies run inside the engine's transaction. A policy may query `request.Connection` with `request.Transaction`; it must not close, commit or roll back either one. Protect ownership fields from reassignment in your resource or a policy comparing `Current` with `Proposed`.
 
+AppBlocks asks every registered policy about every data source on every page, which is why `DraftOrderPolicy` returns early for anything other than `orders`. A policy can state its scope instead, and AppBlocks then skips it for requests outside that scope. There are two ways:
+
+- Register the class with a scope. `builder.Services.AddDataSourcePolicy<DraftOrderPolicy>(new DataSourcePolicyScope("orders"))` asks the policy only about data sources whose alias starts with `orders`, ignoring case. Add page keys, as in `new DataSourcePolicyScope("bbs.", [noticesPage, archivePage])`, to ask it only about operations from those pages. The class is made per request scope through dependency injection, as with `AddScoped`.
+- Implement `IScopedDataSourcePolicy`, which adds `bool Applies(DataSourceRequest request)` to `IDataSourcePolicy`, when the scope needs code. AppBlocks calls `Applies` first and calls `IsAllowedAsync` only when it answers true. Classes in the C# folder can implement it too.
+
+A scope narrows where a rule holds, so choose it with the data source's other routes in mind. An [API endpoint](api-endpoints.md) call has no page, so a policy scoped to pages never governs it. Scope by alias alone when the rule must hold wherever the data source is used. A policy registered the usual way keeps deciding every request.
+
 ## The backing class of a data source
 
 A SQL data source writes its rows with statements it generates, or with the custom statements an editor writes. When a rule needs code, such as a status the server decides, a procedure that does the writing, or a log row beside every change, give the data source a **backing class**: a C# class implementing `IDataSourceHandler`, registered with dependency injection, and picked by its alias in **Backing class** on the data source's **Advanced** tab. It plays the part of an Oracle APEX page process. The engine asks it at each step of an operation, after its own checks and before the policies, and the class can change the values, write the row itself in the engine's transaction, or refuse.
@@ -525,12 +564,13 @@ Every hook passes through by default, so a class implements only the ones it nee
 | `InitializeAsync` | A new record's starting values, after the insert defaults | Change what the form starts with, or refuse |
 | `LoadAsync` | A record read by key through the row restriction | Change what the form shows, or refuse |
 | `CreateAsync` | A new row, once the submitted values are parsed and the defaults filled | Change what is written, write the row itself, or refuse |
-| `UpdateAsync` | A changed row, locked, after any enabled version check | The same, with the stored row beside the row as it would be stored |
-| `DeleteAsync` | A row about to be deleted, locked, after any enabled version check | Delete it its own way, such as marking it cancelled, or refuse |
+| `UpdateAsync` | A changed row, locked, after any enabled checksum check | The same, with the stored row beside the row as it would be stored |
+| `DeleteAsync` | A row about to be deleted, locked, after any enabled checksum check | Delete it its own way, such as marking it cancelled, or refuse |
 | `ListAsync` | The rows a Tabular form block shows for one record, once read | Change what the rows show, or refuse |
-| `QueryAsync` | A report, list of values, schedule or paper report about to read | Refuse |
+| `QueryAsync` | A report, API endpoint, list of values, schedule or paper report about to read | Refuse |
+| `ReadAsync` | An API endpoint, list of values, schedule or paper report reading, once access, `QueryAsync` and the policies allow it | Answer with rows of its own, keyed by the row source's column names, or return `null` to read the row source. The row restriction cannot filter rows from code, so the class applies its rule itself. See [API endpoints](api-endpoints.md#answering-from-code) |
 
-Each hook receives one `DataSourceOperation`. `Action`, `User` (an anonymous visitor, a Member, a backoffice User or both, as policies see them), `Context` and `Key` say who asks for what. `Current` is the record as stored. `Values` holds what the engine is about to write or show, by field alias, in the form's JSON shape: text, numbers as text, true or false, ISO dates and times. Change, add or remove entries; a field removed from an update stays as stored. A value the class sets is converted and checked by its field's kind, length, range and choices, as a submitted value is. The class may set a read-only field of the written table, which a form never can, but not a key once the record exists, the version, an audit column or a column the database computes. `Rows` holds a list's rows, and `Details` a form's rows saved with the record, described in the next section. `Connection` and `Transaction` are the engine's, and `Dialect` names the database; a class never opens, commits, rolls back or disposes either.
+Each hook receives one `DataSourceOperation`. `Action`, `User` (an anonymous visitor, a Member, a backoffice User or both, as policies see them), `Context` and `Key` say who asks for what. `Current` is the record as stored. `Values` holds what the engine is about to write or show, by field alias, in the form's JSON shape: text, numbers as text, true or false, ISO dates and times. Change, add or remove entries; a field removed from an update stays as stored. A value the class sets is converted and checked by its field's kind, length, range and choices, as a submitted value is. The class may set a read-only field of the written table, which a form never can, but not a key once the record exists, an audit column or a column the database computes. `Rows` holds a list's rows, and `Details` a form's rows saved with the record, described in the next section. `Connection` and `Transaction` are the engine's, and `Dialect` names the database; a class never opens, commits, rolls back or disposes either.
 
 A hook answers with a `DataSourceOutcome`:
 
@@ -538,7 +578,7 @@ A hook answers with a `DataSourceOutcome`:
 - `DataSourceOutcome.Handled(key)`: the class wrote the row itself, so the engine writes nothing and only reads the row back. A create returns the new row's key, as a form shows it, unless the values already hold every key field. On a read hook it means the same as `Continue`.
 - `DataSourceOutcome.Refuse(status, errors)`, or `DataSourceOutcome.Invalid(field, message)` for a 422: nothing is written, whatever the class wrote is rolled back, and the caller gets the status and the field errors as a `FormResult` would give them.
 
-`operation.Sql` runs the class's own SQL: a statement or a block, whole, as one command, on the engine's connection and inside its transaction, with every value a bound parameter. It takes the bind variables of a custom statement: `:USER_*`, `:PARAM.name`, `:APP.name`, `:NOW`, and `:FIELD.alias` from the operation's values as they stand, or the stored record on a delete. A value the class supplies itself is `:ARG.name`, passed as a dictionary or an object whose properties are the names; editor SQL cannot use `:ARG.`. `ExecuteAsync` returns the rows affected, `ScalarAsync` the first value, and `QueryAsync` the rows as dictionaries. An Oracle anonymous block runs as written. `:USER_*` values need a signed-in account, as everywhere, and only a create, update or delete may change data: `ExecuteAsync` refuses on a read, which has no transaction.
+`operation.Sql` runs the class's own SQL: a statement or a block, whole, as one command, on the engine's connection and inside its transaction, with every value a bound parameter. It takes the bind variables of a custom statement: `:USER_*`, `:PARAM.name`, `:APP.name`, `:NOW`, `:NOW_UTC`, and `:FIELD.alias` from the operation's values as they stand, or the stored record on a delete. A value the class supplies itself is `:ARG.name`, passed as a dictionary or an object whose properties are the names; editor SQL cannot use `:ARG.`. `ExecuteAsync` returns the rows affected, `ScalarAsync` the first value, and `QueryAsync` the rows as dictionaries. An Oracle anonymous block runs as written. `:USER_*` values need a signed-in account, as everywhere, and only a create, update or delete may change data: `ExecuteAsync` refuses on a read, which has no transaction.
 
 This class refuses to change a shipped order and otherwise writes the change through the application's own procedure, as the signed-in person and with a reason of its own:
 
@@ -564,7 +604,7 @@ public sealed class OrderRules : IDataSourceHandler
 }
 ```
 
-Everything else still applies around the class. Before it is asked, the engine checks Access, the read and write groups and the allow flags, requires the source to opt in to anonymous writes, and checks the version and the submitted values. After it answers, every `IDataSourcePolicy` runs and sees the values as the class left them, and a refusal there rolls back what the class wrote. The written row is read back through the row restriction, so a class cannot place a row outside what the caller may see. Publishing refuses a backing class that is not registered, and a data source whose class is no longer registered is unavailable, like one whose column is gone, rather than running without it. A form class registered in code still wins an alias over a data source.
+Everything else still applies around the class. Before it is asked, the engine checks Access, the read and write groups and the allow flags, requires the source to opt in to anonymous writes, and checks the submitted values and, when the source opts in, the row checksum. After it answers, every `IDataSourcePolicy` runs and sees the values as the class left them, and a refusal there rolls back what the class wrote. The written row is read back through the row restriction, so a class cannot place a row outside what the caller may see. Publishing refuses a backing class that is not registered, and a data source whose class is no longer registered is unavailable, like one whose column is gone, rather than running without it. A form class registered in code still wins an alias over a data source.
 
 Two limits follow from where the class sits. A value `LoadAsync` changes is what the form shows and sends back, so a form that saves it writes the changed value: change only fields the form cannot edit, or expect that. And `QueryAsync` can only refuse: a report runs its own SELECT in Interactive Reports, so its rows never pass through AppBlocks, and lists of values, schedules and paper reports get the same check so that every reader is judged alike. Put a rule about which rows they may read in the row restriction, which every reader applies.
 
@@ -572,7 +612,7 @@ Two limits follow from where the class sits. A value `LoadAsync` changes is what
 
 A Tabular form block inside a form edits the rows of the form's record. When the caller can save that record, the block shows no save control of its own: its pending changes go with the form's save, in the same request, as an Oracle APEX page saves a form and its interactive grids. A record not saved yet can take rows too, and they are linked to its key once it has one; the block lists them from `/api/tabular/{page}/{block}/new`. A block on its own, or inside a form the caller cannot save, keeps its own save control and saves its rows as before.
 
-When the form is on a SQL data source and each block's data source uses the same connection, the save is one transaction. The record is written first, so a new record's key becomes its new rows' link value, whatever a change says. Its backing class sees the record's values and every block's pending changes in `operation.Details`: each `DataSourceDetail` names the block, its data source, the link field and the record's key, which is still null while a new record's hook runs unless the class writes the record itself. The class may apply a change itself and remove it, replace it, add one, or refuse the whole save. The engine then applies what is left to each block's rows with the checks a block's own save makes: the allow flags, at most 200 changes, the versions, the row restriction, and the block's data source's own backing class and policies. One commit keeps the record and all of its rows, or none of them, and a refused change is named by its block and its place in the batch.
+When the form is on a SQL data source and each block's data source uses the same connection, the save is one transaction. The record is written first, so a new record's key becomes its new rows' link value, whatever a change says. Its backing class sees the record's values and every block's pending changes in `operation.Details`: each `DataSourceDetail` names the block, its data source, the link field and the record's key, which is still null while a new record's hook runs unless the class writes the record itself. The class may apply a change itself and remove it, replace it, add one, or refuse the whole save. The engine then applies what is left to each block's rows with the checks a block's own save makes: the allow flags, at most 200 changes, the row checksums, the row restriction, and the block's data source's own backing class and policies. One commit keeps the record and all of its rows, or none of them, and a refused change is named by its block and its place in the batch.
 
 When the form is a C# class, or a block's data source uses another connection, nothing can share a transaction, so the save is not atomic. The record is saved first through its class, then each block's rows in a transaction of their own. A block whose rows fail leaves the record, and any block before it, saved: the answer carries the saved record with the refusal, the form shows it, and the next save is an update.
 
@@ -617,9 +657,9 @@ public sealed class ContactFormResource(ContactCaptcha captcha, IContactInbox in
 
     public override Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
 
-    public override Task<FormResult> DeleteAsync(string key, string version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+    public override Task<FormResult> DeleteAsync(string key, string checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
 
-    protected override Task<FormResult> UpdateAsync(string key, ContactMessage input, string version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+    protected override Task<FormResult> UpdateAsync(string key, ContactMessage input, string checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
 
     protected override async Task<FormResult> CreateAsync(ContactMessage input, FormExecutionContext context, CancellationToken ct)
     {
@@ -791,7 +831,7 @@ A hidden field, a disabled control, a query parameter (`FormExecutionContext.Par
 
 Last save wins by default. A SQL data source's **Concurrency** choices map to the `DataSourceConcurrency` enum: `LastSaveWins` and `Checksum`. Select `Checksum` to detect conflicting edits without adding a table column. Existing sources that selected version-column protection are upgraded to `Checksum`. These modes apply to individual records, tabular batches and master/detail saves.
 
-For a C# form resource, return `FormRecord.Version = null` for last-save-wins. Returning a checksum or version opts into conflict detection; the resource must compare it and perform the update or delete in the same transaction. A missing token cannot bypass that check. Generated form classes use last-save-wins; set their `UseChecksum` field to `true` to opt in. The downloadable repository sample demonstrates explicit version-column protection. Updates must not recreate deleted records.
+For a C# form resource, return `FormRecord.Checksum = null` for last-save-wins. Returning a checksum of the row's values opts into conflict detection; the resource must compare the caller's checksum with the current row and perform the update or delete in the same transaction. A missing checksum cannot bypass that check. Generated form classes use last-save-wins; set their `UseChecksum` field to `true` to opt in. The downloadable repository sample applies the same protection to its SQLite table: `ReadAsync` returns a checksum of the row's values, and `SaveAsync` compares it with the current row inside a write transaction and returns `false` for a stale change. Updates must not recreate deleted records.
 
 The built-in engine also handles create receipts. Custom resources should make creation idempotent when a retry could create a duplicate; `FormExecutionContext.SubmissionKey` is available for that purpose. Persist the receipt and the new record together.
 

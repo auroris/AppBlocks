@@ -10,9 +10,10 @@ using AppBlocks.Tabular;
 
 namespace AppBlocks.Forms;
 
+/// <param name="Checksum">The record's checksum as the browser loaded it, null under last-save-wins; an update or delete compares it with the current row.</param>
 /// <param name="FormData">The form's other named controls by name, apart from <paramref name="Values"/> so validation and strict binding never see them.</param>
 /// <param name="Details">The pending changes of the form's tabular blocks, saved with the record in the same request.</param>
-public sealed record FormSubmission(string DefinitionVersion, string? Version, JsonElement Values, string? SubmissionKey, JsonElement? FormData = null,
+public sealed record FormSubmission(string DefinitionVersion, string? Checksum, JsonElement Values, string? SubmissionKey, JsonElement? FormData = null,
     IReadOnlyList<FormDetailSubmission>? Details = null);
 
 /// <summary>
@@ -119,6 +120,7 @@ public static class FormEndpoints
     /// </summary>
     public static async Task<bool> RefusesAnonymousAsync(FormDefinition form, Guid pageKey, HttpContext http)
     {
+        if (FormResourceAccess.Refusal(form.Resource, http.User) is not null) return true;
         var query = http.Request.Query[form.KeyParameter];
         if (query.Count > 1 || query.Count == 1 && string.IsNullOrWhiteSpace(query[0])) return false;
         var context = new FormExecutionContext(http.User, pageKey, form.Block.ContentKey, form.Revision, Parameters: Parameters(http.Request.Query));
@@ -144,6 +146,7 @@ public static class FormEndpoints
         var (form, member) = await Resolve(pageKey, formKey, http);
         if (member is null) return Results.StatusCode(403);
         if (form is null) return Results.Problem("The form definition is not valid.", statusCode: 422);
+        if (FormResourceAccess.Refusal(form.Resource, member) is { } refused) return Results.StatusCode(refused);
         var query = http.Request.Query[form.KeyParameter];
         if (query.Count > 1 || query.Count == 1 && string.IsNullOrWhiteSpace(query[0])) return Results.BadRequest();
         var context = new FormExecutionContext(member, pageKey, formKey, form.Revision, Parameters: Parameters(http.Request.Query));
@@ -175,6 +178,7 @@ public static class FormEndpoints
     {
         var (form, member) = await Resolve(pageKey, formKey, http);
         if (member is null || form?.ViewOnly != false) return Results.StatusCode(403);
+        if (FormResourceAccess.Refusal(form.Resource, member) is { } refused) return Results.StatusCode(refused);
         try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
         catch (AntiforgeryValidationException) { return Results.BadRequest(); }
         if (submission.DefinitionVersion != form.Revision) return Results.Json(FormResult.Invalid("", "This form has changed. Reload the page before saving."), statusCode: 409);
@@ -188,8 +192,8 @@ public static class FormEndpoints
             context = context with { FormData = antiSpam.WithoutChecks(form, context.FormData) };
             var current = await form.Resource.LoadAsync(key!, context, ct);
             if (current.Record is null) return Result(current);
-            if (current.Record.Version is { } expected && expected != submission.Version) return Result(FormResult.Conflict());
-            var deletion = await form.Resource.DeleteAsync(key!, submission.Version, context, ct);
+            if (current.Record.Checksum is { } expected && expected != submission.Checksum) return Result(FormResult.Conflict());
+            var deletion = await form.Resource.DeleteAsync(key!, submission.Checksum, context, ct);
             Audit(http, operation, form.Resource.Alias, key, member, deletion.Status);
             return Result(deletion);
         }
@@ -216,7 +220,7 @@ public static class FormEndpoints
             var current = await form.Resource.LoadAsync(key, context, ct);
             if (current.Record is null) return Result(current);
             stored = current.Record;
-            if (stored.Version is { } expected && expected != submission.Version) return Result(FormResult.Conflict());
+            if (stored.Checksum is { } expected && expected != submission.Checksum) return Result(FormResult.Conflict());
             // Omission preserves the current value. Explicit null remains a deliberate change.
             var merged = current.Record.Values.Where(p => form.Resource.Fields.Any(f => f.Key == p.Key && !f.ReadOnly)).ToDictionary(p => p.Key, p => p.Value);
             foreach (var value in values.EnumerateObject()) merged[value.Name] = value.Value.Clone();
@@ -228,9 +232,9 @@ public static class FormEndpoints
         }
         var choiceErrors = await http.RequestServices.GetRequiredService<ListOfValuesService>().ValidateAsync(form, values, context, ct, stored?.Values);
         if (choiceErrors.Count > 0) return Result(new(422, Errors: choiceErrors));
-        if (details is not null) return await SaveWithDetailsAsync(form, key, values, submission.Version, details, context, operation, member, http, ct);
+        if (details is not null) return await SaveWithDetailsAsync(form, key, values, submission.Checksum, details, context, operation, member, http, ct);
         var result = key is null ? await form.Resource.CreateAsync(values, context, ct)
-            : await form.Resource.UpdateAsync(key, values, submission.Version, context, ct);
+            : await form.Resource.UpdateAsync(key, values, submission.Checksum, context, ct);
         Audit(http, operation, form.Resource.Alias, key ?? result.Record?.Key, member, result.Status);
         return Result(result.Record is null ? result : result with { Record = Project(result.Record, form) });
     }
@@ -285,14 +289,14 @@ public static class FormEndpoints
     /// transaction. Otherwise nothing can be shared, so the record is saved first and then each block's rows, each batch whole or not at
     /// all: a block that fails leaves the record and any earlier block saved, and the answer carries the saved record with the refusal.
     /// </summary>
-    private static async Task<IResult> SaveWithDetailsAsync(FormDefinition form, string? key, JsonElement values, string? version, IReadOnlyList<FormDetail> details,
+    private static async Task<IResult> SaveWithDetailsAsync(FormDefinition form, string? key, JsonElement values, string? checksum, IReadOnlyList<FormDetail> details,
         FormExecutionContext context, string operation, ClaimsPrincipal member, HttpContext http, CancellationToken ct)
     {
         FormResult result;
         var answers = new List<object>(details.Count);
         if (form.Resource is SqlDataSource master && details.All(d => master.SharesConnectionWith(d.Source)))
         {
-            var saved = await master.SaveWithDetailsAsync(key, values, version, details.Select(d => new DataSourceDetailBatch(d.Key, d.Source, d.Block.LinkField, d.Changes,
+            var saved = await master.SaveWithDetailsAsync(key, values, checksum, details.Select(d => new DataSourceDetailBatch(d.Key, d.Source, d.Block.LinkField, d.Changes,
                 d.Block.MaxRows, d.Context)).ToArray(), context, ct);
             result = saved.Master;
             Audit(http, operation, form.Resource.Alias, key ?? result.Record?.Key, member, saved.Status);
@@ -311,7 +315,7 @@ public static class FormEndpoints
             return Results.Json(new { record = Project(result.Record, form), details = answers });
         }
 
-        result = key is null ? await form.Resource.CreateAsync(values, context, ct) : await form.Resource.UpdateAsync(key, values, version, context, ct);
+        result = key is null ? await form.Resource.CreateAsync(values, context, ct) : await form.Resource.UpdateAsync(key, values, checksum, context, ct);
         Audit(http, operation, form.Resource.Alias, key ?? result.Record?.Key, member, result.Status);
         if (result.Status != 200 || result.Record is null) return Result(result);
         var record = Project(result.Record, form);

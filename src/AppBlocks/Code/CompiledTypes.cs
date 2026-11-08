@@ -39,15 +39,13 @@ public sealed class CompiledTypes(CodeCompilation compilation, IServiceProvider 
     }
 }
 
-/// <summary>Every compiled <see cref="IDataSourcePolicy"/> as one registered policy: like registered ones, each must allow the operation.</summary>
+/// <summary>
+/// Every compiled <see cref="IDataSourcePolicy"/> as one registered policy: like registered ones, each must allow the operation, and a
+/// compiled <see cref="IScopedDataSourcePolicy"/> is skipped where its scope does not match.
+/// </summary>
 internal sealed class CompiledDataSourcePolicies(CompiledTypes compiled) : IDataSourcePolicy
 {
-    public async ValueTask<bool> IsAllowedAsync(DataSourceRequest request, CancellationToken ct)
-    {
-        foreach (var policy in compiled.Create<IDataSourcePolicy>())
-            if (!await policy.IsAllowedAsync(request, ct)) return false;
-        return true;
-    }
+    public ValueTask<bool> IsAllowedAsync(DataSourceRequest request, CancellationToken ct) => compiled.Create<IDataSourcePolicy>().AllowAsync(request, ct);
 }
 
 /// <summary>

@@ -130,6 +130,11 @@ public abstract class SqlDialect
     public abstract object? ToDatabase(object? value, string kind, TableColumn? column);
     /// <summary>The value bound for <c>:NOW</c>.</summary>
     public abstract object Now(DateTime now);
+    /// <summary>
+    /// The value bound for <c>:NOW_UTC</c>, given the moment as a UTC date and time: a typed timestamp holding the
+    /// UTC wall time, as SQL Server's <c>SYSUTCDATETIME()</c> returns.
+    /// </summary>
+    public virtual object NowUtc(DateTime utc) => new TypedValue(DateTime.SpecifyKind(utc, DateTimeKind.Utc), DbType.DateTime2);
 
     public abstract TableSchema? ReadTable(DbConnection connection, TableName name);
     /// <summary>Resolves an explicitly configured Oracle sequence to its catalog spelling.</summary>
@@ -280,6 +285,9 @@ public sealed class SqliteDialect : SqlDialect
     }
 
     public override object Now(DateTime now) => now.ToString("yyyy-MM-dd HH:mm:ss", Invariant);
+
+    // ISO-8601 with Z: SQLite's date functions read it as UTC, and fixed-width text sorts in time order.
+    public override object NowUtc(DateTime utc) => utc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", Invariant);
 
     public override string CompileOnly(string statement) => "EXPLAIN " + statement;
 

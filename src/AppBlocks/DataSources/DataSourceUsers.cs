@@ -186,3 +186,62 @@ public interface IDataSourcePolicy
 {
     ValueTask<bool> IsAllowedAsync(DataSourceRequest request, CancellationToken ct);
 }
+
+/// <summary>
+/// A policy that governs only some requests, such as a plugin's own data sources. AppBlocks asks <see cref="Applies"/> first
+/// and skips the policy for any request it answers false; for the others the policy decides as any policy does. A policy that
+/// does not implement this interface is asked about every data source on every page.
+/// </summary>
+public interface IScopedDataSourcePolicy : IDataSourcePolicy
+{
+    /// <summary>Whether this policy decides the request. Answer from the request alone and quickly: it is asked for every operation.</summary>
+    bool Applies(DataSourceRequest request);
+}
+
+/// <summary>
+/// The requests a policy registered with <see cref="DataSourcePolicyExtensions.AddDataSourcePolicy{TPolicy}"/> governs: data sources
+/// whose alias starts with <paramref name="AliasPrefix"/>, ignoring case, and, when <paramref name="Pages"/> is given, only operations
+/// from those pages. Null for either matches everything.
+/// </summary>
+/// <remarks>
+/// The page is the one the operation came from. An API endpoint call has no page, so a page-scoped policy never governs it;
+/// scope by alias alone when the rule must hold wherever the data source is used.
+/// </remarks>
+public sealed record DataSourcePolicyScope(string? AliasPrefix = null, IReadOnlyCollection<Guid>? Pages = null)
+{
+    public bool Matches(DataSourceRequest request)
+        => (string.IsNullOrEmpty(AliasPrefix) || request.DataSource.StartsWith(AliasPrefix, StringComparison.OrdinalIgnoreCase))
+            && (Pages is null || Pages.Contains(request.Context.PageKey));
+}
+
+public static class DataSourcePolicyExtensions
+{
+    /// <summary>
+    /// Registers <typeparamref name="TPolicy"/> as an <see cref="IDataSourcePolicy"/> that AppBlocks asks only about the requests
+    /// <paramref name="scope"/> matches, so the class needs no early return for everything that is not its own. The class is made per
+    /// request scope, through dependency injection.
+    /// </summary>
+    public static IServiceCollection AddDataSourcePolicy<TPolicy>(this IServiceCollection services, DataSourcePolicyScope scope) where TPolicy : class, IDataSourcePolicy
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        services.AddScoped<IDataSourcePolicy>(provider => new ScopedPolicy(ActivatorUtilities.GetServiceOrCreateInstance<TPolicy>(provider), scope));
+        return services;
+    }
+
+    private sealed class ScopedPolicy(IDataSourcePolicy inner, DataSourcePolicyScope scope) : IScopedDataSourcePolicy
+    {
+        public bool Applies(DataSourceRequest request) => scope.Matches(request) && (inner is not IScopedDataSourcePolicy narrower || narrower.Applies(request));
+        public ValueTask<bool> IsAllowedAsync(DataSourceRequest request, CancellationToken ct) => inner.IsAllowedAsync(request, ct);
+    }
+
+    /// <summary>Whether every policy that governs the request allows it; a scoped policy whose scope does not match is skipped.</summary>
+    internal static async ValueTask<bool> AllowAsync(this IEnumerable<IDataSourcePolicy> policies, DataSourceRequest request, CancellationToken ct)
+    {
+        foreach (var policy in policies)
+        {
+            if (policy is IScopedDataSourcePolicy scoped && !scoped.Applies(request)) continue;
+            if (!await policy.IsAllowedAsync(request, ct)) return false;
+        }
+        return true;
+    }
+}

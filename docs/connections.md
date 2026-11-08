@@ -22,6 +22,27 @@ The reports companion defaults `InteractiveReport:SavedReports:Connection` to `A
 
 Named applications registered with `AddApplicationDatabase` also get their own SQLite file beside Umbraco's SQLite database by default. The default filename is `<connectionName>.sqlite.db`, or the registration's `defaultFile`. Existing default files under App_Data remain in use until deliberately moved, so upgrading does not substitute an empty database. Explicit named connection settings still win. Without a file-backed SQLite CMS, the fallback is App_Data.
 
+## Application databases
+
+An application with tables of its own registers its database and its schema together, and AppBlocks brings the schema up to date the first time the process opens the connection, before the caller's first statement:
+
+```csharp
+builder.AddAppBlocks(connections => connections.AddApplicationDatabase("NoticesDb",
+    ApplicationSchema.FromEmbedded(typeof(Notices).Assembly, "Schema")
+        .Once("seed-categories", (connection, transaction, dialect) => SeedCategories(connection, transaction))));
+```
+
+The schema is a folder per dialect (`sqlite`, `sqlserver`, `postgresql`, `oracle`), on disk with `ApplicationSchema.FromDirectory` or embedded with `FromEmbedded`. Each open of a new process works through it in this order:
+
+1. The version table `APP_SCHEMA` (`SCRIPT`, `HASH`, `APPLIED_AT`) is created if it is missing.
+2. **Ensure scripts**, the `*.sql` files of the dialect folder, run in file-name order at every process start, each in its own transaction with its `APP_SCHEMA` row. Write them to be safe to repeat: `CREATE TABLE IF NOT EXISTS`, or a check before each change. On SQLite an `ALTER TABLE ... ADD` whose column is already there counts as applied.
+3. **Run-once scripts**, the `*.sql` files of the dialect folder's `migrations` folder, run in file-name order, each exactly once per database. Each runs in one transaction with its row, recorded as `migrations/<file>` with the script's SHA-256. A later start finds the row and skips the script. Use them for changes that cannot be repeated, such as moving data or renaming a column.
+4. **C# steps** run in the order they were added. `Then(step)` runs at every start. `Once(name, step)` runs once per database, recorded as `once/<name>`, inside the transaction that records it: its commands set `command.Transaction` to the transaction it receives.
+
+A run-once script that has run must stay as it ran. When its text no longer matches its recorded hash, the ensure stops with an `ApplicationSchemaException` naming the script, and every open of the connection fails with it until someone decides. Restore the script and put the change in a new file, or check the database by hand and delete the script's `APP_SCHEMA` row so it runs again. The hash ignores a byte order mark and reads CRLF line endings as LF, so a checkout that converts line endings is the same script. A recorded script whose file is gone is ignored.
+
+A script or step that fails throws an `ApplicationSchemaException` naming it, leaves no row, and runs again on the next open. Each run-once script records its row before its statements, so a second process starting at the same moment waits for the first and then skips the script. Oracle commits around DDL, so there the row is written after the statements instead: a run-once script that fails partway on Oracle may leave part of its work behind, and two processes starting together against an empty Oracle schema may both try it. Start one process first after deploying a run-once script to Oracle.
+
 ## Database drivers
 
 AppBlocks ships no database driver. SQLite and SQL Server need nothing more, because Umbraco itself brings `Microsoft.Data.Sqlite` and `Microsoft.Data.SqlClient` into every site. For the other databases, the site installs the driver package and AppBlocks finds it by name at run time, as Interactive Reports does:

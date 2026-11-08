@@ -271,6 +271,54 @@ public sealed class DataSourceHandlerTests : IDisposable
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queries.AuthorizeAsync(definition, Context(Owner, new() { ["deny"] = "1" }), default));
     }
 
+    /// <summary>Answers reads with rows of its own: what its C# rule decides, here the orders of the caller, read through its own SQL.</summary>
+    private sealed class CodeRows : IDataSourceHandler
+    {
+        public string Alias => "orders.rules";
+        public int Reads { get; private set; }
+        public async ValueTask<IReadOnlyList<IReadOnlyDictionary<string, object?>>?> ReadAsync(DataSourceOperation operation, CancellationToken ct)
+        {
+            Reads++;
+            Assert.Equal(DataSourceAction.Query, operation.Action);
+            Assert.NotNull(operation.Connection);
+            if (operation.Context.Parameters?.GetValueOrDefault("engine") == "1") return null;
+            var mine = await operation.Sql.QueryAsync("SELECT ORDER_ID, CUSTOMER, STATUS FROM ORDERS WHERE OWNER = :USER_KEY", ct: ct);
+            // Column names in any case; a column the class leaves out is null; one the row source does not have is dropped.
+            return [.. mine.Select(row => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?> {
+                    ["order_id"] = row["ORDER_ID"], ["CUSTOMER"] = "Code: " + row["CUSTOMER"], ["STATUS"] = row["STATUS"], ["EXTRA"] = 1 }),
+                new Dictionary<string, object?> { ["ORDER_ID"] = 99L, ["CUSTOMER"] = "Code only" }];
+        }
+    }
+
+    [Fact]
+    public async Task A_class_can_answer_endpoint_and_list_reads_with_rows_of_its_own()
+    {
+        var handler = new CodeRows();
+        var definition = Orders(handler).Definition;
+        var queries = new DataSourceQueries(runtime, new Users(), [], null, new DataSourceHandlers([handler]));
+        var result = await queries.QueryAsync(definition, Context(Owner));
+        Assert.Equal(["Code: Hangar Co", "Code: Runway Ltd", "Code only"], result.Rows.Select(row => row["CUSTOMER"]));
+        Assert.Null(result.Rows[2]["STATUS"]);
+        Assert.False(result.Rows[0].ContainsKey("EXTRA"));
+        Assert.Contains(result.Columns, column => column.Name == "CUSTOMER" && column.Field == "customer");
+        Assert.Empty((await queries.QueryAsync(definition, Context(Other))).Rows.Where(row => row["CUSTOMER"] is string text && text.StartsWith("Code: ")));
+        // Null reads the row source as before.
+        Assert.Equal(["Hangar Co", "Runway Ltd"], (await queries.QueryAsync(definition, Context(Owner, new() { ["engine"] = "1" }))).Rows.Select(row => row["CUSTOMER"]));
+        // The row limit and the order apply to the class's rows as to the engine's.
+        await Assert.ThrowsAsync<DataSourceException>(() => queries.QueryAsync(definition, Context(Owner), maximumRows: 2));
+
+        var errors = new List<string>();
+        var endpoint = new AppBlocks.Api.ApiEndpointDefinition(Guid.NewGuid(), "orders", "Orders", AppBlocks.Api.ApiRouteTemplate.Parse("orders", errors)!, definition, true,
+            AppBlocks.Api.ApiEndpointShape.Collection, 10, [("ORDER_ID", true)], []);
+        var runner = new AppBlocks.Api.ApiEndpointRunner(queries, Microsoft.Extensions.Logging.Abstractions.NullLogger<AppBlocks.Api.ApiEndpointRunner>.Instance);
+        var answer = await runner.RunAsync(endpoint, Context(Owner).Member, new Dictionary<string, string>(), new Dictionary<string, string>(), default);
+        Assert.Equal(200, answer.Status);
+        var items = JsonSerializer.SerializeToElement(answer.Body).GetProperty("items").EnumerateArray().Select(item => item.GetProperty("orderId").GetDecimal()).ToArray();
+        Assert.Equal([99m, 2m, 1m], items);
+        var single = await runner.RunAsync(endpoint with { Shape = AppBlocks.Api.ApiEndpointShape.Single }, Context(Owner).Member, new Dictionary<string, string>(), new Dictionary<string, string>(), default);
+        Assert.Equal("Code only", JsonSerializer.SerializeToElement(single.Body).GetProperty("customer").GetString());
+    }
+
     [Fact]
     public async Task A_class_implements_only_the_hooks_it_needs_and_its_statements_open_a_connection_when_none_is()
     {
@@ -421,7 +469,7 @@ public sealed class DataSourceHandlerTests : IDisposable
         // An update of the master with an update and a delete of its rows; a row of another master is not found there.
         var bolt = rows[0];
         var updated = await orders.SaveWithDetailsAsync(key, Json(new { customer = "Tower Two" }), "1",
-            [Batch(lines, Change(RowOperation.Update, bolt.Key, bolt.Version, new { quantity = "5" }), Change(RowOperation.Delete, rows[1].Key, rows[1].Version))], Context(Owner), default);
+            [Batch(lines, Change(RowOperation.Update, bolt.Key, bolt.Checksum, new { quantity = "5" }), Change(RowOperation.Delete, rows[1].Key, rows[1].Checksum))], Context(Owner), default);
         Assert.Equal(200, updated.Status);
         Assert.Equal("Tower Two", updated.Master.Record!.Values["customer"]);
         Assert.Equal("5", Assert.Single(updated.Details![0].Rows!).Values["quantity"]);
@@ -450,12 +498,12 @@ public sealed class DataSourceHandlerTests : IDisposable
         var lines = Lines(("concurrencyMode", detailChecksum ? DataSourceConcurrency.Checksum : DataSourceConcurrency.LastSaveWins));
         var master = (await orders.LoadAsync("1", Context(Owner), default)).Record!;
         var detail = (await lines.LoadAsync("1", Context(Owner), default)).Record!;
-        var first = await orders.SaveWithDetailsAsync("1", Json(new { customer = "First save" }), master.Version,
-            [Batch(lines, Change(RowOperation.Update, "1", detail.Version, new { quantity = "4" }))], Context(Owner), default);
+        var first = await orders.SaveWithDetailsAsync("1", Json(new { customer = "First save" }), master.Checksum,
+            [Batch(lines, Change(RowOperation.Update, "1", detail.Checksum, new { quantity = "4" }))], Context(Owner), default);
         Assert.Equal(200, first.Status);
 
-        var last = await orders.SaveWithDetailsAsync("1", Json(new { customer = "Last save" }), master.Version,
-            [Batch(lines, Change(RowOperation.Update, "1", detail.Version, new { quantity = "5" }))], Context(Owner), default);
+        var last = await orders.SaveWithDetailsAsync("1", Json(new { customer = "Last save" }), master.Checksum,
+            [Batch(lines, Change(RowOperation.Update, "1", detail.Checksum, new { quantity = "5" }))], Context(Owner), default);
         var detectsConflicts = masterChecksum || detailChecksum;
         Assert.Equal(detectsConflicts ? 409 : 200, last.Status);
         Assert.Equal(detectsConflicts ? "First save" : "Last save", Scalar("SELECT CUSTOMER FROM ORDERS WHERE ORDER_ID = 1"));
@@ -548,8 +596,8 @@ public sealed class DataSourceHandlerTests : IDisposable
         Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM ORDERS WHERE CUSTOMER = 'Closed detail'"));
     }
 
-    private static DataSourceChange Change(RowOperation operation, string? key = null, string? version = null, object? values = null)
-        => new(operation, key, version, Json(values ?? new { }));
+    private static DataSourceChange Change(RowOperation operation, string? key = null, string? checksum = null, object? values = null)
+        => new(operation, key, checksum, Json(values ?? new { }));
 
     private static DataSourceDetailBatch Batch(SqlDataSource source, params DataSourceChange[] changes)
         => new(Guid.NewGuid(), source, "orderId", changes, 100, Context(Owner));

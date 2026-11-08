@@ -5,13 +5,24 @@ using AppBlocks.Forms;
 namespace AppBlocks.DataSources;
 
 public sealed record DataSourcePreviewColumn(string Field, string Column, string Kind, bool ReadOnly, bool Required);
+/// <param name="ApplicationNames">The <c>:APP.</c> names the bind variable providers declare, for the editor to give sample values; null when they are not known.</param>
+/// <param name="Warnings">What publishing would warn about, such as an <c>:APP.</c> name no provider declares.</param>
 public sealed record DataSourcePreviewResult(IReadOnlyList<DataSourcePreviewColumn> Columns,
-    IReadOnlyDictionary<string, object?>? Row, IReadOnlyList<string> Errors);
+    IReadOnlyDictionary<string, object?>? Row, IReadOnlyList<string> Errors, IReadOnlyList<string>? ApplicationNames = null, IReadOnlyList<string>? Warnings = null);
 
 /// <summary>Tests the editor's current definition with sample bind values. Only the row source is executed.</summary>
-public sealed class DataSourcePreview(DataSourceRuntime runtime)
+public sealed class DataSourcePreview(DataSourceRuntime runtime, BindVariableProviders? providers = null)
 {
     public async Task<DataSourcePreviewResult> TestAsync(DataSourceDefinition definition, DataSourceUser editor,
+        IReadOnlyDictionary<string, JsonElement> samples, CancellationToken ct)
+    {
+        var result = await RunAsync(definition, editor, samples, ct);
+        var declared = providers?.DeclaredNames?.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        var warning = providers?.UndeclaredWarning(definition.ApplicationNames());
+        return result with { ApplicationNames = declared, Warnings = warning is null ? [] : [warning] };
+    }
+
+    private async Task<DataSourcePreviewResult> RunAsync(DataSourceDefinition definition, DataSourceUser editor,
         IReadOnlyDictionary<string, JsonElement> samples, CancellationToken ct)
     {
         var errors = new List<string>();
@@ -42,15 +53,24 @@ public sealed class DataSourcePreview(DataSourceRuntime runtime)
         {
             if (values.TryGetValue(variable.ToString(), out var sample))
             {
-                if (variable.Kind != BindVariableKind.Now || sample is null) return sample;
-                if (!DateTime.TryParse(Convert.ToString(sample, CultureInfo.InvariantCulture), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var instant))
+                if (variable.Kind is not (BindVariableKind.Now or BindVariableKind.NowUtc) || sample is null) return sample;
+                var text = Convert.ToString(sample, CultureInfo.InvariantCulture);
+                if (variable.Kind == BindVariableKind.NowUtc)
+                {
+                    // A sample without a zone is already UTC; one with an offset is converted.
+                    if (!DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var moment))
+                        throw new DataSourceException("NOW_UTC needs a date and time value.");
+                    return plan.Dialect.NowUtc(moment.UtcDateTime);
+                }
+                if (!DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var instant))
                     throw new DataSourceException("NOW needs a date and time value.");
                 return plan.Dialect.Now(instant);
             }
             return variable.Kind switch {
                 BindVariableKind.UserKey => editor.Key, BindVariableKind.UserSid => editor.Sid,
                 BindVariableKind.UserName => editor.Name, BindVariableKind.UserEmail => editor.Email,
-                BindVariableKind.UserGroups => editor.Groups, BindVariableKind.Now => plan.Dialect.Now(now), _ => null,
+                BindVariableKind.UserGroups => editor.Groups, BindVariableKind.Now => plan.Dialect.Now(now.DateTime),
+                BindVariableKind.NowUtc => plan.Dialect.NowUtc(now.UtcDateTime), _ => null,
             };
         }
         try

@@ -352,7 +352,7 @@ internal sealed class OrdersResource(ConnectionCatalog connections) : IFormResou
         return await LoadAsync(id, context, ct);
     }
 
-    public async Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct)
+    public async Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct)
     {
         if (context.Member.Identity?.AuthenticationType != IdentityConstants.ApplicationScheme) return FormResult.Denied();
         if (!long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var id)) return FormResult.Missing();
@@ -367,7 +367,7 @@ internal sealed class OrdersResource(ConnectionCatalog connections) : IFormResou
 
     private static string? Customer(JsonElement input)
         => input.TryGetProperty("customer", out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } customer && customer != "Refused" ? customer : null;
-    public Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+    public Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
 }
 
 /// <summary>Answers Umbraco's route to a block page with AppBlocks' view component, which a site's own template would wrap.</summary>
@@ -483,8 +483,8 @@ internal sealed record AttachmentsResponse(HttpResponseMessage Response, JsonEle
     public string? Problem => Http.Text(Body, "detail") ?? Http.Text(Body, "title");
 }
 
-/// <summary>One change of a batch: <c>create</c> with values, <c>update</c> with the key, the version and the changed values, or <c>delete</c> with the key and the version.</summary>
-internal sealed record TabularChange(string Operation, string? Key = null, string? Version = null, object? Values = null);
+/// <summary>One change of a batch: <c>create</c> with values, <c>update</c> with the key, the checksum and the changed values, or <c>delete</c> with the key and the checksum.</summary>
+internal sealed record TabularChange(string Operation, string? Key = null, string? Checksum = null, object? Values = null);
 
 /// <summary>Drives <c>/api/tabular</c> as the Tabular form block's runtime does: the list's antiforgery token goes on every save, and the page's parameters travel as a query string.</summary>
 internal sealed class TabularClient(HttpClient client, string pathBase, Guid pageKey, Guid blockKey)
@@ -505,7 +505,7 @@ internal sealed class TabularClient(HttpClient client, string pathBase, Guid pag
         {
             Content = JsonContent.Create(new {
                 submissionKey = submissionKey ?? Guid.NewGuid().ToString(),
-                changes = changes.Select(change => new { operation = change.Operation, key = change.Key, version = change.Version, values = change.Values }).ToArray(),
+                changes = changes.Select(change => new { operation = change.Operation, key = change.Key, checksum = change.Checksum, values = change.Values }).ToArray(),
             }),
         };
         request.Headers.Add("RequestVerificationToken", antiforgeryToken

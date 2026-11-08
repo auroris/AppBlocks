@@ -72,7 +72,7 @@ public sealed class ColorPickerTests
         var state = await client.GetFromJsonAsync<JsonElement>(api);
         client.DefaultRequestHeaders.Add("RequestVerificationToken", state.GetProperty("antiforgeryToken").GetString());
         async Task<HttpResponseMessage> Send(object values, bool update = false) => await client.SendAsync(new HttpRequestMessage(update ? HttpMethod.Put : HttpMethod.Post, api + (update ? "/1" : "")) {
-            Content = JsonContent.Create(new { values, definitionVersion = state.GetProperty("definitionVersion").GetString(), version = "1", submissionKey = Guid.NewGuid().ToString() }),
+            Content = JsonContent.Create(new { values, definitionVersion = state.GetProperty("definitionVersion").GetString(), checksum = "1", submissionKey = Guid.NewGuid().ToString() }),
         });
         foreach (var color in new[] { "#000000", "#ffffff", "#2A5d8F" })
         {
@@ -118,7 +118,7 @@ public sealed class ColorPickerTests
             Saved = input.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.GetString());
             return LoadAsync("1", context, ct);
         }
-        public Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct) => CreateAsync(input, context, ct);
-        public Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+        public Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct) => CreateAsync(input, context, ct);
+        public Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
     }
 }

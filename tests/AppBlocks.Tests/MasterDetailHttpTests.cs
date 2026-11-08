@@ -49,10 +49,10 @@ public sealed class MasterDetailHttpTests
         var state = await client.GetFromJsonAsync<JsonElement>(api);
         var token = state.GetProperty("antiforgeryToken").GetString()!;
         var definitionVersion = state.GetProperty("definitionVersion").GetString()!;
-        Task<HttpResponseMessage> Send(HttpMethod method, string url, object values, string? version, params object[] details)
+        Task<HttpResponseMessage> Send(HttpMethod method, string url, object values, string? checksum, params object[] details)
         {
             var request = new HttpRequestMessage(method, url) {
-                Content = JsonContent.Create(new { values, definitionVersion, version, submissionKey = Guid.NewGuid().ToString(), details }),
+                Content = JsonContent.Create(new { values, definitionVersion, checksum, submissionKey = Guid.NewGuid().ToString(), details }),
             };
             request.Headers.Add("RequestVerificationToken", token);
             return client.SendAsync(request);
@@ -112,7 +112,7 @@ public sealed class MasterDetailHttpTests
         Assert.True(list.IsSuccess, list.Problem);
         Assert.Equal(revision, list.Body.GetProperty("revision").GetString());
         var gear = list.Rows[0];
-        var saved = await lines.SaveAsync([new("update", gear.GetProperty("key").GetString(), gear.GetProperty("version").GetString(), new { quantity = "6" })], $"id={key}");
+        var saved = await lines.SaveAsync([new("update", gear.GetProperty("key").GetString(), gear.GetProperty("checksum").GetString(), new { quantity = "6" })], $"id={key}");
         Assert.True(saved.IsSuccess, saved.Body.ToString());
         Assert.Equal(6L, Scalar(site, $"SELECT QUANTITY FROM ORDER_LINES WHERE ORDER_ID = {key} AND ITEM = 'Gear'"));
     }

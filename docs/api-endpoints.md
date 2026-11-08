@@ -10,7 +10,7 @@ Create an **API endpoint** and publish it. Where it sits in the content tree is 
 | --- | --- |
 | **Alias** | The endpoint's name in logs and diagnostics, such as `orders.lines`. Unique among published endpoints. |
 | **Route** | The path below the base path, such as `orders/:id/lines`. The editor shows the full URL it will have. |
-| **SQL data source** | A published SQL data source to read, whose access, row restriction, policies and backing class apply. Leave it empty to give the endpoint SQL of its own. |
+| **SQL data source** | A published SQL data source to read, whose access, row restriction, policies and backing class apply; a backing class can answer with rows of its own, as [Answering from code](#answering-from-code) describes. Leave it empty to give the endpoint SQL of its own. |
 | **Connection** and **SQL** | Only without a data source: the database, and a table name or SELECT, with the same rules and bind variables as a data source's row source. |
 | **Query parameters** | The `:PARAM.` names the query string may fill, separated by commas. |
 | **Shape** | **Collection**, the default, or **Single**. |
@@ -28,7 +28,7 @@ A route has up to eight segments separated by `/`. Each is a literal, of letters
 
 When several routes match a request, the one with more literal segments wins, and then the one whose first literal comes earlier: `orders/latest` answers before `orders/:id`, and `orders/:id` before `:kind/latest`.
 
-A `:name` segment binds as `:PARAM.name` in the SQL. The query string fills any other `:PARAM.` listed under **Query parameters**, and a route segment wins over a query parameter of the same name. Nothing is read from request headers. `:USER_*`, `:NOW` and `:APP.` values work as they do everywhere else. A segment value that is empty after decoding is a 404.
+A `:name` segment binds as `:PARAM.name` in the SQL. The query string fills any other `:PARAM.` listed under **Query parameters**, and a route segment wins over a query parameter of the same name. Nothing is read from request headers. `:USER_*`, `:NOW`, `:NOW_UTC` and `:APP.` values work as they do everywhere else. A segment value that is empty after decoding is a 404.
 
 ```sql
 SELECT LINE_ID, ITEM, QUANTITY, UNIT_PRICE
@@ -48,6 +48,28 @@ An endpoint has no page, so Umbraco Public Access does not apply to it. The read
 - The row restriction, every registered `IDataSourcePolicy` and the backing class's `QueryAsync` apply. A policy sees `DataSourceAction.Query`, and a context whose page and form keys are `Guid.Empty`, with the bound parameters.
 
 The caller is the signed-in Member and backoffice User, as for the blocks' endpoints; a cookie for a disabled or locked-out account stays refused. A refused request is 401 for a caller without an account and 403 for a signed-in one. Public on an endpoint means public to the internet: choose it only for data you would put on a public page.
+
+## Answering from code
+
+An endpoint can answer with rows that C# decides, so an application whose rules live in code keeps one copy of them. Select a published SQL data source whose **Backing class** implements `ReadAsync` of `IDataSourceHandler`. The data source's row source still gives the endpoint its columns, field aliases and kinds, and its access, every policy and the class's `QueryAsync` still decide who may read. The rows come from the class:
+
+```csharp
+public sealed class NoticeRules(NoticeQueries notices) : IDataSourceHandler
+{
+    public string Alias => "notices.rules";
+
+    // Keyed by the row source's column names, in any letter case.
+    public async ValueTask<IReadOnlyList<IReadOnlyDictionary<string, object?>>?> ReadAsync(DataSourceOperation operation, CancellationToken ct)
+        => (await notices.CurrentAsync(operation.User, operation.Context.Parameters, ct))
+            .Select(notice => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?> {
+                ["NOTICE_ID"] = notice.Id, ["TITLE"] = notice.Title, ["POSTED_AT"] = notice.PostedAt })
+            .ToArray();
+}
+```
+
+AppBlocks shapes the rows as it shapes the row source's: a column the class leaves out is `null`, a key that is not a column of the row source is dropped, **Order by** sorts them, **Maximum rows** holds a collection to its limit, and **Single** answers with the first. Returning `null` reads the row source as usual, so a class can answer some requests and leave others to SQL. `operation.Context.Parameters` holds the route and query parameters, and `operation.Sql` runs the class's own SQL on the endpoint's connection with the same bind variables.
+
+The row restriction is SQL, so it cannot filter rows from code; the class applies the same rule itself. Lists of values, schedules and paper reports read through the same path and get the class's rows too. An Interactive Report runs the row source's SQL itself and does not ask the class.
 
 ## Responses
 

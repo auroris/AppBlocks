@@ -103,20 +103,20 @@ public sealed class OracleLiveTests(ITestOutputHelper output)
             Assert.Equal("24.68", created.Record.Values["total"]);
             Assert.Equal(true, created.Record.Values["done"]);
             Assert.Equal("2026-12-24", created.Record.Values["dueDate"]);
-            Assert.Equal(32, created.Record.Version!.Length);
+            Assert.Equal(32, created.Record.Checksum!.Length);
             Assert.Equal(200, (await source.LoadAsync("1", context, default)).Status);
 
             var updated = await source.UpdateAsync("1", JsonSerializer.SerializeToElement(new {
                 title = "Updated through AppBlocks", amount = "23.45", done = false,
-            }), created.Record.Version!, context, default);
+            }), created.Record.Checksum!, context, default);
             Assert.True(updated.Status == 200, JsonSerializer.Serialize(updated));
-            Assert.NotEqual(created.Record.Version, updated.Record!.Version);
+            Assert.NotEqual(created.Record.Checksum, updated.Record!.Checksum);
             Assert.Equal("46.9", updated.Record.Values["total"]);
             Assert.Equal(false, updated.Record.Values["done"]);
             Assert.Equal("owner", await Scalar(database, $"SELECT UPDATED_BY FROM {table} WHERE ID = 1"));
             Assert.NotNull(await Scalar(database, $"SELECT UPDATED_AT FROM {table} WHERE ID = 1"));
-            Assert.Equal(409, (await source.UpdateAsync("1", JsonSerializer.SerializeToElement(new { title = "Stale" }), created.Record.Version, context, default)).Status);
-            Assert.Equal(409, (await source.DeleteAsync("1", created.Record.Version, context, default)).Status);
+            Assert.Equal(409, (await source.UpdateAsync("1", JsonSerializer.SerializeToElement(new { title = "Stale" }), created.Record.Checksum, context, default)).Status);
+            Assert.Equal(409, (await source.DeleteAsync("1", created.Record.Checksum, context, default)).Status);
 
             await Execute(database, $"INSERT INTO {table} (ID, TITLE, OWNER_NAME) VALUES ({sequence}.NEXTVAL, 'Other owner', 'someone-else')");
             Assert.Equal(404, (await source.LoadAsync("2", context, default)).Status);
@@ -157,7 +157,7 @@ public sealed class OracleLiveTests(ITestOutputHelper output)
             Assert.Contains(runtime.Validate(invalid), error => error.Contains("does not compile", StringComparison.Ordinal));
             Assert.Equal("Updated through AppBlocks", await Scalar(database, $"SELECT TITLE FROM {table} WHERE ID = 1"));
 
-            Assert.Equal(204, (await source.DeleteAsync("1", updated.Record.Version, context, default)).Status);
+            Assert.Equal(204, (await source.DeleteAsync("1", updated.Record.Checksum, context, default)).Status);
             Assert.Equal(404, (await source.LoadAsync("1", context, default)).Status);
             Assert.Equal(1m, Convert.ToDecimal(await Scalar(database, $"SELECT COUNT(*) FROM {table}")));
             output.WriteLine("Verified table/view discovery, 11g metadata, sequence keys, typed CRUD, concurrency, row restrictions, rollback, previews, parameterized queries and compile-only validation.");

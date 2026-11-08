@@ -18,7 +18,7 @@ namespace AppBlocks.Blocks;
 /// <param name="Sid">The Windows SID the account is linked to, its external login key; null for an account that only has a password.</param>
 /// <param name="Name">The member's or backoffice user's username.</param>
 /// <param name="Email">The account's email address.</param>
-/// <param name="Now">The web server's local date and time when the page rendered.</param>
+/// <param name="Now">The web server's local date and time when the page rendered, with its offset, from which <c>:NOW_UTC</c> takes the UTC moment.</param>
 /// <param name="Query">The page's query string, which <c>:PARAM.name</c> reads.</param>
 /// <param name="Application">The values the application's bind variable providers computed for the page, which <c>:APP.name</c> reads; null where none ran.</param>
 public sealed partial record AppBindVariables(string Key, string? Sid, string? Name, string? Email, DateTimeOffset Now, IQueryCollection Query, IReadOnlyDictionary<string, object?>? Application = null)
@@ -29,7 +29,8 @@ public sealed partial record AppBindVariables(string Key, string? Sid, string? N
     /// that has none or a parameter the address does not carry, resolves to null, which leaves the field as the
     /// resource initialised it. <c>:NOW</c> is written as the kind's own value: a date, a time, an ISO date and
     /// time with its offset, or for text the date and time in the invariant <c>yyyy-MM-dd HH:mm</c>; a number or a
-    /// checkbox has no "now".
+    /// checkbox has no "now". <c>:NOW_UTC</c> is the same moment in UTC: the UTC date or time, and for a date-time or
+    /// text field the ISO form with <c>Z</c>, such as <c>2026-11-01T07:30:00Z</c>.
     /// </summary>
     public string? Resolve(string? value, string kind)
     {
@@ -50,6 +51,12 @@ public sealed partial record AppBindVariables(string Key, string? Sid, string? N
                     "time" => Now.ToString("HH:mm", CultureInfo.InvariantCulture),
                     "datetime" => Now.ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture),
                     "text" => Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
+                    _ => null,
+                },
+                "NOW_UTC" => kind switch {
+                    "date" => Now.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    "time" => Now.UtcDateTime.ToString("HH:mm", CultureInfo.InvariantCulture),
+                    "datetime" or "text" => FieldValues.UtcText(Now),
                     _ => null,
                 },
                 // Not one of the variables, so the editor meant the text itself.

@@ -99,6 +99,9 @@ public sealed class CodeRecipeTests
             Assert.True(problems.Count == 0, string.Join("\n", problems) + "\n\n" + code);
             Assert.Contains("a class with no check is public", code);
             Assert.Contains("CanWrite(", code);
+            // Only a recipe whose groups are all Member Groups lets AppBlocks turn everyone else away first.
+            if (kind == CodeRecipeKind.FormClass)
+                Assert.Contains($"public override bool RequireMember => {(access == "specific member groups" ? "true" : "false")};", code);
         }
     }
 
@@ -202,32 +205,32 @@ public sealed class CodeRecipeTests
         Assert.True(record.Capabilities.Update);
 
         var loaded = await form.LoadAsync("1", Caller("1002"), default);
-        Assert.Equal(record.Version, loaded.Record!.Version);
+        Assert.Equal(record.Checksum, loaded.Record!.Checksum);
         Assert.False(loaded.Record.Capabilities.Delete);
         Assert.Equal(404, (await form.LoadAsync("99", Caller("1002"), default)).Status);
         Assert.Equal(404, (await form.LoadAsync("not a key", Caller("1002"), default)).Status);
 
-        var updated = await form.UpdateAsync("1", Json(new { customer = "Runway Ltd", status = "PAID", paid = false }), record.Version!, Caller("1001"), default);
+        var updated = await form.UpdateAsync("1", Json(new { customer = "Runway Ltd", status = "PAID", paid = false }), record.Checksum!, Caller("1001"), default);
         Assert.Equal(200, updated.Status);
         Assert.Equal("Runway Ltd", updated.Record!.Values["customer"]);
         Assert.Equal(false, updated.Record.Values["paid"]);
         if (useChecksum)
         {
-            Assert.NotEqual(record.Version, updated.Record.Version);
-            Assert.Equal(409, (await form.UpdateAsync("1", Json(new { customer = "Stale", status = "NEW" }), record.Version, Caller("1001"), default)).Status);
+            Assert.NotEqual(record.Checksum, updated.Record.Checksum);
+            Assert.Equal(409, (await form.UpdateAsync("1", Json(new { customer = "Stale", status = "NEW" }), record.Checksum, Caller("1001"), default)).Status);
             Assert.Equal(409, (await form.DeleteAsync("1", null, Caller("1001"), default)).Status);
-            Assert.Equal(409, (await form.DeleteAsync("1", record.Version, Caller("1001"), default)).Status);
+            Assert.Equal(409, (await form.DeleteAsync("1", record.Checksum, Caller("1001"), default)).Status);
         }
         else
         {
-            Assert.Null(record.Version);
-            Assert.Null(updated.Record.Version);
+            Assert.Null(record.Checksum);
+            Assert.Null(updated.Record.Checksum);
             var last = await form.UpdateAsync("1", Json(new { customer = "Last save", status = "NEW" }), null, Caller("1001"), default);
             Assert.Equal(200, last.Status);
             Assert.Equal("Last save", last.Record!.Values["customer"]);
         }
-        Assert.Equal(403, (await form.DeleteAsync("1", updated.Record.Version!, Caller("1002"), default)).Status);
-        Assert.Equal(204, (await form.DeleteAsync("1", updated.Record.Version!, Caller("1001"), default)).Status);
+        Assert.Equal(403, (await form.DeleteAsync("1", updated.Record.Checksum!, Caller("1002"), default)).Status);
+        Assert.Equal(204, (await form.DeleteAsync("1", updated.Record.Checksum!, Caller("1001"), default)).Status);
         Assert.Equal(404, (await form.LoadAsync("1", Caller("1002"), default)).Status);
     }
 }

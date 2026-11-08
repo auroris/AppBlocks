@@ -80,10 +80,10 @@ public sealed class CodeCompilationTests : IDisposable
             public override IReadOnlyList<FormField> Fields => [new("title", "Title", "text", Required: true, MaxLength: 20)];
             public override Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Missing());
             public override Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Missing());
-            public override Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+            public override Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
             protected override Task<FormResult> CreateAsync(NoteInput input, FormExecutionContext context, CancellationToken ct)
                 => Task.FromResult(FormResult.Ok(new FormRecord("1", "1", new Dictionary<string, object?> { ["title"] = input.Title }, new())));
-            protected override Task<FormResult> UpdateAsync(string key, NoteInput input, string? version, FormExecutionContext context, CancellationToken ct)
+            protected override Task<FormResult> UpdateAsync(string key, NoteInput input, string? checksum, FormExecutionContext context, CancellationToken ct)
                 => Task.FromResult(FormResult.Denied());
         }
 
@@ -306,8 +306,8 @@ public sealed class CodeCompilationTests : IDisposable
         public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
         public Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
         public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
-        public Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
-        public Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+        public Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+        public Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
     }
 
     private sealed class SiteRules : IDataSourceHandler { public string Alias => "site.rules"; }

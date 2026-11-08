@@ -66,6 +66,8 @@ public sealed class PostgreSqlDialect : SqlDialect
     }
 
     public override object Now(DateTime now) => new TypedValue(DateTime.SpecifyKind(now, DateTimeKind.Unspecified), DbType.DateTime2);
+    // A timestamptz, the moment itself: Npgsql writes an offset of zero as timestamp with time zone.
+    public override object NowUtc(DateTime utc) => new TypedValue(new DateTimeOffset(DateTime.SpecifyKind(utc, DateTimeKind.Unspecified), TimeSpan.Zero), DbType.DateTimeOffset);
 
     public override TableSchema? ReadTable(DbConnection connection, TableName name)
     {

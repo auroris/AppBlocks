@@ -372,8 +372,8 @@ internal sealed class RecordingContact(ContactCalls calls) : IFormResource
     public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Ok(Record(null)));
     public Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct) => Task.FromResult(Called("load", null, context, key));
     public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct) => Task.FromResult(Called("create", input.GetRawText(), context, null));
-    public Task<FormResult> UpdateAsync(string key, JsonElement input, string? version, FormExecutionContext context, CancellationToken ct) => Task.FromResult(Called("update", input.GetRawText(), context, key));
-    public Task<FormResult> DeleteAsync(string key, string? version, FormExecutionContext context, CancellationToken ct)
+    public Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(Called("update", input.GetRawText(), context, key));
+    public Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct)
     {
         Called("delete", null, context, key);
         return Task.FromResult(new FormResult(204));

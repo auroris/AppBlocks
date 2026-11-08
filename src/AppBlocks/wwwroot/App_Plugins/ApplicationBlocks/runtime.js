@@ -351,7 +351,7 @@ function mountForm(form) {
                 result = await request(requestUrl(state.record.key), {
                     method: remove ? "DELETE" : state.record.key ? "PUT" : "POST",
                     headers: { RequestVerificationToken: state.antiforgeryToken },
-                    body: { values, definitionVersion: state.definitionVersion, version: state.record.version, submissionKey, formData, ...(details.length ? { details } : {}) },
+                    body: { values, definitionVersion: state.definitionVersion, checksum: state.record.checksum, submissionKey, formData, ...(details.length ? { details } : {}) },
                 });
             } catch (error) {
                 if (!(error instanceof ApiError)) throw error;
@@ -752,10 +752,10 @@ function mountTabular(root) {
             if (row.isNew) {
                 // A new row marked for deletion was never saved, so it is simply left out.
                 if (!row.deleted) sent.push([row, { operation: "create", values: Object.fromEntries([...row.inputs].map(([key, control]) => [key, read(control)])) }]);
-            } else if (row.deleted) sent.push([row, { operation: "delete", key: row.record.key, version: row.record.version }]);
+            } else if (row.deleted) sent.push([row, { operation: "delete", key: row.record.key, checksum: row.record.checksum }]);
             else {
                 const values = Object.fromEntries([...row.inputs].filter(([key, control]) => read(control) !== row.initial.get(key)).map(([key, control]) => [key, read(control)]));
-                if (Object.keys(values).length) sent.push([row, { operation: "update", key: row.record.key, version: row.record.version, values }]);
+                if (Object.keys(values).length) sent.push([row, { operation: "update", key: row.record.key, checksum: row.record.checksum, values }]);
             }
         }
         return sent;

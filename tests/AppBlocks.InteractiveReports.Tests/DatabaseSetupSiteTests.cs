@@ -194,7 +194,7 @@ public sealed class DatabaseSetupSiteTests
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/forms/{SetupSite.PageKey}/{SetupSite.FormKey}/1?taskId=1") {
             Content = JsonContent.Create(new {
                 values = new { title }, definitionVersion = form.GetProperty("definitionVersion").GetString(),
-                version = form.GetProperty("record").GetProperty("version").GetString(), submissionKey = Guid.NewGuid().ToString(),
+                checksum = form.GetProperty("record").GetProperty("checksum").GetString(), submissionKey = Guid.NewGuid().ToString(),
             }),
         };
         request.Headers.Add("RequestVerificationToken", token);
