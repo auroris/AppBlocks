@@ -56,6 +56,7 @@ These never reach stored content, but logs and diagnostics show them.
 | --- | --- | --- |
 | `apphost:data-source:` | `appblocks:data-source:` | The request-scoped bind tokens of a report over a data source |
 | `apphost-preview` | `appblocks-preview` | The claim a previewed report source's context parameters read, and the `appblocks-preview-` names of previews |
+| `AppHostPage:` | `AppBlocksPage:` | The authorization policy names that bind a report block to its page |
 
 ## Settings
 

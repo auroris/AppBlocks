@@ -140,7 +140,7 @@ The browser runtime formats dates, times and file sizes for the page's language,
 | `colorFormat` | Enter a color in #RRGGBB format, such as #2a5d8f. |
 | `honeypotLabel` | Leave this empty |
 | `shuttleAvailable` | Available |
-| `shuttleSelected` | Selected (in order) |
+| `shuttleSelectedHeading` | Selected (in order) |
 | `shuttleMoveItems` | Move items |
 | `shuttleAdd` | Add → |
 | `shuttleAddAll` | Add all → |
@@ -188,5 +188,3 @@ The browser runtime formats dates, times and file sizes for the page's language,
 | `scheduleRowsHidden` | {0} rows without bars in this window are not shown. |
 
 `tabularAddRow` and `tabularSaveRows` apply while the block's own **Add label** and **Save label** keep their defaults; a label the editor wrote is shown as written.
-
-`shuttleSelected` is one id for two texts: the runtime's count of selected items and the server's heading over the selected list. A replacement shows in both places.

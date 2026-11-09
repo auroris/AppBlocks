@@ -220,7 +220,7 @@ else if (Model.Form is not null && AppBlockSchema.FieldAliases.Contains(alias))
                                 <button type="button" data-shuttle-action="remove-all" disabled="@readOnly">@Text["shuttleRemoveAll", "← Remove all"]</button>
                             </div>
                             <div class="app-shuttle-list">
-                                <label for="@id-selected">@Text["shuttleSelected", "Selected (in order)"]</label>
+                                <label for="@id-selected">@Text["shuttleSelectedHeading", "Selected (in order)"]</label>
                                 <select id="@id-selected" data-shuttle-selected multiple size="8" disabled="@readOnly" aria-required="@required.ToString().ToLowerInvariant()" aria-describedby="@id-help @id-error"></select>
                             </div>
                             <div class="app-shuttle-actions" aria-label="@Text["shuttleReorder", "Reorder selected items"]">

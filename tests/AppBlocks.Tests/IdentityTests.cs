@@ -315,7 +315,7 @@ public sealed class IdentityTests
         var blocks = Stub<IPublishedPropertyType>((method, _) => method.Name == "get_EditorAlias" ? "Umbraco.BlockGrid" : throw new NotImplementedException(method.Name));
         var type = Stub<IPublishedContentType>((method, _) => method.Name == "get_PropertyTypes" ? new[] { blocks } : throw new NotImplementedException(method.Name));
         var page = Stub<IPublishedContent>((method, _) => method.Name switch {
-            "get_Id" => 42, "get_Key" => pageKey, "get_ContentType" => type, _ => throw new NotImplementedException(method.Name),
+            "get_Id" => 42, "get_Key" => pageKey, "get_Path" => "-1,42", "get_ContentType" => type, _ => throw new NotImplementedException(method.Name),
         });
         var cache = Stub<Umbraco.Cms.Core.PublishedCache.IPublishedContentCache>((method, args) => method.Name == "GetByIdAsync" && Equals(args![0], pageKey)
             ? Task.FromResult<IPublishedContent?>(page) : throw new NotImplementedException(method.Name));
@@ -324,7 +324,7 @@ public sealed class IdentityTests
             ? new Umbraco.Cms.Core.UmbracoContextReference(umbraco, false, Stub<Umbraco.Cms.Core.Web.IUmbracoContextAccessor>(Never)) : throw new NotImplementedException(method.Name));
         var checker = Stub<IPublicAccessChecker>((method, _) => method.Name == "HasMemberAccessToContentAsync" ? Task.FromResult(memberAccess) : throw new NotImplementedException(method.Name));
         var http = new HttpContextAccessor();
-        var access = new AppPageAccess(new AppBlockContent(factory, http), checker, http, new ApplicationAccessPolicy(users), Stub<IPublicAccessService>(Never), []);
+        var access = new AppPageAccess(new AppBlockContent(factory, http), checker, http, new ApplicationAccessPolicy(users), Stub<IPublicAccessService>((method, _) => method.Name == "IsProtected" ? Attempt<PublicAccessEntry>.Fail() : throw new NotImplementedException(method.Name)), []);
         using var services = new ServiceCollection().AddSingleton(authentication).AddSingleton(access).BuildServiceProvider();
         http.HttpContext = new DefaultHttpContext { RequestServices = services };
         var handler = new AppPageAuthorizationHandler(http);
@@ -335,8 +335,8 @@ public sealed class IdentityTests
             return context.HasSucceeded;
         }
         var accepted = memberAccess == PublicAccessStatus.AccessAccepted;
-        // A backoffice-only route strips the Member, while the page still finds the Member cookie and answers Member first.
-        Assert.Equal(accepted, await Admits(backOffice));
+        // A backoffice-only route strips the Member on purpose, so the Member cookie is not the caller there: the page answers for the User alone, whatever Public Access would say about the Member.
+        Assert.True(await Admits(backOffice));
         Assert.Equal(accepted, await Admits(new ClaimsPrincipal(member.Identities.Concat(backOffice.Identities))));
         Assert.Equal(accepted, await Admits(member));
         // Another account, or the same identifier from another store, is not the page's person.
