@@ -26,7 +26,9 @@ public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker 
         var member = await context.AuthenticateAsync(IdentityConstants.ApplicationScheme);
         if (member.Succeeded && member.Principal?.Identity?.IsAuthenticated == true)
         {
-            if (await access.HasMemberAccessToContentAsync(page.Id, member.Principal) != PublicAccessStatus.AccessAccepted) return null;
+            // Only a protected page has Public Access to apply; the checker reads the request's current Member, which a route that
+            // carries only the backoffice identity (the reports companion's backoffice routes) does not have.
+            if (publicAccess.IsProtected(page.Path).Success && await access.HasMemberAccessToContentAsync(page.Id, member.Principal) != PublicAccessStatus.AccessAccepted) return null;
             var backOfficeUser = await applicationAccess.BackOfficeUserAsync(context);
             // Keep the Member first for existing ownership, audit and antiforgery identities. The resolver reads
             // each authenticated identity's own identifier, so the accounts and their groups remain separate.

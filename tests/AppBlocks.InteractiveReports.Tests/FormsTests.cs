@@ -72,7 +72,7 @@ public sealed class FormsTests
             Assert.Empty(validator.Validate(grouped.ToJsonString()));
         }
         // A form binds a registered C# class or a published data source; an unknown name is refused.
-        Assert.Contains(validator.Validate(BlockPages.OrdersForm("no-such-source").ToJsonString()), e => e == "Select a registered C# form class.");
+        Assert.Contains(validator.Validate(BlockPages.OrdersForm("no-such-source").ToJsonString()), e => e == "Select a registered C# form class or a published data source.");
     }
 
     private static DataSourceDefinition OrdersDataSource()
