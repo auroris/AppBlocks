@@ -176,8 +176,8 @@ public sealed class TabularHttpTests
         using var scope = site.CreateScope();
         var contents = scope.ServiceProvider.GetRequiredService<IContentService>();
 #pragma warning disable CS0618
-        var draft = contents.Create("Lines without a source", contents.GetById(BlockSite.FormPageKey)!.ParentId, AppBlockSchema.PageAlias);
-        draft.SetValue(AppBlockSchema.BodyAlias, copy.ToJsonString());
+        var draft = contents.Create("Lines without a source", contents.GetById(BlockSite.FormPageKey)!.ParentId, BlockSite.PageAlias);
+        draft.SetValue(BlockSite.BodyAlias, copy.ToJsonString());
         contents.Save(draft);
         var published = contents.Publish(draft, ["*"]);
 #pragma warning restore CS0618

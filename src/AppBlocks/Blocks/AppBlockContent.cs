@@ -29,7 +29,11 @@ public sealed class AppBlockContent(IUmbracoContextFactory contexts, IHttpContex
     /// content blocks alone is cached as Umbraco and the host decide.
     /// </summary>
     public static bool IsInteractive(IPublishedContent page, IEnumerable<IAppBlockPlugin> plugins, string? culture = null)
-        => AppBlockSchema.HasBlocks(page.ContentType) && Flatten(Blocks(page, culture), culture).Any(block =>
+        => AppBlockSchema.HasBlocks(page.ContentType) && IsInteractive(Blocks(page, culture), plugins, culture);
+
+    /// <summary>The same question for some blocks of a page and everything inside them, such as the one block a native Block Grid partial renders.</summary>
+    public static bool IsInteractive(IEnumerable<BlockGridItem> blocks, IEnumerable<IAppBlockPlugin> plugins, string? culture = null)
+        => Flatten(blocks, culture).Any(block =>
             block.Content.ContentType.Alias is "appForm" or AppBlockSchema.AttachmentsAlias or AppBlockSchema.ScheduleAlias or AppBlockSchema.TabularAlias
             || plugins.Any(plugin => Varies(plugin) && plugin.Alias == block.Content.ContentType.Alias));
 

@@ -61,8 +61,8 @@ public sealed class FormMemberRequirementTests
             var other = BlockPages.FormBlock(blocks, open.Alias, [BlockPages.Add(blocks, "appText", ("field", "title"))], []);
             openForm = Guid.Parse(other["contentKey"]!.GetValue<string>());
             BlockPages.Layout(blocks).Add(other);
-            var page = contents.Create("Members only", contents.GetById(BlockSite.FormPageKey)!.ParentId, AppBlockSchema.PageAlias);
-            page.SetValue(AppBlockSchema.BodyAlias, blocks.ToJsonString());
+            var page = contents.Create("Members only", contents.GetById(BlockSite.FormPageKey)!.ParentId, BlockSite.PageAlias);
+            page.SetValue(BlockSite.BodyAlias, blocks.ToJsonString());
 #pragma warning disable CS0618
             Assert.True(contents.Save(page).Success);
             var published = contents.Publish(page, ["*"]);

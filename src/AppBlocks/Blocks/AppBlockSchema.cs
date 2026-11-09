@@ -8,8 +8,6 @@ namespace AppBlocks.Blocks;
 /// <summary>Stable identities shared by the embedded schema catalogue and block rendering.</summary>
 public static class AppBlockSchema
 {
-    public const string PageAlias = "appBlockPage";
-    public const string BodyAlias = "applicationBlocks";
     public const string FormsContainerAlias = "appFormsContainer";
     public static bool IsBlockEditor(string? alias) => alias is "Umbraco.BlockGrid" or "Umbraco.BlockList" or "Umbraco.SingleBlock";
 

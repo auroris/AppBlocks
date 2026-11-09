@@ -6,6 +6,7 @@ using System.Text.Json;
 using AppBlocks.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Umbraco.Cms.Core.Services;
 
@@ -44,7 +45,7 @@ public sealed class MemberAuthorizationTests
         using (var visitor = site.CreateClient())
         {
             using (var api = await visitor.GetAsync("/member-api/notes")) Assert.Equal(HttpStatusCode.Unauthorized, api.StatusCode);
-            using (var anonymousToken = await visitor.GetAsync(AppBlocksAuthorization.AntiforgeryTokenPath)) Assert.Equal(HttpStatusCode.Unauthorized, anonymousToken.StatusCode);
+            using (var anonymousToken = await visitor.GetAsync(AppBlocksAuthorization.AntiforgeryTokenPath(null))) Assert.Equal(HttpStatusCode.Unauthorized, anonymousToken.StatusCode);
             // A browser asking for a page still goes to the login page, as Umbraco's Member cookie sends it.
             using var page = new HttpRequestMessage(HttpMethod.Get, "/member-page-test");
             page.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
@@ -58,7 +59,7 @@ public sealed class MemberAuthorizationTests
         Assert.Equal(member.Id.ToString(), answer.GetProperty("member").GetString());
 
         using (var refused = await client.PostAsync("/member-api/notes", JsonContent.Create(new { }))) Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
-        using var tokenResponse = await client.GetAsync(AppBlocksAuthorization.AntiforgeryTokenPath);
+        using var tokenResponse = await client.GetAsync(AppBlocksAuthorization.AntiforgeryTokenPath(null));
         Assert.Equal(HttpStatusCode.OK, tokenResponse.StatusCode);
         Assert.True(tokenResponse.Headers.CacheControl?.NoStore);
         var token = await tokenResponse.Content.ReadFromJsonAsync<JsonElement>();
@@ -98,5 +99,35 @@ public sealed class MemberAuthorizationTests
         Assert.True(AppBlocksAuthorization.IsApiRequest(Request("/bbs/files", requestedWith: "XMLHttpRequest")));
         Assert.False(AppBlocksAuthorization.IsApiRequest(Request("/bbs/files", "text/html,application/xhtml+xml")));
         Assert.False(AppBlocksAuthorization.IsApiRequest(Request("/apiary")));
+
+        // A site that moves the blocks' API root moves what counts as an API path with it.
+        using var services = new ServiceCollection().AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { [AppBlocksRoutes.Setting] = "services/" }).Build()).BuildServiceProvider();
+        Microsoft.AspNetCore.Http.HttpContext Moved(string path) { var context = Request(path); context.RequestServices = services; return context; }
+        Assert.True(AppBlocksAuthorization.IsApiRequest(Moved("/services/bbs/files")));
+        Assert.False(AppBlocksAuthorization.IsApiRequest(Moved("/api/bbs/files")));
+    }
+
+    [Fact]
+    public async Task A_site_that_moves_the_API_root_finds_the_forms_and_the_token_below_it_and_tells_the_page()
+    {
+        await using var site = await BlockSite.BootAsync(configure: builder => builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+            [AppBlocksRoutes.Setting] = "/services",
+        }));
+        await site.PublishAsync();
+        await site.WaitForPublishedAsync(BlockSite.FormPageKey);
+        var form = Guid.Parse(BlockPages.Blocks(site.FormContent, "appForm").Single()["key"]!.GetValue<string>());
+        var member = site.CreateMember("root.member", "root.member@example.invalid", "Root member");
+        using var client = await site.SignInMemberAsync(member);
+
+        var html = await (await site.GetPageAsync(client, "/orders-form/")).Content.ReadAsStringAsync();
+        Assert.Contains($"data-api=\"/services/forms/{BlockSite.FormPageKey}/{form}\"", html);
+        using (var moved = await client.GetAsync($"/services/forms/{BlockSite.FormPageKey}/{form}?id=4")) Assert.Equal(HttpStatusCode.OK, moved.StatusCode);
+        using (var old = await client.GetAsync($"/api/forms/{BlockSite.FormPageKey}/{form}?id=4")) Assert.NotEqual(HttpStatusCode.OK, old.StatusCode);
+        Assert.Equal("/services/antiforgery/token", AppBlocksAuthorization.AntiforgeryTokenPath(site.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()));
+        using (var token = await client.GetAsync("/services/antiforgery/token")) Assert.Equal(HttpStatusCode.OK, token.StatusCode);
+        using var visitor = site.CreateClient();
+        // Below the moved root a script's request is an API request, so a visitor gets 401 rather than the login page.
+        using (var anonymous = await visitor.GetAsync("/services/antiforgery/token")) Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
     }
 }

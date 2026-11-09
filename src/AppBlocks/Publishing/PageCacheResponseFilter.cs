@@ -1,15 +1,21 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Net.Http.Headers;
 
 namespace AppBlocks.Publishing;
 
-/// <summary>Prevents Razor output from reaching the server when a layout returns Not Modified.</summary>
+/// <summary>
+/// Prevents Razor output from reaching the client when a layout returns Not Modified through
+/// <see cref="PageUpdateExtensions.ApplyCacheHeaders"/>. AppBlocks registers it for every MVC view.
+/// </summary>
 public sealed class PageCacheResponseFilter : IAsyncResultFilter
 {
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
-        if (context.Result is not ViewResult and not PartialViewResult)
+        // Only a conditional request can end in 304, so every other view streams as it would without this filter.
+        var headers = context.HttpContext.Request.Headers;
+        if (context.Result is not ViewResult and not PartialViewResult || !headers.ContainsKey(HeaderNames.IfNoneMatch) && !headers.ContainsKey(HeaderNames.IfModifiedSince))
         {
             await next();
             return;

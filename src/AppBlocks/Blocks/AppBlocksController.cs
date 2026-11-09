@@ -24,7 +24,10 @@ public sealed class AppBlocksController(FormResourceRegistry resources, DataSour
         await resources.LoadAsync();
         await definitions.LoadAsync();
         var catalogue = new Dictionary<string, object> {
-            ["formClasses"] = resources.RegisteredResources.Values.Select(r => new { alias = r.Alias, fields = r.Fields }).OrderBy(r => r.alias),
+            // What a Form Interface may bind: the C# classes and the providers' resources, such as published data sources.
+            ["formClasses"] = resources.Resources.Values.Select(r => new {
+                alias = r.Alias, fields = r.Fields, kind = resources.RegisteredResources.ContainsKey(r.Alias) ? "class" : "dataSource",
+            }).OrderBy(r => r.alias),
             ["dataSourceHandlers"] = handlers.All.Keys.Order(StringComparer.Ordinal).Select(alias => new { alias }),
             ["lists"] = definitions.Lists.Values.Select(list => new { alias = list.Alias, key = list.Key, label = list.Name }).OrderBy(list => list.label),
             ["resources"] = resources.Resources.Values.Select(r => new {

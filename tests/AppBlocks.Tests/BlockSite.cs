@@ -51,6 +51,9 @@ internal sealed class BlockSite : IAsyncDisposable
 {
     public static readonly Guid FormPageKey = AppBlockSchema.Key("block-site:orders-form");
     public static readonly Guid WebsitePageKey = AppBlockSchema.Key("block-site:website");
+    /// <summary>The site's own page type and its block property; <see cref="AppBlockPageController"/> answers the type's route by its name.</summary>
+    public const string PageAlias = "appBlockPage";
+    public const string BodyAlias = "applicationBlocks";
     private const string AdminEmail = "block.admin@example.test";
     private const string LoginRoute = "/__tests/login";
 
@@ -193,9 +196,9 @@ internal sealed class BlockSite : IAsyncDisposable
                 """;
             await command.ExecuteNonQueryAsync();
         }
-        var pageType = new ContentType(services.GetRequiredService<IShortStringHelper>(), -1) { Key = AppBlockSchema.Key("block-site:type"), Alias = AppBlockSchema.PageAlias, Name = "Block page", AllowedAsRoot = true };
+        var pageType = new ContentType(services.GetRequiredService<IShortStringHelper>(), -1) { Key = AppBlockSchema.Key("block-site:type"), Alias = BlockSite.PageAlias, Name = "Block page", AllowedAsRoot = true };
         var grid = await services.GetRequiredService<IDataTypeService>().GetAsync(Guid.Parse("97b36051-4abe-e750-6667-9cb7ee6a9a99"));
-        pageType.AddPropertyType(new PropertyType(services.GetRequiredService<IShortStringHelper>(), grid!) { Alias = AppBlockSchema.BodyAlias, Name = "Blocks" });
+        pageType.AddPropertyType(new PropertyType(services.GetRequiredService<IShortStringHelper>(), grid!) { Alias = BlockSite.BodyAlias, Name = "Blocks" });
         var typed = await types.CreateAsync(pageType, Constants.Security.SuperUserKey);
         Assert.True(typed.Success, typed.Result.ToString());
         var contents = services.GetRequiredService<IContentService>();
@@ -218,9 +221,9 @@ internal sealed class BlockSite : IAsyncDisposable
         Publish(lines);
         IContent Page(string name, Guid key, int parent, JsonNode? blocks)
         {
-            var page = contents.Create(name, parent, AppBlockSchema.PageAlias);
+            var page = contents.Create(name, parent, BlockSite.PageAlias);
             page.Key = key;
-            if (blocks is not null) page.SetValue(AppBlockSchema.BodyAlias, blocks.ToJsonString());
+            if (blocks is not null) page.SetValue(BlockSite.BodyAlias, blocks.ToJsonString());
             Publish(page);
             return page;
         }

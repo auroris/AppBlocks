@@ -119,8 +119,8 @@ public abstract class FormResource<TCreate, TUpdate> : IFormResource where TCrea
 }
 
 /// <summary>
-/// Supplies resources defined outside code, such as published SQL data sources, for record owners and tabular forms.
-/// Form Interface binds only to registered C# resources, exposed through <see cref="FormResourceRegistry.RegisteredResources"/>.
+/// Supplies resources defined outside code, such as published SQL data sources, which forms, record owners and tabular forms
+/// bind as they bind registered C# resources. A C# resource keeps its alias when a provider offers the same one.
 /// </summary>
 public interface IFormResourceProvider
 {
@@ -129,7 +129,7 @@ public interface IFormResourceProvider
 }
 
 /// <summary>
-/// Resources available to record owners and tabular forms, by alias. C# resources come first and keep their alias when a provider
+/// Resources available to forms, record owners and tabular forms, by alias. C# resources come first and keep their alias when a provider
 /// offers the same one: code is the authority, and publishing a data source with a taken alias is refused.
 /// Classes compiled into the site come before classes compiled from the C# folder (<see cref="Code.CompiledTypes"/>), which keep only an alias still free.
 /// Provider resources are read on first use, so a request that only needs a C# resource never reads content.
@@ -154,6 +154,7 @@ public sealed class FormResourceRegistry(IEnumerable<IFormResource> resources, I
     public Task LoadAsync() => loading ??= LoadCoreAsync();
     public IReadOnlyDictionary<string, IFormResource> Resources => all ?? (providers.Any()
         ? throw new InvalidOperationException("Call LoadAsync before reading provider resources.") : Indexed);
+    /// <summary>The C# resources alone, registered and compiled, which need no content read; <see cref="Resources"/> adds the providers'.</summary>
     public IReadOnlyDictionary<string, IFormResource> RegisteredResources => Indexed;
     public IFormResource? Find(string alias) => Indexed.GetValueOrDefault(alias) ?? Resources.GetValueOrDefault(alias);
 

@@ -84,6 +84,9 @@ public static class AppBlocksExtensions
         services.AddTransient<Microsoft.AspNetCore.Razor.TagHelpers.ITagHelperComponent, AppPageAssetsTagHelperComponent>();
         services.AddScoped<AppBindVariableResolver>();
         builder.AddNotificationAsyncHandler<RoutingRequestNotification, AppBlocks.Publishing.PageCacheHeaders>();
+        // A layout's ApplyCacheHeaders answers 304 after Razor has buffered output, which this filter discards; once, whoever else adds it.
+        services.Configure<Microsoft.AspNetCore.Mvc.MvcOptions>(options => { if (!options.Filters.OfType<Publishing.PageCacheResponseFilter>().Any()) options.Filters.Add(new Publishing.PageCacheResponseFilter()); });
+        services.AddScoped<IAppBlocksTextSource, UmbracoDictionaryTextSource>();
         // Umbraco's website routing registers the Public Access check; whoever a host's IProtectedPageAdmission admits passes it, as on the blocks' endpoints.
         if (services.Any(descriptor => descriptor.ServiceType == typeof(IPublicAccessRequestHandler)))
             Decorate<IPublicAccessRequestHandler>(services, (provider, inner) =>

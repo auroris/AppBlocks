@@ -20,7 +20,13 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
     public string KeyParameter => Interface.Value<string>("keyParameter") is { Length: > 0 } key ? key : "id";
     /// <summary>Where Save and Cancel return to: the Form interface's return page, or the site's root under <paramref name="pathBase"/>.</summary>
     public string ReturnUrl(PathString pathBase) => Interface.Value<IPublishedContent>("returnPage")?.Url() ?? pathBase + "/";
-    public static async Task<FormDefinition?> ResolveAsync(IPublishedContent page, Guid key, FormResourceRegistry resources, PublishedDataCatalog? definitions = null, string? culture = null)
+    /// <summary>
+    /// The form block <paramref name="key"/> of a page with the resource its Form Interface names: a registered C# class or a published
+    /// data source, the class first when both have the alias. Null when the form does not resolve, including when it holds another form
+    /// or a block of one of <paramref name="plugins"/> that acts for the user, which publishing refuses too.
+    /// </summary>
+    public static async Task<FormDefinition?> ResolveAsync(IPublishedContent page, Guid key, FormResourceRegistry resources, PublishedDataCatalog? definitions = null, string? culture = null,
+        IEnumerable<IAppBlockPlugin>? plugins = null)
     {
         var blocks = AppBlockContent.Blocks(page, culture);
         var forms = AppBlockContent.Flatten(blocks, culture)
@@ -29,9 +35,10 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
         if (matches.Length != 1) return null;
         var block = matches[0];
         var configuration = block.Content.Value<BlockListItem>("formInterface")?.Content;
-        if (configuration is null || resources.RegisteredResources.GetValueOrDefault(configuration.Value<string>("resource") ?? "") is not { } resource) return null;
+        if (configuration?.Value<string>("resource") is not { Length: > 0 } alias || await resources.FindAsync(alias) is not { } resource) return null;
         var children = AppBlockContent.Flatten(block.Areas.SelectMany(a => a)).ToArray();
-        if (children.Any(b => b.Content.ContentType.Alias is "appForm" or "appReport")) return null;
+        var userBlocks = plugins?.Where(p => p.RequiresUser).Select(p => p.Alias).ToHashSet(StringComparer.Ordinal) ?? [];
+        if (children.Any(b => b.Content.ContentType.Alias == "appForm" || userBlocks.Contains(b.Content.ContentType.Alias))) return null;
         var fields = children.Where(b => AppBlockSchema.FieldAliases.Contains(b.Content.ContentType.Alias)).ToArray();
         var bindings = fields.Select(f => f.Content.Value<string>("field") ?? "").ToArray();
         if (bindings.Distinct(StringComparer.Ordinal).Count() != bindings.Length || bindings.Any(binding => !resource.Fields.Any(f => f.Key == binding))) return null;

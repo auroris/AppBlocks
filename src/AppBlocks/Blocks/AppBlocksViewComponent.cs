@@ -33,13 +33,13 @@ public sealed record AppBlockItems(IPublishedContent Page, IEnumerable<BlockGrid
     FormDefinition? Form = null, string? MemberId = null, int HeadingLevel = 2, AppBindVariables? Variables = null);
 
 [ViewComponent(Name = "AppBlocks")]
-public sealed class AppBlocksViewComponent(AppPageAccess access, AppBindVariableResolver variables, IAntiforgery antiforgery) : ViewComponent
+public sealed class AppBlocksViewComponent(AppPageAccess access, AppBindVariableResolver variables, IAntiforgery antiforgery, AppBlocksText text) : ViewComponent
 {
     public async Task<IViewComponentResult> InvokeAsync(IPublishedContent page)
     {
         if (await access.VisitorAsync(page.Key) is not { } visitor) {
             HttpContext.Response.StatusCode = 403;
-            return Content("Sign in with an Umbraco Member or backoffice User account permitted to use this page.");
+            return Content(text["signInToUsePage", "Sign in with an Umbraco Member or backoffice User account permitted to use this page."]);
         }
         HttpContext.KeepAppBlockPageOutOfCaches();
         HttpContext.User = visitor;

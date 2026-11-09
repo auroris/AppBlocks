@@ -78,8 +78,8 @@ public sealed class ShuttleTests
             var validator = ActivatorUtilities.CreateInstance<AppBlocksValidator>(scope.ServiceProvider);
             await validator.LoadAsync();
             Assert.Empty(validator.ValidateEmbedded(blocks.ToJsonString()));
-            var page = contents.Create("Shuttle", parent, AppBlockSchema.PageAlias);
-            page.SetValue(AppBlockSchema.BodyAlias, blocks.ToJsonString());
+            var page = contents.Create("Shuttle", parent, BlockSite.PageAlias);
+            page.SetValue(BlockSite.BodyAlias, blocks.ToJsonString());
             Assert.True(contents.Save(page).Success);
             var published = contents.Publish(page, ["*"]);
             Assert.True(published.Success, string.Join("; ", published.EventMessages?.GetAll().Select(m => m.Message) ?? []));
