@@ -90,6 +90,7 @@ public sealed partial class SqlDataSource
         var shared = batches.Select(b => b.Detail).ToArray();
         foreach (var detail in shared) detail.MasterKey = key;
         (int Index, DataSourceRowsResult Refusal)? failed = null;
+        var rows = new List<DataSourceRowsResult>(batches.Count);
         var master = await RunAsync(plan, write: true, async (connection, transaction) => {
             var written = creating
                 ? await InsertRecordAsync(plan, user, context, values!, now, connection, transaction!, app, ct, shared)
@@ -106,6 +107,19 @@ public sealed partial class SqlDataSource
                     return new FormResult(refusal.Status, Errors: refusal.Errors);
                 }
             }
+            // Read every block after all changes, while a failed list can still roll the entire save back.
+            for (var i = 0; i < batches.Count; i++)
+            {
+                var batch = batches[i];
+                var listed = await batch.Source.ListRowsAsync(batch.Plan, batch.User, new DataSourceScope(batch.LinkField, written.Record!.Key!),
+                    batch.Context with { SubmissionKey = null }, batch.MaximumRows, batch.App, connection, transaction, ct);
+                if (listed.Status != 200)
+                {
+                    failed = (i, listed);
+                    return new FormResult(listed.Status, Errors: listed.Errors);
+                }
+                rows.Add(listed);
+            }
             await transaction!.CommitAsync(ct);
             return written;
         }, ct);
@@ -113,16 +127,20 @@ public sealed partial class SqlDataSource
         if (master.Status != 200) return new(master);
         if (receipt is not null) await runtime.Receipts.AddAsync(receipt, new(master.Record!.Key!, hash), ct);
         foreach (var batch in batches.Where(b => !b.Done)) await runtime.Receipts.AddAsync(batch.Receipt, new("rows", batch.Hash), ct);
-        return await AnswerAsync(master, batches, ct);
+        return new(master, rows);
     }
 
-    /// <summary>The master's result with each detail block's rows as they are now, read after the commit.</summary>
+    /// <summary>A retry's already-saved master with each detail block's current rows.</summary>
     private static async Task<DataSourceSaveResult> AnswerAsync(FormResult master, IReadOnlyList<PreparedBatch> batches, CancellationToken ct)
     {
         if (master.Record?.Key is not { } key) return new(master);
         var rows = new List<DataSourceRowsResult>(batches.Count);
         foreach (var batch in batches)
-            rows.Add(await batch.Source.ListRowsAsync(new DataSourceScope(batch.LinkField, key), batch.Context with { SubmissionKey = null }, batch.MaximumRows, ct));
+        {
+            var listed = await batch.Source.ListRowsAsync(new DataSourceScope(batch.LinkField, key), batch.Context with { SubmissionKey = null }, batch.MaximumRows, ct);
+            if (listed.Status != 200) return new(new FormResult(listed.Status, Errors: listed.Errors));
+            rows.Add(listed);
+        }
         return new(master, rows);
     }
 

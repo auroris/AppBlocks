@@ -38,8 +38,8 @@ const tabular = `<section class="app-tabular" data-app-tabular data-api="/api/ta
     <div class="app-tabular-toolbar" hidden><button type="button" form="" data-tabular-add>Add row</button><button type="button" form="" data-tabular-save>Save rows</button></div></section>`;
 
 /** A page with the given body and head under the path base, whose API is the answer function; every API request is recorded. */
-async function mount(body, answer, { head = '', lang = 'en', base = '' } = {}) {
-    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+async function mount(body, answer, { head = '', lang = 'en', base = '', timezoneId } = {}) {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 }, timezoneId });
     const requests = [], errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('dialog', dialog => dialog.accept());
@@ -57,6 +57,53 @@ async function mount(body, answer, { head = '', lang = 'en', base = '' } = {}) {
     return { page, requests, errors };
 }
 const runtime = base => `<script type="module" src="${base}/App_Plugins/ApplicationBlocks/runtime.js"></script>`;
+
+test('an unchanged date-time keeps its seconds and offset, while an edit or clear uses the control', async () => {
+    for (const [timezoneId, original, shown, edited] of [
+        ['UTC', '2026-11-09T14:30:45.678+00:00', '2026-11-09T14:30', '2026-11-09T10:45:00.000Z'],
+        // The second 01:30 at the autumn clock change must not become the first 01:30.
+        ['America/Edmonton', '2026-11-01T01:30:45.678-07:00', '2026-11-01T01:30', '2026-11-09T17:45:00.000Z'],
+    ]) {
+        const { page, requests, errors } = await mount(form('<input id="when" type="datetime-local" data-field="when">') + runtime(''),
+            ({ method, body }) => formAnswer(record('7', method === 'GET' ? { title: 'Report', when: original } : body.values)), { timezoneId });
+        try {
+            await page.locator('#title').fill('Changed title');
+            assert.equal(await page.locator('#when').inputValue(), shown);
+            await page.getByRole('button', { name: 'Save', exact: true }).click();
+            await page.getByText('Saved.', { exact: true }).waitFor();
+            assert.equal(requests.at(-1).body.values.when, original);
+
+            await page.locator('#when').fill('2026-11-09T10:45');
+            await page.getByRole('button', { name: 'Save', exact: true }).click();
+            await page.getByText('Saved.', { exact: true }).waitFor();
+            assert.equal(requests.at(-1).body.values.when, edited);
+
+            await page.locator('#title').fill('Another title');
+            await page.getByRole('button', { name: 'Save', exact: true }).click();
+            await page.getByText('Saved.', { exact: true }).waitFor();
+            assert.equal(requests.at(-1).body.values.when, edited, 'the saved answer becomes the new baseline');
+
+            await page.locator('#when').fill('');
+            await page.getByRole('button', { name: 'Save', exact: true }).click();
+            await page.getByText('Saved.', { exact: true }).waitFor();
+            assert.equal(requests.at(-1).body.values.when, null);
+            assert.deepEqual(errors, []);
+        } finally { await page.close(); }
+    }
+});
+
+test('a new form preserves the precision of its date-time default and leaves an empty date-time null', async () => {
+    const original = '2026-11-09T14:30:45.678+00:00';
+    const { page, requests } = await mount(form(`<input type="datetime-local" data-field="when" data-default="${original}">
+        <input type="datetime-local" data-field="empty">`) + runtime(''),
+        ({ method, body }) => formAnswer(record(method === 'GET' ? null : '7', method === 'GET' ? { title: '', when: null, empty: null } : body.values)), { timezoneId: 'UTC' });
+    try {
+        await page.locator('#title').fill('New report');
+        await page.getByRole('button', { name: 'Save', exact: true }).click();
+        await page.getByText('Saved.', { exact: true }).waitFor();
+        assert.deepEqual(requests.at(-1).body.values, { title: 'New report', when: original, empty: null });
+    } finally { await page.close(); }
+});
 
 test('a page\'s strings replace the English by id, and sizes and dates follow its language', async () => {
     const strings = { saved: 'Enregistré.', sizeKilobytes: '{size} Ko', sizeMegabytes: '{size} Mo', noRows: 5, unknownId: 'ignored' };

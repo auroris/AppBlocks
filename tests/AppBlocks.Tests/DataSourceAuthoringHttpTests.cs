@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AppBlocks.Api;
 using AppBlocks.Connections;
 using AppBlocks.DataSources;
 using Microsoft.AspNetCore.Builder;
@@ -23,6 +24,7 @@ using Umbraco.Cms.Core.Models.Membership;
 using Umbraco.Cms.Core.PropertyEditors;
 using Umbraco.Cms.Core.Security;
 using Umbraco.Cms.Core.Services;
+using Umbraco.Cms.Core.Strings;
 using Umbraco.Cms.Core.Sync;
 using Umbraco.Extensions;
 
@@ -33,7 +35,7 @@ namespace AppBlocks.Tests;
 public sealed class DataSourceAuthoringHttpTests
 {
     [Fact]
-    public async Task Test_uses_unsaved_values_and_existing_editor_permissions_without_publishing()
+    public async Task Previews_and_code_editing_require_AppBlocks_administration_and_Umbraco_permissions()
     {
         var root = Directory.CreateTempSubdirectory("appblocks-authoring-").FullName;
         Directory.CreateDirectory(Path.Combine(root, "wwwroot"));
@@ -54,6 +56,9 @@ public sealed class DataSourceAuthoringHttpTests
             ["Umbraco:CMS:Unattended:UnattendedUserName"] = "Authoring test",
             ["Umbraco:CMS:Unattended:UnattendedUserEmail"] = "authoring@example.test",
             ["Umbraco:CMS:Unattended:UnattendedUserPassword"] = "Authoring!Test5278",
+            ["AppBlocks:AdministratorGroups:0"] = "appBlocksAdministrators",
+            // The removed setting must not grant code editing or preview access.
+            ["AppBlocks:CodeEditorGroups:0"] = "legacyCodeEditors",
         });
         builder.Services.Configure<InstallDefaultDataSettings>(Constants.Configuration.NamedOptions.InstallDefaultData.Languages,
             settings => { settings.InstallData = InstallDefaultDataOption.Values; settings.Values = new HashSet<string> { "en" }; });
@@ -92,13 +97,59 @@ public sealed class DataSourceAuthoringHttpTests
                 values = new { alias = "current-draft", access = "Public", connection = ConnectionCatalog.UmbracoConnection, source = "SELECT :PARAM.label AS TITLE" },
                 samples = new Dictionary<string, object?> { ["PARAM.label"] = "' OR 1=1 --" },
             };
+            var endpoints = contents.Create("Authoring endpoints", -1, ApiEndpointCatalog.RootAlias);
+            contents.Save(endpoints);
+            var endpoint = contents.Create("Draft endpoint", endpoints.Id, ApiEndpointCatalog.Alias);
+            contents.Save(endpoint);
+            const string endpointPath = "/umbraco/management/api/v1/api-endpoints/test";
+            var endpointRequest = new {
+                key = endpoint.Key, parentKey = endpoints.Key,
+                values = new { alias = "draft-endpoint", route = "authoring-test", access = "Public", connection = ConnectionCatalog.UmbracoConnection,
+                    sql = "SELECT :PARAM.label AS TITLE", queryParameters = "label" },
+                query = new { label = "Endpoint preview" },
+            };
+            (string Path, object Saved, object New)[] previews = [
+                (path, request, new { parentKey = sources.Key, request.values, request.samples }),
+                (endpointPath, endpointRequest, new { parentKey = endpoints.Key, endpointRequest.values, endpointRequest.query }),
+            ];
+            async Task ExpectPreviews(HttpClient caller, HttpStatusCode status)
+            {
+                foreach (var preview in previews)
+                    foreach (var body in new[] { preview.Saved, preview.New })
+                    {
+                        using var tested = await caller.PostAsJsonAsync(preview.Path, body);
+                        Assert.Equal(status, tested.StatusCode);
+                        if (status == HttpStatusCode.OK)
+                        {
+                            var answer = await tested.Content.ReadFromJsonAsync<JsonElement>();
+                            Assert.Empty(answer.GetProperty("errors").EnumerateArray());
+                            if (preview.Path == endpointPath)
+                            {
+                                Assert.Equal(200, answer.GetProperty("status").GetInt32());
+                                Assert.Equal("Endpoint preview", answer.GetProperty("body").GetProperty("items")[0].GetProperty("title").GetString());
+                            }
+                        }
+                    }
+            }
             using var anonymous = new HttpClient { BaseAddress = address };
-            Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsJsonAsync(path, request)).StatusCode);
+            await ExpectPreviews(anonymous, HttpStatusCode.Unauthorized);
 
             var users = scope.ServiceProvider.GetRequiredService<IUserService>();
+            var groups = scope.ServiceProvider.GetRequiredService<IUserGroupService>();
+            var administrators = new UserGroup(scope.ServiceProvider.GetRequiredService<IShortStringHelper>()) {
+                Alias = "appBlocksAdministrators", Name = "AppBlocks administrators",
+            };
+            administrators.AddAllowedSection(Constants.Applications.Content);
+            Assert.True((await groups.CreateAsync(administrators, Constants.Security.SuperUserKey, [])).Success);
+            var legacyEditors = new UserGroup(scope.ServiceProvider.GetRequiredService<IShortStringHelper>()) {
+                Alias = "legacyCodeEditors", Name = "Legacy code editors",
+            };
+            legacyEditors.AddAllowedSection(Constants.Applications.Settings);
+            Assert.True((await groups.CreateAsync(legacyEditors, Constants.Security.SuperUserKey, [])).Success);
             const string email = "source.editor@example.test";
             var created = await users.CreateAsync(Constants.Security.SuperUserKey, new UserCreateModel {
-                UserName = email, Email = email, Name = "Source editor", Kind = UserKind.Default, UserGroupKeys = new HashSet<Guid> { Constants.Security.EditorGroupKey },
+                UserName = email, Email = email, Name = "Source editor", Kind = UserKind.Default,
+                UserGroupKeys = new HashSet<Guid> { Constants.Security.EditorGroupKey, legacyEditors.Key },
             }, approveUser: true);
             Assert.True(created.Success, created.Status.ToString());
             var editor = created.Result.CreatedUser!;
@@ -109,6 +160,32 @@ public sealed class DataSourceAuthoringHttpTests
             Assert.True(changed.Succeeded, string.Join("; ", changed.Errors.Select(error => error.Description)));
             using var client = await SignInAsync(address, editor.Username, password);
             await AssertNewSourcesStartPublic(scope.ServiceProvider, client, sources);
+            // Content and Settings access, including the legacy code group, do not grant AppBlocks administration.
+            await ExpectPreviews(client, HttpStatusCode.Forbidden);
+            const string codePath = "/umbraco/management/api/v1/appblocks/code";
+            Assert.False((await client.GetFromJsonAsync<JsonElement>(codePath + "/access")).GetProperty("allowed").GetBoolean());
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(codePath)).StatusCode);
+            var codeFile = new { path = "PreviewAccessProbe.cs", content = "public sealed class PreviewAccessProbe { }" };
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(codePath + "/file/new", codeFile)).StatusCode);
+
+            // A configured group grants AppBlocks access without adding the User to Umbraco's Administrators.
+            editor = users.GetByUsername(email)!;
+            editor.AddGroup(administrators.ToReadOnlyGroup());
+            users.Save(editor);
+            Assert.DoesNotContain(editor.Groups, group => group.Alias == Constants.Security.AdminGroupAlias);
+            await ExpectPreviews(client, HttpStatusCode.OK);
+            Assert.True((await client.GetFromJsonAsync<JsonElement>(codePath + "/access")).GetProperty("allowed").GetBoolean());
+            var codeState = await client.GetFromJsonAsync<JsonElement>(codePath);
+            var canCompile = codeState.GetProperty("canEdit").GetBoolean();
+            Assert.Equal(canCompile ? HttpStatusCode.OK : HttpStatusCode.Conflict,
+                (await client.PostAsJsonAsync(codePath + "/file/new", codeFile)).StatusCode);
+
+            // Umbraco's own Administrators continue to pass the same rule without additional configuration.
+            using var administrator = await SignInAsync(address, "authoring@example.test", "Authoring!Test5278");
+            await ExpectPreviews(administrator, HttpStatusCode.OK);
+            Assert.True((await administrator.GetFromJsonAsync<JsonElement>(codePath + "/access")).GetProperty("allowed").GetBoolean());
+            Assert.Equal(HttpStatusCode.OK, (await administrator.GetAsync(codePath)).StatusCode);
+
             using var response = await client.PostAsJsonAsync(path, request);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var result = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -126,17 +203,34 @@ public sealed class DataSourceAuthoringHttpTests
             Assert.Equal("MISSING_TABLE", persisted.GetValue<string>("source"));
             Assert.False(persisted.Published);
 
-            // A new definition can be tested before its first save using its parent's create permission.
-            using var newDraft = await client.PostAsJsonAsync(path, new { parentKey = sources.Key, request.values, request.samples });
-            Assert.Equal(HttpStatusCode.OK, newDraft.StatusCode);
-
             var outside = contents.Create("Other sources", -1, DataSourceSchema.RootAlias);
             contents.Save(outside);
 #pragma warning restore CS0618
+            var originalStartContentIds = editor.StartContentIds;
             editor.StartContentIds = [outside.Id];
             users.Save(editor);
-            using var denied = await client.PostAsJsonAsync(path, request);
-            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+            await ExpectPreviews(client, HttpStatusCode.Forbidden);
+
+            // A retained login cannot preserve access after removal from the configured group.
+            editor.StartContentIds = originalStartContentIds;
+            editor.RemoveGroup(administrators.Alias);
+            users.Save(editor);
+            await ExpectPreviews(client, HttpStatusCode.Forbidden);
+            Assert.False((await client.GetFromJsonAsync<JsonElement>(codePath + "/access")).GetProperty("allowed").GetBoolean());
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(codePath)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(codePath + "/file/new", codeFile)).StatusCode);
+
+            // Removing Settings access still hides the code editor from an AppBlocks administrator.
+            editor.AddGroup(administrators.ToReadOnlyGroup());
+            editor.RemoveGroup(legacyEditors.Alias);
+            users.Save(editor);
+            using (var contentOnly = await SignInAsync(address, editor.Username, password))
+            {
+                await ExpectPreviews(contentOnly, HttpStatusCode.OK);
+                Assert.Equal(HttpStatusCode.Forbidden, (await contentOnly.GetAsync(codePath + "/access")).StatusCode);
+                Assert.Equal(HttpStatusCode.Forbidden, (await contentOnly.GetAsync(codePath)).StatusCode);
+            }
+
         }
         finally { await app.StopAsync(); }
     }

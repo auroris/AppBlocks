@@ -55,23 +55,36 @@ public sealed partial class SqlDataSource
     {
         if (Ready is not { } plan) return DataSourceRowsResult.From(Unavailable());
         if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !CanRead(user)) return new(403);
+        return await RunAsync(plan, write: false, (connection, transaction) =>
+            ListRowsAsync(plan, user, scope, context, maximumRows, app, connection, transaction, ct), result => DataSourceRowsResult.From(result), ct);
+    }
+
+    /// <summary>Builds the list on the caller's connection, so a save can check its answer before committing.</summary>
+    private async Task<DataSourceRowsResult> ListRowsAsync(DataSourcePlan plan, DataSourceUser user, DataSourceScope scope, FormExecutionContext context,
+        int maximumRows, IReadOnlyDictionary<string, object?>? app, DbConnection connection, DbTransaction? transaction, CancellationToken ct)
+    {
+        if (!CanRead(user)) return new(403);
         if (Link(plan, scope, out var link, out var value) is { } problem) return DataSourceRowsResult.From(problem);
         var binder = new Binder(plan, user, context, runtime.Now(definition), null, app);
-        return await RunAsync(plan, write: false, async (connection, _) => {
-            if (!await AllowedAsync(DataSourceAction.Query, user, context, null, null, null, connection, null, ct)) return new DataSourceRowsResult(403);
-            var rows = await ReadScopeAsync(plan, connection, null, link, value, binder, maximumRows, ct);
+        try
+        {
+            if (!await AllowedAsync(DataSourceAction.Query, user, context, null, null, null, connection, transaction, ct)) return new(403);
+            var rows = await ReadScopeAsync(plan, connection, transaction, link, value, binder, maximumRows, ct);
             var records = rows.Select(row => Record(plan, row, user)).ToArray();
             if (Handler is not null)
             {
                 // The class sees what the block is about to show, and may change what it shows, never which rows.
                 var shown = records.Select(record => (IDictionary<string, object?>)new Dictionary<string, object?>(record.Values)).ToArray();
-                var operation = Operation(plan, DataSourceAction.Query, user, context, connection, null, rows: shown);
+                var operation = Operation(plan, DataSourceAction.Query, user, context, connection, transaction, rows: shown);
                 var outcome = await AskAsync(plan, operation, binder, static (handler, operation, ct) => handler.ListAsync(operation, ct), ct);
                 if (outcome.Kind == DataSourceOutcomeKind.Refused) return DataSourceRowsResult.From(outcome.Result());
                 records = records.Select((record, i) => record with { Values = Shown(plan, shown[i]) }).ToArray();
             }
-            return new DataSourceRowsResult(200, records, NewRow(plan, user, binder, link, value));
-        }, result => DataSourceRowsResult.From(result), ct);
+            return new(200, records, NewRow(plan, user, binder, link, value));
+        }
+        catch (DataSourceFieldException error) { return DataSourceRowsResult.From(FormResult.Invalid(error.Field, error.Message)); }
+        catch (DataSourceException error) { return DataSourceRowsResult.From(FormResult.Invalid("", error.Message)); }
+        catch (DbException error) { return DataSourceRowsResult.From(Failed(plan, error, write: transaction is not null)); }
     }
 
     /// <summary>
@@ -114,12 +127,14 @@ public sealed partial class SqlDataSource
         var outcome = await RunAsync(plan, write: true, async (connection, transaction) => {
             // Returning without a commit rolls every earlier change of the batch back.
             if (await ApplyAllAsync(plan, user, context, link, value, changes, i => i, now, connection, transaction!, app, ct) is { } refused) return refused;
+            var rows = await ListRowsAsync(plan, user, scope, context with { SubmissionKey = null }, maximumRows, app, connection, transaction, ct);
+            if (rows.Status != 200) return rows;
             await transaction!.CommitAsync(ct);
-            return new DataSourceRowsResult(200);
+            return rows;
         }, result => DataSourceRowsResult.From(result), ct);
         if (outcome.Status != 200) return outcome;
         await runtime.Receipts.AddAsync(receipt, new("rows", hash), ct);
-        return await ListRowsAsync(scope, context with { SubmissionKey = null }, maximumRows, app, ct);
+        return outcome;
     }
 
     /// <summary>The first change the allow flags refuse, or that is not a create, an update or a delete; null when every one may run.</summary>

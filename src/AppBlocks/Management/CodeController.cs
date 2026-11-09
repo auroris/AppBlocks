@@ -1,3 +1,4 @@
+using AppBlocks.Authentication;
 using AppBlocks.Code;
 using AppBlocks.DataSources;
 using AppBlocks.Samples;
@@ -21,14 +22,14 @@ public sealed record CodeRecipeRequest(string Connection, string Table, string R
 
 /// <summary>
 /// The C# section: the folder's files, the compiler's messages and the New file wizard. Saving code here runs it inside the site, so every
-/// endpoint asks <see cref="CodeEditorAccess"/> as well as Umbraco's Settings section access, every write is refused when the site has no
+/// endpoint checks AppBlocks administration as well as Umbraco's Settings section access, every write is refused when the site has no
 /// compiler, and every save, create, rename and delete goes to Umbraco's audit log.
 /// </summary>
 [ApiVersion("1.0")]
 [VersionedApiBackOfficeRoute("appblocks/code")]
 [ApiExplorerSettings(GroupName = "AppBlocks")]
 [Authorize(Policy = AuthorizationPolicies.SectionAccessSettings)]
-public sealed class CodeController(CodeCompilation compilation, CodeEditorAccess access, IAuditService audit, IBackOfficeSecurityAccessor security,
+public sealed class CodeController(CodeCompilation compilation, ApplicationAccessPolicy access, IAuditService audit, IBackOfficeSecurityAccessor security,
     DataSourceRuntime runtime, DataSourceCatalog catalog, IMemberGroupService memberGroups, IUserGroupService userGroups, IHostEnvironment environment,
     ILogger<CodeController> logger) : ManagementApiControllerBase
 {
@@ -39,7 +40,7 @@ public sealed class CodeController(CodeCompilation compilation, CodeEditorAccess
     public async Task<IActionResult> Access()
     {
         Response.Headers.CacheControl = "no-store";
-        return Ok(new { allowed = await access.IsAllowedAsync(User) });
+        return Ok(new { allowed = await access.IsBackOfficeAdministratorAsync(User) });
     }
 
     [HttpGet]
@@ -163,7 +164,7 @@ public sealed class CodeController(CodeCompilation compilation, CodeEditorAccess
     private async Task<IActionResult> Run(Func<Task<IActionResult>> action)
     {
         Response.Headers.CacheControl = "no-store";
-        if (!await access.IsAllowedAsync(User)) return Forbid();
+        if (!await access.IsBackOfficeAdministratorAsync(User)) return Forbid();
         try { return await action(); }
         catch (CodePathException error) { return Problem(error.Message, statusCode: 422); }
         catch (CodeRecipeException error) { return Problem(error.Message, statusCode: 422); }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AppBlocks.Authentication;
 using Asp.Versioning;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,7 +16,7 @@ namespace AppBlocks.DataSources;
 public sealed record DataSourceTestRequest(Guid? Key, Guid? ParentKey, Dictionary<string, JsonElement> Values,
     Dictionary<string, JsonElement>? Samples = null);
 
-/// <summary>The editor's Test action uses the same node permissions as editing the definition.</summary>
+/// <summary>The Test action requires AppBlocks administration as well as the node permissions for editing the definition.</summary>
 [ApiVersion("1.0")]
 [VersionedApiBackOfficeRoute("data-sources")]
 [ApiExplorerSettings(GroupName = "Application blocks")]
@@ -24,6 +25,7 @@ public sealed class DataSourceAuthoringController(IContentService content, IAuth
 {
     [HttpPost("test")]
     [Authorize(Policy = AuthorizationPolicies.SectionAccessContent)]
+    [Authorize(Policy = AppBlocksAuthorization.AdministratorPolicy)]
     public async Task<IActionResult> Test(DataSourceTestRequest request, CancellationToken ct)
     {
         Response.Headers.CacheControl = "no-store";

@@ -68,7 +68,6 @@ public static class AppBlocksExtensions
         services.AddSingleton<Code.CodeCompilation>();
         services.AddHostedService(provider => provider.GetRequiredService<Code.CodeCompilation>());
         services.AddScoped<Code.CompiledTypes>();
-        services.AddScoped<Code.CodeEditorAccess>();
         services.AddScoped<IDataSourcePolicy, Code.CompiledDataSourcePolicies>();
         builder.AddDataSources();
         builder.AddApiEndpoints();

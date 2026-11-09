@@ -130,7 +130,9 @@ public static class AttachmentEndpoints
             if (part.Length > limits.MaxFileSize) return Results.Problem(TooLarge(limits), statusCode: 413);
             var fileName = Path.GetFileName(part.FileName ?? "").Trim();
             if (fileName.Length is 0 or > 260) return Results.Problem("The file needs a name of at most 260 characters.", statusCode: 422);
-            if (!limits.Accepts(fileName)) return Results.Problem($"Files of this type are not accepted here. Accepted: {limits.Accept}.", statusCode: 415);
+            if (!limits.Accepts(fileName)) return Results.Problem(limits.Accept is { } accepted
+                ? $"Files of this type are not accepted here. Accepted: {accepted}."
+                : "The site's and this block's allowed file types do not overlap. No file types are accepted here.", statusCode: 415);
             var contentType = string.IsNullOrWhiteSpace(part.ContentType) || part.ContentType.Length > 200 ? MediaTypeNames.Application.Octet : part.ContentType.Trim();
             await using var stream = part.OpenReadStream();
             using var buffer = new MemoryStream((int)Math.Min(part.Length, int.MaxValue));

@@ -16,7 +16,7 @@ namespace AppBlocks.DataSources;
 /// <remarks>
 /// The engine checks the caller, the groups and the allow flags before it asks the class, asks every
 /// <see cref="IDataSourcePolicy"/> after it, and reads a written row back through the row restriction, so a class cannot widen
-/// what the data source allows. Read hooks run without a transaction and must not write.
+/// what the data source allows. Read hooks must not write; a list returned by a save shares its transaction.
 /// </remarks>
 public interface IDataSourceHandler
 {
@@ -135,7 +135,7 @@ public sealed class DataSourceOperation
     public IReadOnlyList<DataSourceDetail> Details { get; internal init; } = [];
     /// <summary>The engine's open connection, or null where the engine has none open yet (Initialize, a report's check); <see cref="Sql"/> opens one then.</summary>
     public DbConnection? Connection { get; internal set; }
-    /// <summary>The write transaction (Create, Update, Delete); null otherwise. Never commit, roll back or dispose it: the engine owns it.</summary>
+    /// <summary>The write transaction, also used to read a save's resulting rows; null on standalone reads. Never commit, roll back or dispose it: the engine owns it.</summary>
     public DbTransaction? Transaction { get; internal init; }
     public DatabaseDialect Dialect { get; }
     /// <summary>Runs the class's own statements on the engine's connection and transaction, with bound parameters.</summary>
@@ -184,7 +184,8 @@ public sealed class DataSourceSql : IAsyncDisposable
     /// <summary>Runs a statement that changes data and returns the rows it affected, as the provider counts them. Only a write may.</summary>
     public async Task<int> ExecuteAsync(string sql, object? args = null, CancellationToken ct = default)
     {
-        if (operation.Transaction is null) throw new InvalidOperationException("A backing class changes data only in a create, update or delete, inside the engine's transaction.");
+        if (operation.Transaction is null || operation.Action is not (DataSourceAction.Create or DataSourceAction.Update or DataSourceAction.Delete))
+            throw new InvalidOperationException("A backing class changes data only in a create, update or delete, inside the engine's transaction.");
         await using var command = await CommandAsync(sql, args, ct);
         return await command.ExecuteNonQueryAsync(ct);
     }

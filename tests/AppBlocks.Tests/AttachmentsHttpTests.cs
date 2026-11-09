@@ -114,6 +114,17 @@ public sealed class AttachmentsHttpTests
         // The files belong to the record, so every block bound to it shows them.
         Assert.Single((await files.ListAsync("id=4")).Items);
         Assert.Single((await readOnly.ListAsync("id=4")).Items);
+
+        // A later site configuration can leave a published block with no compatible types.
+        var settings = site.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<AppBlocks.Attachments.AttachmentSettings>>().Value;
+        settings.AllowedExtensions = [".docx"];
+        foreach (var name in new[] { "file.docx", "file.txt", "file.exe" })
+        {
+            var refused = await small.UploadAsync(new(name, "application/octet-stream", Encoding.UTF8.GetBytes("x")), query: "id=4");
+            Assert.Equal(HttpStatusCode.UnsupportedMediaType, refused.Response.StatusCode);
+            Assert.Contains("No file types are accepted here", refused.Problem);
+        }
+        Assert.Single((await files.ListAsync("id=4")).Items);
     }
 
     [Fact]

@@ -1,13 +1,13 @@
 namespace AppBlocks.Authentication;
 
-/// <summary>Who besides Umbraco's Administrators group counts as an administrator for AppBlocks' own backoffice screens.</summary>
+/// <summary>Who besides Umbraco's Administrators group may use AppBlocks' administration, backing-class editor and database previews.</summary>
 public sealed class AdministratorOptions
 {
     public const string Section = "AppBlocks";
 
     /// <summary>
-    /// The aliases of further backoffice User groups whose members pass <see cref="AppBlocksAuthorization.AdministratorPolicy"/>, such as a
-    /// site operations group given the Connections and Anti-spam screens without full Umbraco administration. Empty by default.
+    /// The aliases of further backoffice User groups whose members pass <see cref="AppBlocksAuthorization.AdministratorPolicy"/>:
+    /// AppBlocks' Settings screens, backing-class editor, and data source and API endpoint previews. Empty by default.
     /// </summary>
     public string[] AdministratorGroups { get; set; } = [];
 }

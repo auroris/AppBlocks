@@ -2,7 +2,7 @@ import { UmbConditionBase } from "@umbraco-cms/backoffice/extension-registry";
 import { UMB_AUTH_CONTEXT } from "@umbraco-cms/backoffice/auth";
 import { request } from "./api.js";
 
-// Administrators and the User Groups AppBlocks:CodeEditorGroups names; the server asks the same question on every request.
+// Administrators and the User Groups AppBlocks:AdministratorGroups names; the server asks the same question on every request.
 export default class CodeEditorCondition extends UmbConditionBase {
     constructor(host, args) {
         super(host, args);

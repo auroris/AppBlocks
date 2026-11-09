@@ -342,6 +342,7 @@ const formSubmissions = new WeakMap();
 
 function mountForm(form) {
     const fields = [...form.querySelectorAll("[data-field]")];
+    const dateTimes = new Map();
     const shuttles = new Map([...form.querySelectorAll("[data-app-shuttle]")].map(root => [root.querySelector("[data-field]"), mountShuttle(root)]));
     const colors = new Map([...form.querySelectorAll("[data-app-color]")].map(root => [root.querySelector("[data-field]"), mountColor(root)]));
     const errors = form.querySelector(".app-form-errors");
@@ -390,6 +391,8 @@ function mountForm(form) {
             if (field.type === "checkbox") field.checked = truthy(value);
             else if (field.type === "datetime-local" && !blank(value)) field.value = toLocalInput(value);
             else field.value = value ?? "";
+            // The minute-level control cannot represent every second, fraction or offset of the stored value.
+            if (field.type === "datetime-local") dateTimes.set(field, { shown: field.value, value: blank(value) ? null : value });
             field.disabled = field.dataset.readonly === "true" || !(record.key ? record.capabilities.update : record.capabilities.create);
             shuttles.get(field)?.display();
             colors.get(field)?.display();
@@ -431,7 +434,10 @@ function mountForm(form) {
             if (field.type === "hidden" && field.dataset.kind === "checkbox") value = value === "" ? null : truthy(value);
             // Preserve decimal precision; the resource binds this invariant string to decimal.
             else if (field.type === "number") value = value === "" ? null : value;
-            else if (field.type === "datetime-local") value = fromLocalInput(value);
+            else if (field.type === "datetime-local") {
+                const original = dateTimes.get(field);
+                value = value === original.shown ? original.value : fromLocalInput(value);
+            }
             else if (value === "" && field.dataset.kind !== "shuttle") value = null;
             values[field.dataset.field] = value;
         }

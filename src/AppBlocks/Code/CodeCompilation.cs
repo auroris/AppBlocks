@@ -13,8 +13,6 @@ public sealed class CodeOptions
     public const string Section = "AppBlocks";
     /// <summary>The C# folder, relative to the content root unless rooted. Keep it equal to the <c>AppBlocksCodeDirectory</c> MSBuild property.</summary>
     public string CodeDirectory { get; set; } = CodeFolder.DefaultDirectory;
-    /// <summary>User Group aliases allowed to use the C# section, alongside Administrators.</summary>
-    public string[] CodeEditorGroups { get; set; } = [];
 }
 
 /// <summary>The extension points AppBlocks reads from the compiled folder, in the order the section lists them.</summary>

@@ -95,7 +95,7 @@ internal sealed class SignedInMemberHandler(IHttpContextAccessor accessor) : Aut
     }
 }
 
-/// <summary>An approved, unlocked backoffice User in Umbraco's Administrators group.</summary>
+/// <summary>An approved, unlocked backoffice User in Umbraco's Administrators or a configured AppBlocks administrator group.</summary>
 public sealed class BackOfficeAdministratorRequirement : IAuthorizationRequirement;
 
 /// <summary>Reads the User afresh through <see cref="ApplicationAccessPolicy.IsBackOfficeAdministratorAsync"/>, so the group and the account's standing count now, not when the token was issued.</summary>

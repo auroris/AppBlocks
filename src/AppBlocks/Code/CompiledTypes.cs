@@ -1,7 +1,4 @@
-using System.Security.Claims;
-using AppBlocks.Authentication;
 using AppBlocks.DataSources;
-using Microsoft.Extensions.Options;
 
 namespace AppBlocks.Code;
 
@@ -46,16 +43,4 @@ public sealed class CompiledTypes(CodeCompilation compilation, IServiceProvider 
 internal sealed class CompiledDataSourcePolicies(CompiledTypes compiled) : IDataSourcePolicy
 {
     public ValueTask<bool> IsAllowedAsync(DataSourceRequest request, CancellationToken ct) => compiled.Create<IDataSourcePolicy>().AllowAsync(request, ct);
-}
-
-/// <summary>
-/// Who may use the C# section: a backoffice User in Administrators or a User Group <c>AppBlocks:CodeEditorGroups</c> names. Code saved there
-/// runs inside the site with its full rights, so the backoffice condition and every endpoint ask this.
-/// </summary>
-public sealed class CodeEditorAccess(ApplicationAccessPolicy access, IOptions<CodeOptions> options)
-{
-    public async Task<bool> IsAllowedAsync(ClaimsPrincipal principal)
-        => await access.ActiveUserAsync(principal) is { } user && user.Groups.Any(group =>
-            group.Alias.Equals(Umbraco.Cms.Core.Constants.Security.AdminGroupAlias, StringComparison.OrdinalIgnoreCase)
-            || options.Value.CodeEditorGroups.Contains(group.Alias, StringComparer.OrdinalIgnoreCase));
 }

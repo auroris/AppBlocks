@@ -132,8 +132,8 @@ AppBlocks works with no configuration. Each setting below keeps the behaviour de
 | `AppBlocks:ApiRoot` | `/api` | Where forms, attachments, tabular forms and the antiforgery token endpoint answer, and the path `IsApiRequest` treats as API-style. Pages with blocks carry it in an `appblocks-api-root` meta tag, which the runtime and `data-api.js` read. The companions' report, download and paper report routes stay under `/api`. |
 | `AppBlocks:ApiBasePath` | `/api/data` | Where [API endpoints](api-endpoints.md#base-path) answer. |
 | `AppBlocks:ApiEndpoints:MaxRouteSegments` | `8` | The most segments an API endpoint's route may have. |
-| `AppBlocks:AdministratorGroups` | none | Backoffice User group aliases admitted beside Umbraco's Administrators to AppBlocks' Settings screens and the `AppBlocks.Administrator` policy. |
-| `AppBlocks:CodeDirectory`, `AppBlocks:CodeEditorGroups` | `AppBlocks/Code`, none | The [Backing Classes](csharp-editor.md) folder and who may use the section. |
+| `AppBlocks:AdministratorGroups` | none | Backoffice User group aliases admitted beside Umbraco's Administrators to AppBlocks' Settings screens, Backing Classes editor, and data source and API endpoint previews. Umbraco section and node permissions still apply. |
+| `AppBlocks:CodeDirectory` | `AppBlocks/Code` | The [Backing Classes](csharp-editor.md) folder. Access uses `AppBlocks:AdministratorGroups`. |
 | `AppBlocks:DataRoot` | the content root | The folder whose `App_Data` holds AppBlocks' settings files and fallback database files. |
 | `AppBlocks:Forms:MaxBodySize` | `1048576` | The largest form submission, in bytes. |
 | `AppBlocks:DataSources:CommandTimeoutSeconds` | `30` | How long a data source statement may run; 0 waits without limit. A statement that runs out of time answers 503, "The database did not answer in time". |
@@ -244,6 +244,8 @@ public sealed class NoticeSettingsController(NoticeSettings settings) : Manageme
 ```
 
 AppBlocks' connection list, database types, table list and guide stay open to every backoffice user, because the data source and report pickers read them.
+
+Data source and API endpoint **Test** actions also require this administrator policy, because they execute the current SQL even before it is saved or published. They still require Content section access and permission to update the existing node or create under the parent of a new node. The Backing Classes editor uses the same administrator rule and still requires Settings section access and the development compilation setup for editing. Sites that used `AppBlocks:CodeEditorGroups` must move those aliases into `AppBlocks:AdministratorGroups`; the former setting no longer grants access.
 
 ### Names a companion owns
 

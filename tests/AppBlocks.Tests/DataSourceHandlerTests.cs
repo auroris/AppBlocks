@@ -595,6 +595,96 @@ public sealed class DataSourceHandlerTests : IDisposable
         Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ORDER_LINES WHERE PRODUCT = 'Special (by class)'"));
     }
 
+    [Fact]
+    public async Task A_tabular_save_over_the_row_limit_rolls_back_and_can_be_corrected_with_the_same_submission()
+    {
+        var lines = Lines();
+        var context = Context(Owner);
+        var scope = new DataSourceScope("orderId", "1");
+        var refused = await lines.SaveRowsAsync(scope, [Change(RowOperation.Update, "1", values: new { product = "Changed" }),
+            Change(RowOperation.Create, values: new { product = "Bolt" })], context, 1, default);
+        Assert.Equal(422, refused.Status);
+        Assert.Contains("more than 1 rows", refused.Errors![""][0]);
+        Assert.Equal("Paint", Scalar("SELECT PRODUCT FROM ORDER_LINES WHERE LINE_ID = 1"));
+        Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ORDER_LINES"));
+
+        // The limit is checked after the whole batch, and a refusal has not consumed its submission key.
+        DataSourceChange[] corrected = [Change(RowOperation.Create, values: new { product = "Bolt" }), Change(RowOperation.Delete, "1")];
+        var saved = await lines.SaveRowsAsync(scope, corrected, context, 1, default);
+        Assert.Equal(200, saved.Status);
+        Assert.Equal("Bolt", Assert.Single(saved.Rows!).Values["product"]);
+        var retried = await lines.SaveRowsAsync(scope, corrected, context, 1, default);
+        Assert.Equal(saved.Rows![0].Key, Assert.Single(retried.Rows!).Key);
+        Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ORDER_LINES"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_detail_list_over_the_row_limit_rolls_back_the_master_and_every_batch(bool creating)
+    {
+        var orders = Orders(new Handler());
+        var lines = Lines();
+        var context = Context(Owner);
+        var first = Batch(lines, Change(RowOperation.Create, values: new { product = "Nut" }));
+        var second = Batch(lines, Change(RowOperation.Create, values: new { product = "Bolt" })) with { MaximumRows = 1 };
+        var key = creating ? null : "1";
+        var values = Json(new { customer = "Changed" });
+        var refused = await orders.SaveWithDetailsAsync(key, values, null, [first, second], context, default);
+        Assert.Equal(422, refused.Status);
+        Assert.Equal(1, refused.Detail);
+        Assert.Contains("more than 1 rows", refused.Refusal!.Errors![""][0]);
+        Assert.Equal("Hangar Co", Scalar("SELECT CUSTOMER FROM ORDERS WHERE ORDER_ID = 1"));
+        Assert.Equal(2L, Scalar("SELECT COUNT(*) FROM ORDERS"));
+        Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ORDER_LINES"));
+
+        // Neither the master nor the batches received a success receipt. Both blocks see all the final rows.
+        second = second with { MaximumRows = 3 };
+        var saved = await orders.SaveWithDetailsAsync(key, values, null, [first, second], context, default);
+        Assert.Equal(200, saved.Status);
+        Assert.Equal(creating ? 2 : 3, saved.Details![0].Rows!.Count);
+        Assert.Equal(saved.Details[0].Rows!.Select(r => r.Key), saved.Details[1].Rows!.Select(r => r.Key));
+        Assert.Equal(3L, Scalar("SELECT COUNT(*) FROM ORDER_LINES"));
+        if (creating)
+        {
+            // A later retry can fail to list the saved rows, but must return that failure rather than an incomplete success.
+            var retried = await orders.SaveWithDetailsAsync(key, values, null, [first, second with { MaximumRows = 1 }], context, default);
+            Assert.Equal(422, retried.Status);
+            Assert.Null(retried.Details);
+            Assert.Equal(3L, Scalar("SELECT COUNT(*) FROM ORDERS"));
+            Assert.Equal(3L, Scalar("SELECT COUNT(*) FROM ORDER_LINES"));
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_refused_list_rolls_back_a_save_and_the_read_hook_stays_read_only(bool withMaster)
+    {
+        var refuse = true;
+        var handler = new Handler {
+            List = async operation => {
+                Assert.NotNull(operation.Transaction);
+                Assert.Equal(2L, await operation.Sql.ScalarAsync("SELECT COUNT(*) FROM ORDER_LINES"));
+                await Assert.ThrowsAsync<InvalidOperationException>(() => operation.Sql.ExecuteAsync("DELETE FROM ORDER_LINES"));
+                return refuse ? DataSourceOutcome.Invalid("", "Cannot show these rows.") : DataSourceOutcome.Continue;
+            },
+        };
+        var lines = Orders(handler, [], ("alias", "orders.lines"), ("source", "ORDER_LINES"), ("keyColumns", "LINE_ID"), ("mapping", null));
+        var orders = Orders(new Handler());
+        var context = Context(Owner);
+        var batch = Batch(lines, Change(RowOperation.Create, values: new { product = "Bolt" }));
+        async Task<int> Save() => withMaster
+            ? (await orders.SaveWithDetailsAsync("1", Json(new { customer = "Changed" }), null, [batch], context, default)).Status
+            : (await lines.SaveRowsAsync(new("orderId", "1"), batch.Changes, batch.Context, 10, default)).Status;
+        Assert.Equal(422, await Save());
+        Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ORDER_LINES"));
+        Assert.Equal("Hangar Co", Scalar("SELECT CUSTOMER FROM ORDERS WHERE ORDER_ID = 1"));
+        refuse = false;
+        Assert.Equal(200, await Save());
+        Assert.Equal(2L, Scalar("SELECT COUNT(*) FROM ORDER_LINES"));
+    }
+
     private SqlDataSource Lines(params (string Alias, object? Value)[] settings)
     {
         var source = new SqlDataSource(Definition(Values([("alias", "orders.lines"), ("source", "ORDER_LINES"), ("keyColumns", "LINE_ID"), ("mapping", null), ("handler", null), .. settings])),

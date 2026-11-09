@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using AppBlocks.Authentication;
 using Asp.Versioning;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -38,6 +39,7 @@ public sealed class ApiEndpointAuthoringController(IContentService content, IAut
 
     [HttpPost("test")]
     [Authorize(Policy = AuthorizationPolicies.SectionAccessContent)]
+    [Authorize(Policy = AppBlocksAuthorization.AdministratorPolicy)]
     public async Task<IActionResult> Test(ApiEndpointTestRequest request, CancellationToken ct)
     {
         Response.Headers.CacheControl = "no-store";

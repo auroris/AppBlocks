@@ -75,13 +75,15 @@ When a compilation succeeds, the previous assembly's load context is unloaded. T
 
 ## Who can use it
 
-The section appears to backoffice Users in the Administrators group and in any User Group whose alias `AppBlocks:CodeEditorGroups` lists:
+The section appears to backoffice Users in the Administrators group and in any User Group whose alias `AppBlocks:AdministratorGroups` lists:
 
 ```json
-{ "AppBlocks": { "CodeEditorGroups": [ "developers" ] } }
+{ "AppBlocks": { "AdministratorGroups": [ "developers" ] } }
 ```
 
-The groups `AppBlocks:AdministratorGroups` admits to AppBlocks' other Settings screens are not among them: running code in the site is granted only here. Every endpoint checks the same rule, and also requires access to the Settings section. Every save, create, rename and delete is written to Umbraco's audit log with the entity type `AppBlocks C#` and the path.
+This is the same administrator rule used by AppBlocks' other Settings screens and its data source and API endpoint previews. It delegates AppBlocks access without putting the User in Umbraco's Administrators group. Every endpoint checks the same rule, and also requires access to the Settings section. Editing still requires the development compilation setup described above. Every save, create, rename and delete is written to Umbraco's audit log with the entity type `AppBlocks C#` and the path.
+
+`AppBlocks:CodeEditorGroups` has been removed. Move any aliases from that setting into `AppBlocks:AdministratorGroups`; the old setting no longer grants access.
 
 ## Security
 

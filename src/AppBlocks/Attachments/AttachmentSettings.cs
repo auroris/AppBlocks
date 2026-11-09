@@ -41,11 +41,13 @@ public sealed class AttachmentSettings
 /// <summary>The size and type limits that apply to one block: the page's choice within the site's configured maxima.</summary>
 public sealed record AttachmentLimits(long MaxFileSize, IReadOnlyList<string> Extensions)
 {
-    /// <summary>What the file input's <c>accept</c> attribute says, or null for any file.</summary>
+    private bool UnrestrictedExtensions { get; init; } = Extensions.Count == 0;
+
+    /// <summary>What the file input's <c>accept</c> attribute says, or null when there are no extensions to suggest.</summary>
     public string? Accept => Extensions.Count == 0 ? null : string.Join(",", Extensions);
 
     public bool Accepts(string fileName)
-        => Extensions.Count == 0 || Extensions.Contains(Path.GetExtension(fileName).ToLowerInvariant(), StringComparer.Ordinal);
+        => Extensions.Count == 0 ? UnrestrictedExtensions : Extensions.Contains(Path.GetExtension(fileName).ToLowerInvariant(), StringComparer.Ordinal);
 
     /// <summary>
     /// A block's size in megabytes and its extensions, each capped by the configuration: a block cannot accept a
@@ -57,7 +59,7 @@ public sealed record AttachmentLimits(long MaxFileSize, IReadOnlyList<string> Ex
         var configured = Normalize(settings.AllowedExtensions);
         var chosen = Normalize(Parse(blockExtensions));
         var extensions = configured.Count == 0 ? chosen : chosen.Count == 0 ? configured : chosen.Where(configured.Contains).ToArray();
-        return new(size, extensions);
+        return new(size, extensions) { UnrestrictedExtensions = configured.Count == 0 && chosen.Count == 0 };
     }
 
     /// <summary>Extensions as an editor writes them: separated by commas, spaces or lines, with or without their dot.</summary>
