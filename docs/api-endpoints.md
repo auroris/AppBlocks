@@ -1,6 +1,6 @@
 # API endpoints
 
-An **API endpoint** serves a SQL data source's rows as JSON over GET, at a route the editor defines. It is AppBlocks' take on an Oracle APEX RESTful service: a URL template whose parameters bind into a query, answered as JSON. Endpoints read; they offer no writes, which stay with forms, tabular forms and their data sources.
+An **API endpoint** serves a SQL data source's rows as JSON over GET, at a route the editor defines. The route is a URL template whose parameters bind into the query. Endpoints read; writes stay with forms, tabular forms and their data sources.
 
 ## Creating one
 
@@ -24,7 +24,7 @@ Publishing checks the endpoint as a request would read it, against its source's 
 
 ## Routes and parameters
 
-A route has up to eight segments separated by `/`. Each is a literal, of letters, digits, `-`, `.`, `_` and `~`, or a parameter, a colon and a name: `:id`. There are no empty segments, no `.` or `..`, and no query string. Literals match ignoring case. Two routes that would match the same requests, such as `orders/:id` and `orders/:key`, cannot both be published.
+A route has up to eight segments separated by `/`, or as many as `AppBlocks:ApiEndpoints:MaxRouteSegments` allows. Each is a literal, of letters, digits, `-`, `.`, `_` and `~`, or a parameter, a colon and a name: `:id`. There are no empty segments, no `.` or `..`, and no query string. Literals match ignoring case. Two routes that would match the same requests, such as `orders/:id` and `orders/:key`, cannot both be published.
 
 When several routes match a request, the one with more literal segments wins, and then the one whose first literal comes earlier: `orders/latest` answers before `orders/:id`, and `orders/:id` before `:kind/latest`.
 
@@ -93,7 +93,7 @@ The catalogue of endpoints is read from Umbraco's published content on each requ
 
 ## Calling endpoints from a page
 
-`App_Plugins/ApplicationBlocks/data-api.js` is a small ES module for a site's own pages, public or not, that read endpoints. It is the transport the blocks' runtime uses for its own requests, so it needs no backoffice session and imports nothing else.
+`App_Plugins/ApplicationBlocks/data-api.js` is a small ES module for a site's own pages, public or not, that read endpoints or send a signed-in Member's changes. It is the transport the blocks' runtime uses for its own requests, so it needs no backoffice session and imports nothing else.
 
 | Export | What it does |
 | --- | --- |
@@ -102,6 +102,9 @@ The catalogue of endpoints is read from Umbraco's published content on each requ
 | `errorText(error, fallback)` | The text to show a reader: the problem's `detail`, `title` or first field error, or the fallback, `The request could not be completed.` unless given, when there is none or the request got no answer. |
 | `withQuery(url, query)` | The address with each of the query's values set, leaving out `null` and `undefined` and repeating the name for an array. |
 | `siteUrl(url)`, `pathBase` | A path starting with `/` is from the site's root and takes the site's path base, read from where the module is served, so a site at `/intranet` asks `/intranet/api/data/...`. A `URL` object or an absolute address is used as it is. |
+| `apiRoot` | Where the blocks' own endpoints answer, path base included, such as `/intranet/api`: the page's `appblocks-api-root` meta tag, which follows `AppBlocks:ApiRoot`, or `/api` under the path base. It already holds the path base, so pass `new URL(apiRoot + "/...", location.origin)` to `request`. |
+| `antiforgeryToken()` | The signed-in Member's antiforgery token, `{ token, headerName }`, from the token endpoint below `apiRoot`, fetched once per page. A refusal, such as 401 for a visitor without a Member session, is not kept, so asking again after signing in works. |
+| `memberRequest(url, options)` | `request` with the antiforgery token in its header for every method but GET and HEAD, for a controller under the `AppBlocks.Member` policy; [Adding AppBlocks to a site](site-integration.md#controllers-for-signed-in-members) has an example. |
 
 With an endpoint whose route is `orders` and `status` under Query parameters, a page lists the open orders like this:
 

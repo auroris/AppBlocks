@@ -14,7 +14,7 @@ Sites using Umbraco's conventional `blockgrid/Components` or `blocklist/Componen
 
 ## Styling
 
-The runtime stylesheet, `App_Plugins/ApplicationBlocks/runtime.css`, gives forms, attachments, tabular forms and schedules a complete look that inherits the site's font and base size. Its colours, radii and shadows are custom properties with an `--app-` prefix, declared on `:root`, so a site restyles the blocks by redefining them, on `:root` or on `.application-blocks`, without overriding a rule:
+The runtime stylesheet, `App_Plugins/ApplicationBlocks/runtime.css`, gives forms, attachments, tabular forms and schedules a complete look that inherits the site's font and base size. Its colours, radii and shadows are custom properties with an `--app-` prefix. The defaults are declared on `:where(:root)`, which has no specificity, so a site's own rule that sets a token, on `:root` or on `.application-blocks`, wins wherever its stylesheet loads, although AppBlocks adds its stylesheet at the end of the head. A site restyles the blocks by redefining tokens, without overriding a rule:
 
 ```css
 .application-blocks {
@@ -26,11 +26,21 @@ The runtime stylesheet, `App_Plugins/ApplicationBlocks/runtime.css`, gives forms
 }
 ```
 
-The full list is at the top of the stylesheet: the surfaces (`--app-surface`, `--app-surface-2`, `--app-surface-3`), borders, text (`--app-text`, `--app-muted`), the danger colours for errors and the Delete button, `--app-shadow` and `--app-focus`. A schedule's bar colours are `--ah-schedule-kind-1` to `--ah-schedule-kind-8`, and `--ah-schedule-marker-height` is the height of its marker bands; the [Schedule block guide](schedule.md) has the columns that colour rows and bars from the data. The `ah-*` hooks (`ah-grid`, `ah-layout`, `ah-region`, and each block's title and help) are left to the site's theme; the native rendering styles them itself inside `.appblocks-native`, so a site without a theme still gets a grid, column layouts and framed regions.
+The full list is at the top of the stylesheet: the surfaces (`--app-surface`, `--app-surface-2`, `--app-surface-3`), borders, text (`--app-text`, `--app-muted`), the danger colours for errors and the Delete button, `--app-shadow` and `--app-focus`. `--app-focus` is a focus ring made from `--app-accent` where the default is declared, on the root, so a site that sets `--app-accent` on `.application-blocks` alone sets `--app-focus` there too, such as `--app-focus: 0 0 0 3px color-mix(in srgb, #5143a3 28%, transparent)`. Interactive Reports' Print dialog uses the same tokens.
 
-Beside the stylesheet, two runtime modules are public for a site's own scripts. `App_Plugins/ApplicationBlocks/data-api.js` sends requests to AppBlocks' endpoints with the visitor's cookies and the site's path base, and turns a refusal into text to show; the [API endpoints guide](api-endpoints.md#calling-endpoints-from-a-page) has an example. `App_Plugins/ApplicationBlocks/schedule.js` builds a schedule's bars and row labels and mounts its tooltip and popovers on a table the page lays out itself; the [Schedule block guide](schedule.md#a-schedule-of-your-own) describes the markup. Neither mounts anything when imported. `runtime.js` itself is what the blocks load, and mounts every block on the page.
+A form's frame has tokens of its own, each falling back to a general one: `--app-form-max-width` (72rem), `--app-form-padding` (1.75rem, 1.15rem on narrow screens), `--app-form-background` (`--app-surface`), `--app-form-border` (`1px solid` `--app-border`), `--app-form-radius` (`--app-radius`, `--app-radius-sm` on narrow screens) and `--app-form-shadow` (`--app-shadow`). A form without a card around it is three tokens:
+
+```css
+.application-blocks { --app-form-padding: 0; --app-form-border: 0; --app-form-shadow: none; }
+```
+
+A schedule's bar colours are `--ah-schedule-kind-1` to `--ah-schedule-kind-8`, and `--ah-schedule-marker-height` is the height of its marker bands; the [Schedule block guide](schedule.md) has the columns that colour rows and bars from the data. The `ah-*` hooks (`ah-grid`, `ah-layout`, `ah-region`, and each block's title and help) are left to the site's theme; the native rendering styles them itself inside `.appblocks-native`, so a site without a theme still gets a grid, column layouts and framed regions.
+
+Beside the stylesheet, two runtime modules are public for a site's own scripts. `App_Plugins/ApplicationBlocks/data-api.js` sends requests to AppBlocks' endpoints with the visitor's cookies and the site's path base, turns a refusal into text to show, and sends a signed-in Member's changes with their antiforgery token; the [API endpoints guide](api-endpoints.md#calling-endpoints-from-a-page) lists its exports. `App_Plugins/ApplicationBlocks/schedule.js` builds a schedule's bars and row labels and mounts its tooltip and popovers on a table the page lays out itself; the [Schedule block guide](schedule.md#a-schedule-of-your-own) describes the markup. Neither mounts anything when imported. `runtime.js` itself is what the blocks load, and mounts every block on the page.
 
 A form whose **Label position** is `left` puts its labels in a column beside the inputs. A field narrower than about 26rem, and every field on a phone, stacks its label above the input again.
+
+The blocks' own texts, such as **Saved.**, **Delete this record?** and the schedule's toolbar, come in English and can be replaced per language from the site's Umbraco dictionary; [Localisation](localisation.md) lists every text and how dates follow the page's language.
 
 ## Previews in the backoffice
 
@@ -102,7 +112,7 @@ The `AppBlocks:NoStorePages` setting controls AppBlocks' page cache headers:
 
 | Value | Behavior |
 | --- | --- |
-| `AppBlocksPages` (default) | Send `no-store` and prevent output-cache storage for pages with a block whose output depends on who asks: a form, attachments, a schedule, a tabular form, or a plugin block that requires a user or varies by data. Their Public Access login/denied responses follow. A page of content blocks alone is cached as Umbraco and the host decide. |
+| `AppBlocksPages` (default) | Send `no-store` and prevent output-cache storage for pages with a block whose output depends on who asks: a form, attachments, a schedule, a tabular form, or a plugin block that requires a user or varies by data. Their Public Access login/denied responses follow. A page of content blocks alone, whichever rendering draws it, is cached as Umbraco and the host decide. |
 | `AllPages` | Apply that behavior to every Umbraco-routed website page. |
 | `Off` | Add no page cache restrictions from AppBlocks; the host and Umbraco control caching. |
 
@@ -110,7 +120,37 @@ The `AppBlocks:NoStorePages` setting controls AppBlocks' page cache headers:
 { "AppBlocks": { "NoStorePages": "AppBlocksPages" } }
 ```
 
-The blocks' `/api/` endpoints keep their own `no-store` headers in every mode, but do not opt out of output caching, so exclude them from any output cache policy you add. [API endpoints](api-endpoints.md) answer below `/api/data`, or `AppBlocks:ApiBasePath`, with `no-store` too; they have no page, so their data source's access decides alone, and AppBlocks adds no CORS policy for them. Antiforgery and other host middleware may also set their own cache headers, including when the setting is Off. A cookie for a disabled or locked-out account stays refused by AppBlocks on an open page; it is not treated as an anonymous visitor.
+The blocks' own endpoints, below `/api` or `AppBlocks:ApiRoot`, keep their own `no-store` headers in every mode, but do not opt out of output caching, so exclude them from any output cache policy you add. [API endpoints](api-endpoints.md) answer below `/api/data`, or `AppBlocks:ApiBasePath`, with `no-store` too; they have no page, so their data source's access decides alone, and AppBlocks adds no CORS policy for them. Antiforgery and other host middleware may also set their own cache headers, including when the setting is Off. A cookie for a disabled or locked-out account stays refused by AppBlocks on an open page; it is not treated as an anonymous visitor.
+
+## Settings
+
+AppBlocks works with no configuration. Each setting below keeps the behaviour described in its default, and `src/AppBlocks/appsettings-schema.json` describes them for an editor that reads JSON schemas.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `AppBlocks:NoStorePages` | `AppBlocksPages` | Which pages AppBlocks keeps out of caches; see [Access and caching](#access-and-caching). |
+| `AppBlocks:ApiRoot` | `/api` | Where forms, attachments, tabular forms and the antiforgery token endpoint answer, and the path `IsApiRequest` treats as API-style. Pages with blocks carry it in an `appblocks-api-root` meta tag, which the runtime and `data-api.js` read. The companions' report, download and paper report routes stay under `/api`. |
+| `AppBlocks:ApiBasePath` | `/api/data` | Where [API endpoints](api-endpoints.md#base-path) answer. |
+| `AppBlocks:ApiEndpoints:MaxRouteSegments` | `8` | The most segments an API endpoint's route may have. |
+| `AppBlocks:AdministratorGroups` | none | Backoffice User group aliases admitted beside Umbraco's Administrators to AppBlocks' Settings screens and the `AppBlocks.Administrator` policy. |
+| `AppBlocks:CodeDirectory`, `AppBlocks:CodeEditorGroups` | `AppBlocks/Code`, none | The [Backing Classes](csharp-editor.md) folder and who may use the section. |
+| `AppBlocks:DataRoot` | the content root | The folder whose `App_Data` holds AppBlocks' settings files and fallback database files. |
+| `AppBlocks:Forms:MaxBodySize` | `1048576` | The largest form submission, in bytes. |
+| `AppBlocks:DataSources:CommandTimeoutSeconds` | `30` | How long a data source statement may run; 0 waits without limit. A statement that runs out of time answers 503, "The database did not answer in time". |
+| `AppBlocks:DataSources:MaxChanges` | `200` | The most row changes one tabular save, or one block's rows in a form's save, may carry. |
+| `AppBlocks:DataSources:ReceiptLifetimeMinutes`, `ReceiptCapacity` | `15`, `10000` | How long, and how many, create receipts are kept so a retried create returns its record; see [Concurrency and duplicate submissions](business-rules.md#concurrency-and-duplicate-submissions). |
+| `AppBlocks:Tabular:MaxRows` | `1000` | The most rows any Tabular form block lists for one record; a block's own limit is cut to it. |
+| `AppBlocks:Schedule:MaxDays`, `MaxHourDays` | `400`, `31` | The longest window of day columns and of hour columns. |
+| `AppBlocks:Schedule:MaxRows`, `MaxBars` | `2000`, `5000` | The most rows and bars a schedule reads. |
+| `AppBlocks:Schedule:WeekendDays` | Saturday and Sunday | The days a schedule shades as the weekend, such as `["Friday", "Saturday"]`. |
+| `AppBlocks:AntiSpam:<service>:SiteKey`, `SecretKey` | none | [Anti-spam](anti-spam.md) keys that the settings screen cannot change. |
+| `AppBlocks:AntiSpam:VerifyHostname` | `true` | Refuses a token the service says was solved on another host. Set it to `false` behind a proxy that hides the request's host from the site, or with a service's published test keys. |
+| `Attachments:Connection` | `AppBlocksDb` | The upload store; see [Connections](connections.md). |
+| `Attachments:MaxFileSize`, `AllowedExtensions` | 25 MB, any | The largest file and the extensions every Attachments block is limited to. |
+| `Attachments:RetentionDays` | `30` | How long a removed file stays before an administrator's purge deletes it. |
+| `Attachments:PendingLifetimeHours` | `24` | How long a file uploaded to a record not saved yet waits for the save. |
+
+The companions add their own: `AppBlocks:ReportAdministratorGroups`, `AppBlocks:IncludeBackOfficeReports` and `AppBlocks:InteractiveReports:PaperSizes` in the [Interactive Reports companion](../src/AppBlocks.InteractiveReports/README.md), and `AppBlocks:Documents:*` in the [Documents companion](../src/AppBlocks.Documents/README.md).
 
 ## Companion packages
 
@@ -148,9 +188,9 @@ A companion's own API controller for signed-in Members uses the `AppBlocks.Membe
 | No Member session | 401 | Umbraco's redirect to the login page |
 | A Member who is locked out or unapproved | 403 | Umbraco's access-denied redirect |
 
-A request is API-style when its path is under `/api/`, its controller is an `[ApiController]`, it accepts JSON, or it carries `X-Requested-With: XMLHttpRequest`. A backoffice User without a Member session counts as having no Member session.
+A request is API-style when its path is under the blocks' API root, `/api` unless `AppBlocks:ApiRoot` moves it, its controller is an `[ApiController]`, it accepts JSON, or it carries `X-Requested-With: XMLHttpRequest`. `AppBlocksAuthorization.IsApiRequest(httpContext)` gives the same answer to a site's own code. A backoffice User without a Member session counts as having no Member session.
 
-A signed-in Member's script gets an antiforgery token from `GET /api/antiforgery/token`, which answers `{ "token": "...", "headerName": "RequestVerificationToken" }` with `Cache-Control: no-store`, and 401 to anyone else. The token is bound to the Member, as the blocks' own tokens are, so it validates on a controller under the policy. Send it in the named header with each change:
+A signed-in Member's script gets an antiforgery token from `GET /api/antiforgery/token`, below the API root as the blocks' endpoints are (`AppBlocksAuthorization.AntiforgeryTokenPath(configuration)` gives the path), which answers `{ "token": "...", "headerName": "RequestVerificationToken" }` with `Cache-Control: no-store`, and 401 to anyone else. The token is bound to the Member, as the blocks' own tokens are, so it validates on a controller under the policy. Send it in the named header with each change:
 
 ```csharp
 using AppBlocks.Authentication;
@@ -171,20 +211,24 @@ public sealed class NoticesController(NoticeStore notices) : ControllerBase
 }
 ```
 
+`memberRequest` in `App_Plugins/ApplicationBlocks/data-api.js` does this for a page's script: it fetches the token from wherever the page's `appblocks-api-root` meta tag says the endpoints are, once per page, and sends it with every method but GET and HEAD. A refusal rejects with an `ApiError` whose `status` is 401 or 403:
+
 ```js
-const { token, headerName } = await (await fetch("/api/antiforgery/token")).json();
-await fetch("/api/notices", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", [headerName]: token },
-    body: JSON.stringify({ title: "Runway closed" }),
-});
+import { memberRequest, errorText } from "/App_Plugins/ApplicationBlocks/data-api.js";
+
+const status = document.getElementById("notice-status");
+try {
+    await memberRequest("/api/notices", { method: "POST", body: { title: "The car park is closed on Friday" } });
+} catch (error) {
+    status.textContent = errorText(error, "The notice could not be posted.");
+}
 ```
 
 A mapped endpoint takes the same policy with `RequireAuthorization(AppBlocksAuthorization.MemberPolicy)`. The policy decides only that the caller is a current Member; the controller still decides which Members may do what.
 
 ### Backoffice controllers for administrators
 
-A companion's management API controller that only administrators may use takes the `AppBlocks.Administrator` policy, `AppBlocksAuthorization.AdministratorPolicy`, as AppBlocks' own Settings screens do. It admits a backoffice User in Umbraco's Administrators group whose account is approved and not locked out, read afresh on every request, so a User taken out of the group or locked out is refused at once, and it answers anyone else with 403. It adds to the backoffice access every management controller already requires, and it can sit on the controller or on single actions beside other policies:
+A companion's management API controller that only administrators may use takes the `AppBlocks.Administrator` policy, `AppBlocksAuthorization.AdministratorPolicy`, as AppBlocks' own Settings screens do. It admits a backoffice User in Umbraco's Administrators group, or in a group whose alias `AppBlocks:AdministratorGroups` lists, whose account is approved and not locked out, read afresh on every request, so a User taken out of the group or locked out is refused at once, and it answers anyone else with 403. It adds to the backoffice access every management controller already requires, and it can sit on the controller or on single actions beside other policies:
 
 ```csharp
 using AppBlocks.Authentication;
@@ -206,7 +250,7 @@ AppBlocks' connection list, database types, table list and guide stay open to ev
 A companion registers the names it owns with AppBlocks from its own registration, through `builder.AddAppBlocks(appBlocks => ...)`:
 
 - `AddKeySegmentContentType("alias")` gives the nodes of a definition document type a URL segment of their own key, as data source nodes have, so a definition named like a page never takes that page's URL. The reports companion registers its report definitions this way.
-- `ReserveConnectionName("name")` keeps a connection the companion opens through its own factory from being saved on the Connections screen, where a saved connection would take the name over. The reports companion reserves `ReportsDb`.
+- `ReserveConnectionName("name")` keeps a connection the companion opens through its own factory from being saved on the Connections screen, where a saved connection would take the name over.
 
 ### Nodes a package generates
 
@@ -219,18 +263,53 @@ public sealed class NoticeDefinitions(IServiceScopeFactory scopes) : INotificati
     {
         // A scope of its own, as the publish checks the installer runs use scoped services.
         using var scope = scopes.CreateScope();
-        scope.ServiceProvider.GetRequiredService<OwnedNodeInstaller>().Install([
+        var installer = scope.ServiceProvider.GetRequiredService<OwnedNodeInstaller>();
+        var dataSources = installer.EnsureDataSourcesRoot();
+        installer.Install([
             new OwnedNode(NoticesEndpointKey, "Notices API", "apiEndpoint", new Dictionary<string, object?> {
                 ["alias"] = "notices.current", ["route"] = "notices", ["connection"] = "NoticesDb", ["access"] = "Public",
                 ["sql"] = NoticeRules.CurrentSql, ["shape"] = "Collection",
-            }, Parent: DataSourcesRootKey),
+            }, Parent: dataSources),
         ]);
     }
 }
 ```
+
+`EnsureDataSourcesRoot` returns the key of the published **Data sources** node at the content root, the parent data sources, lists of values and API endpoints sit under. A site that has one keeps it, published if it was not; a site with none gets one, created and published under `OwnedNodeInstaller.DataSourcesRootKey`.
 
 The installer keeps a SHA-256 fingerprint of each node's definition in Umbraco's key-value table, under `AppBlocks:OwnedNode:<key>`. A start whose definition has the stored fingerprint changes nothing, so the node keeps its published version. A changed definition updates the node and publishes it, which runs the publish checks of its type: an endpoint's SQL is checked against its database at that start, and a definition the checks refuse throws an `OwnedNodeException` with their reasons, publishes nothing and records nothing, so the next start tries again. `Install` answers `Created`, `Updated`, `Unchanged` or `LeftDeleted` for each node.
 
 The package owns the properties its definition names. An editor's change to one of them lasts until the package's definition next changes, and a property the definition leaves out keeps whatever an editor gives it. A node an editor deleted or put in the recycle bin comes back at the next start; pass `recreateDeleted: false` to leave it deleted. For a document type that varies by culture, give each culture's name and values in `Cultures`.
 
 Call the installer once the things its nodes are checked against exist: a list or endpoint's database and tables, and the data source a node selects. Install a parent before its children, as `Install` does with a list in order.
+
+### Pages built from code
+
+A package that installs pages of its own, with a form on them, builds their block values with `AppBlockValues` from element type and field aliases, so it never writes an element type, area or block key. Every key comes from the package's schema, and a block given an `id` keeps the same key each time the page is installed again, so an unchanged definition writes an unchanged value:
+
+```csharp
+using AppBlocks.Blocks;
+
+var forms = new AppBlockValues();
+var form = forms.Form("notices", [
+    forms.Field("appText", "title", new { label = "Title" }, id: "notice.title"),
+    forms.Field("appDate", "postFrom", id: "notice.from", columnSpan: 6),
+    forms.Field("appDate", "postUntil", id: "notice.until", columnSpan: 6),
+], returnPage: noticesPageKey, actions: new { saveLabel = "Post notice" }, values: new { heading = "Notice" }, id: "notice.form");
+// Any other block by its alias, with its property values by alias, placed on the grid in order.
+forms.Place(forms.Add(AppBlockSchema.RichTextAlias, id: "notice.intro"), form);
+
+string json = forms.ToJson();
+```
+
+`ToJson` gives the value of a property that uses the **AppBlocks: Forms container** data type, such as a Forms container block's `forms` property, ready for `OwnedNode` values or a content service save. `Form` takes a C# class's or a published data source's alias and writes its Form Interface, with the key parameter (`id` unless given) and the return page, then places the fields in the form's `fields` area and an Actions block in its `actions` area. `Field` refuses an alias that is not a field block, and `AppBlockItem.Place(area, ...)` refuses an area the block's grid entry does not have.
+
+A package or site allows a block in one of the site's Block Grids from its registration, instead of asking an editor to configure the grid:
+
+```csharp
+builder.AddAppBlocks(appBlocks => appBlocks.AllowInBlockGrid("Main content", AppBlockSchema.FormsContainerAlias));
+```
+
+`AllowInBlockGrid(gridDataTypeName, elementAlias, columnSpan, rowSpan, areaKey)` adds the element to the named Block Grid data type once both exist: at startup, after package migrations, and when the element type is saved. Without `areaKey` the block may sit at the grid's root and in any area; with one, named by key or alias, it may sit in that area only. An element the grid already lists keeps the settings the site gave it.
+
+A site whose document types carry page-wide CSS and JavaScript in properties hands them to the blocks' asset writer from its layout with `AppPageAssets.RegisterPage(page, navigation, published, httpContext, cssAlias, scriptAlias)`. The code of the page and each ancestor, root first, comes before the CSS and JavaScript blocks' own; the aliases default to `css` and `javascript`.

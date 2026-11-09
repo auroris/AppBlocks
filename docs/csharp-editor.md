@@ -4,7 +4,7 @@
 
 | Extension point | What it is for |
 | --- | --- |
-| `IFormResource`, or `FormResource<TCreate, TUpdate>` | A form class, picked in a form's **Form Interface** |
+| `IFormResource`, or `FormResource<TCreate, TUpdate>` | A form class, picked in a form's **Form Interface** beside the published data sources |
 | `IDataSourceHandler` | A backing class, picked in a SQL data source's **Backing class** |
 | `IDataSourcePolicy` | A rule every data source operation must pass |
 | `IBindVariableProvider` | Values for `:APP.name` |
@@ -41,10 +41,10 @@ The MSBuild property is read by a build file in the AppBlocks package, which rem
 
 The folder is created by the first file or folder saved in the section, not on startup. The section takes only paths inside it:
 
-- Names use letters, digits, `_`, `-` and `.`, start with a letter, digit or `_`, have at most 100 characters, and are not device names such as `CON`.
+- A name is any the file system takes, in any language and with spaces inside it, such as `Réservations.cs` or `Order rules.cs`, up to 100 characters. It holds no control characters and none of `\ / : * ? " < > |`, does not start with a dot, does not start or end with a space or end with a dot, and is not a device name such as `CON`. The same rules hold on every server, so a folder copied between Windows and Linux keeps every file.
 - Files end in `.cs`. Other files in the folder are neither listed nor compiled.
 - `..`, rooted and drive paths are refused, and so is any path through a symbolic link or junction below the folder. Links are not listed.
-- Folders nest at most 8 deep, a file holds at most 512 KB, and the folder holds at most 500 files.
+- Folders nest at most 8 deep, a file holds at most 512 KB, and the folder holds at most 500 files. A file that grows past 512 KB outside the backoffice is left out of the compilation with warning `AB0100`, and a file whose path the section cannot take with `AB0101`; the rest of the folder compiles.
 
 Keep the folder in source control with the rest of the site.
 
@@ -65,7 +65,7 @@ Each public, non-abstract class implementing one of the extension points is made
 - Compiled policies are asked as one more registered policy: each must allow the operation.
 - Compiled bind variable providers are asked before the site's own, so a registered provider wins a name they share.
 
-The section also reports a class that is not public, a class that cannot be constructed, and a backing class alias that is not one. These are marked `AB0001` to `AB0005`. A class compiled from the folder is not itself registered with dependency injection, so other services cannot ask for it.
+The section also reports a class that is not public, a class that cannot be constructed, and a backing class alias that is not one. These are marked `AB0001` to `AB0005`, and the files left out of a compilation `AB0100` and `AB0101`. A class compiled from the folder is not itself registered with dependency injection, so other services cannot ask for it.
 
 Pickers fetch their choices again after the section compiles, so a new form class or backing class is offered at once.
 
@@ -81,7 +81,7 @@ The section appears to backoffice Users in the Administrators group and in any U
 { "AppBlocks": { "CodeEditorGroups": [ "developers" ] } }
 ```
 
-Every endpoint checks the same rule, and also requires access to the Settings section. Every save, create, rename and delete is written to Umbraco's audit log with the entity type `AppBlocks C#` and the path.
+The groups `AppBlocks:AdministratorGroups` admits to AppBlocks' other Settings screens are not among them: running code in the site is granted only here. Every endpoint checks the same rule, and also requires access to the Settings section. Every save, create, rename and delete is written to Umbraco's audit log with the entity type `AppBlocks C#` and the path.
 
 ## Security
 
