@@ -24,7 +24,11 @@ public sealed record AntiSpamAnswer(AntiSpamOutcome Outcome, string? Problem = n
 public sealed record AntiSpamOptions(string SiteKey, string? Theme = null, string? Size = null);
 
 /// <summary>One token to check. The secret key comes from the server's configuration or settings, never from content or the browser.</summary>
-public sealed record AntiSpamVerification(string Token, string SecretKey, string SiteKey, decimal ScoreThreshold)
+/// <param name="Hostname">
+/// The host name the form was submitted to, which a service compares with the host its widget was solved on, so a token solved on
+/// another site is refused. Null when the site sets <c>AppBlocks:AntiSpam:VerifyHostname</c> to false.
+/// </param>
+public sealed record AntiSpamVerification(string Token, string SecretKey, string SiteKey, decimal ScoreThreshold, string? Hostname = null)
 {
     /// <summary>Without the token or the secret key, so an adapter that logs this gives neither away.</summary>
     public override string ToString() => $"{nameof(AntiSpamVerification)} {{ {nameof(SiteKey)} = {SiteKey} }}";

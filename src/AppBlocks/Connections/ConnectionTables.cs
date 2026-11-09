@@ -16,19 +16,19 @@ public sealed class ConnectionTables(ConnectionCatalog connections)
         await connection.OpenAsync(timeout.Token);
         await using var command = connection.CreateCommand();
         command.CommandTimeout = 10;
-        command.CommandText = info.Provider switch
+        if (!DatabaseKinds.TryFromProvider(info.Provider, out var kind)) throw new ArgumentException("Unsupported database type.");
+        command.CommandText = kind switch
         {
-            "sqlite" => "SELECT '' AS schema_name, name FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name",
-            "sqlServer" or "postgres" => "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA NOT IN ('pg_catalog','information_schema') ORDER BY TABLE_SCHEMA, TABLE_NAME",
-            "oracle" or "oracle11g" => "SELECT OWNER, TABLE_NAME FROM ALL_TABLES WHERE OWNER = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') UNION SELECT OWNER, VIEW_NAME FROM ALL_VIEWS WHERE OWNER = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')",
-            _ => throw new ArgumentException("Unsupported database type."),
+            DatabaseDialect.Sqlite => "SELECT '' AS schema_name, name FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            DatabaseDialect.SqlServer or DatabaseDialect.Postgres => "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA NOT IN ('pg_catalog','information_schema') ORDER BY TABLE_SCHEMA, TABLE_NAME",
+            _ => "SELECT OWNER, TABLE_NAME FROM ALL_TABLES WHERE OWNER = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') UNION SELECT OWNER, VIEW_NAME FROM ALL_VIEWS WHERE OWNER = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')",
         };
         var tables = new List<DatabaseTable>();
         await using var reader = await command.ExecuteReaderAsync(timeout.Token);
         while (await reader.ReadAsync(timeout.Token))
         {
             var schema = reader.GetString(0); var table = reader.GetString(1);
-            string Quote(string item) => info.Provider == DatabaseDialect.SqlServer.ProviderName() ? "[" + item.Replace("]", "]]") + "]" : "\"" + item.Replace("\"", "\"\"") + "\"";
+            string Quote(string item) => kind == DatabaseDialect.SqlServer ? "[" + item.Replace("]", "]]") + "]" : "\"" + item.Replace("\"", "\"\"") + "\"";
             tables.Add(new(schema.Length > 0 ? schema + "." + table : table, schema.Length > 0 ? Quote(schema) + "." + Quote(table) : Quote(table)));
         }
         return tables;

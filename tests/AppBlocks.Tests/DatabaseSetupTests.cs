@@ -249,6 +249,14 @@ public sealed class DatabaseSetupTests
     }
 
     [Fact]
+    public void The_setup_screen_follows_the_backoffice_path()
+    {
+        Assert.Equal("/umbraco/section/settings/workspace/appblocks/view/setup", AppBlocks.Databases.DatabaseSetupGuide.ScreenPath);
+        Assert.Equal("/office/section/settings/workspace/appblocks/view/setup", AppBlocks.Databases.DatabaseSetupGuide.ScreenPathUnder("~/office/"));
+        Assert.Equal("/office/section/settings/workspace/appblocks/view/setup", AppBlocks.Databases.DatabaseSetupGuide.ScreenPathUnder("/office"));
+    }
+
+    [Fact]
     public async Task Status_reads_create_no_sqlite_file_or_folder_contents_and_a_fresh_site_reads_as_created_on_first_use()
     {
         var root = Directory.CreateTempSubdirectory("setup-sqlite-").FullName;

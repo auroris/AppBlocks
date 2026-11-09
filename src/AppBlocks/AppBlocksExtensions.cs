@@ -52,6 +52,10 @@ public static class AppBlocksExtensions
         // For packages that generate content nodes from code, such as their API endpoints and lists of values.
         services.AddTransient<Setup.OwnedNodeInstaller>();
         builder.PackageMigrationPlans().Add<Setup.AppBlocksMigrationPlan>();
+        // The element types packages allow in a site's Block Grid data types, once the definitions are installed.
+        builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, Setup.BlockGridAllowances>();
+        builder.AddNotificationAsyncHandler<Umbraco.Cms.Infrastructure.Migrations.Notifications.MigrationPlansExecutedNotification, Setup.BlockGridAllowances>();
+        builder.AddNotificationAsyncHandler<ContentTypeSavedNotification, Setup.BlockGridAllowances>();
         services.TryAddScoped<ApplicationAccessPolicy>();
         services.AddControllersWithViews().AddApplicationPart(typeof(AppBlocksExtensions).Assembly);
         services.AddScoped<AppBlockContent>();

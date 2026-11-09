@@ -119,6 +119,7 @@ public sealed class AntiSpamSiteTests
         Assert.Equal(AntiSpamSite.StandInSecret, asked.SecretKey);
         Assert.Equal("standin-site-key", asked.SiteKey);
         Assert.Equal(AntiSpamBlock.DefaultScoreThreshold, asked.ScoreThreshold);
+        Assert.Equal(site.Address.Host, asked.Hostname); // The host the form was sent to, for the service to compare.
 
         // A fail is a message to the visitor, and the class never hears of it.
         var failed = await RefusedAsync(visitor, Standin, form, new Dictionary<string, object> { [StandInService.Field] = "bad" });
@@ -326,7 +327,14 @@ public sealed class AntiSpamSiteTests
         Assert.Equal(AntiSpamGate.UnavailableMessage, await RefusedAsync(visitor, Turnstile, form, controls));
         site.Verifier.Reply = () => new(HttpStatusCode.Redirect) { Headers = { Location = new Uri("https://elsewhere.example/") } };
         Assert.Equal(AntiSpamGate.UnavailableMessage, await RefusedAsync(visitor, Turnstile, form, controls));
+        // A token solved on another site is refused; one solved here, the host the form was sent to, passes.
+        site.Verifier.Reply = () => new(HttpStatusCode.OK) { Content = new StringContent("""{"success":true,"hostname":"elsewhere.example"}""") };
+        Assert.Equal(AntiSpamGate.RefusedMessage, await RefusedAsync(visitor, Turnstile, form, controls));
         Assert.Equal(creates + 1, site.Calls.Count("create"));
+        site.Verifier.Reply = () => new(HttpStatusCode.OK) { Content = new StringContent($$"""{"success":true,"hostname":"{{site.Address.Host}}"}""") };
+        using (var here = await Submit(visitor, HttpMethod.Post, Turnstile, form, new { name = "Pat" }, controls))
+            Assert.True(here.StatusCode == HttpStatusCode.OK, await here.Content.ReadAsStringAsync());
+        Assert.Equal(creates + 2, site.Calls.Count("create"));
         // Every one of them went only where the adapter says.
         Assert.All(site.Verifier.Requests, request => Assert.Equal("https://challenges.cloudflare.com/turnstile/v0/siteverify", request.Url.ToString()));
         site.Verifier.Reply = () => new(HttpStatusCode.OK) { Content = new StringContent("""{"success":true}""") };

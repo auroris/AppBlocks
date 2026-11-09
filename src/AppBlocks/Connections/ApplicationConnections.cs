@@ -53,6 +53,25 @@ public sealed class AppBlocksBuilder
         return this;
     }
 
+    internal List<Setup.BlockGridAllowance> BlockGridAllowances { get; } = [];
+
+    /// <summary>
+    /// Allows element type <paramref name="elementTypeAlias"/> in the site's Block Grid data type named <paramref name="blockGridDataTypeName"/>,
+    /// once its definitions are installed, so a package's block can be placed on the site's pages without an editor configuring the grid by
+    /// hand. Without <paramref name="areaKey"/> the block goes at the grid's root and in any area; with it, in that area only, named by key or
+    /// alias, which also lists the block when the area allows only certain blocks. An element the data type already lists is left as the site
+    /// configured it, and nothing is changed when either is missing. <see cref="Setup.BlockGridAllowances"/> applies it.
+    /// </summary>
+    public AppBlocksBuilder AllowInBlockGrid(string blockGridDataTypeName, string elementTypeAlias, int columnSpan = 12, int rowSpan = 1, string? areaKey = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(blockGridDataTypeName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(elementTypeAlias);
+        ArgumentOutOfRangeException.ThrowIfLessThan(columnSpan, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(rowSpan, 1);
+        BlockGridAllowances.Add(new(blockGridDataTypeName, elementTypeAlias, columnSpan, rowSpan, string.IsNullOrWhiteSpace(areaKey) ? null : areaKey));
+        return this;
+    }
+
     public AppBlocksBuilder AddConnection(string name, Func<IServiceProvider, DbConnection> factory, DatabaseDialect? dialect = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -74,20 +93,26 @@ public sealed class AppBlocksBuilder
     /// What a registered name opens, for callers that come to the registration first, such as the report engine asking an unopened
     /// connection for its dialect: what the catalog holds under the name wins, as it does everywhere else, and the factory makes the rest.
     /// </summary>
-    internal DbConnection CreateRegistered(string name, IServiceProvider provider)
-        => provider.GetService<ConnectionCatalog>()?.Find(name) is { } material
-            ? Create(name, () => ConnectionCatalog.Create(material), provider)
-            : Create(name, () => Connections[name](provider), provider);
+    internal DbConnection CreateRegistered(string name, IServiceProvider provider) => CreateConnection(name, provider.GetService<ConnectionCatalog>(), provider);
+
+    /// <summary>
+    /// The one route from a name to a connection for use, which <see cref="ConnectionCatalog.Openable"/> and
+    /// <see cref="IApplicationConnectionFactory.CreateConnection"/> both take: what <paramref name="catalog"/> holds under the name, else its factory.
+    /// </summary>
+    /// <exception cref="ConnectionNotRegisteredException">Neither knows the name.</exception>
+    internal DbConnection CreateConnection(string name, ConnectionCatalog? catalog, IServiceProvider provider)
+        => catalog?.Find(name) is { } material ? Create(name, () => ConnectionCatalog.Create(material), provider)
+            : Connections.TryGetValue(name, out var factory) ? Create(name, () => factory(provider), provider)
+            : throw NotRegistered(name);
+
+    internal static ConnectionNotRegisteredException NotRegistered(string name) => new($"The connection {name} is not registered with AppBlocks. Choose an available connection.");
 }
 
 internal sealed class ApplicationConnections(IServiceProvider provider, AppBlocksBuilder builder, ConnectionCatalog catalog) : IApplicationConnectionFactory
 {
     private readonly ConcurrentDictionary<string, (DatabaseDialect Dialect, string Revision)> detected = new(StringComparer.OrdinalIgnoreCase);
 
-    public DbConnection CreateConnection(string name) => catalog.Find(name) is { } material
-        ? builder.Create(name, () => ConnectionCatalog.Create(material), provider)
-        : builder.Connections.ContainsKey(name) ? builder.CreateRegistered(name, provider)
-        : throw new ConnectionNotRegisteredException($"The connection {name} is not registered with AppBlocks.");
+    public DbConnection CreateConnection(string name) => builder.CreateConnection(name, catalog, provider);
 
     public DatabaseDialect Dialect(string name)
     {

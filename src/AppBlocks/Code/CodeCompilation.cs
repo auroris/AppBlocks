@@ -192,30 +192,26 @@ public sealed class CodeCompilation : IHostedService, IDisposable
         try
         {
             var sources = new List<(string Path, string Text)>();
-            var refused = new List<CodeDiagnostic>();
+            // A file left out is reported and the rest compile, so one file the folder cannot take does not hold back every other change.
             var skipped = new List<CodeDiagnostic>();
             foreach (var entry in Folder.Files())
             {
-                if (entry.Size > CodeFolder.MaxFileBytes) { refused.Add(new(CodeDiagnostic.Error, "AB0100", $"The file is larger than {CodeFolder.MaxFileBytes / 1024} KB and is not compiled.", entry.Path, 1, 1)); continue; }
+                if (entry.Size > CodeFolder.MaxFileBytes) { skipped.Add(new(CodeDiagnostic.Warning, "AB0100", $"The file is left out: it is larger than {CodeFolder.MaxFileBytes / 1024} KB.", entry.Path, 1, 1)); continue; }
                 string full;
                 try { full = Folder.Resolve(entry.Path, file: true); }
                 catch (CodePathException error) { skipped.Add(new(CodeDiagnostic.Warning, "AB0101", "The file is left out: " + error.Message, entry.Path, 1, 1)); continue; }
                 sources.Add((full, await File.ReadAllTextAsync(full, ct)));
             }
-            var hash = Hash(sources);
+            // What is left out counts too, so a file growing past the limit is reported although nothing compiled has changed.
+            var hash = Hash([.. sources, .. skipped.Select(d => ("\0" + d.File, d.Message))]);
             if (!force && hash == attemptedHash) return status;
             attemptedHash = hash;
             var started = DateTimeOffset.UtcNow;
-            if (refused.Count > 0)
-            {
-                logger.LogWarning("The C# folder was not compiled ({Reason}): {Count} file(s) are too large.", reason, refused.Count);
-                return status = status with { Succeeded = false, Attempted = started, Diagnostics = refused };
-            }
             if (sources.Count == 0)
             {
                 Swap(CodeGeneration.Empty);
-                logger.LogInformation("The C# folder has no files ({Reason}); no compiled classes are in use.", reason);
-                return status = new(true, Folder.Root, true, started, 0, null, [], []);
+                logger.LogInformation("The C# folder has no files to compile ({Reason}); no compiled classes are in use.", reason);
+                return status = new(true, Folder.Root, true, started, 0, null, skipped, []);
             }
             var number = serving.Number + 1;
             RoslynOutput output;

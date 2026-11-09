@@ -26,8 +26,16 @@ public sealed class CodeFolderTests : IDisposable
     [InlineData("./Order.cs")]
     [InlineData("Orders/")]
     [InlineData(".hidden.cs")]
-    [InlineData("With space.cs")]
+    [InlineData("Orders/ Leading.cs")]
+    [InlineData("Trailing /Order.cs")]
     [InlineData("Order.cs.")]
+    [InlineData("Ord*er.cs")]
+    [InlineData("Ord?er.cs")]
+    [InlineData("Ord|er.cs")]
+    [InlineData("Ord\"er.cs")]
+    [InlineData("Ord<er>.cs")]
+    [InlineData("Ord\ter.cs")]
+    [InlineData("Ord\u0001er.cs")]
     [InlineData("CON.cs")]
     [InlineData("nul.cs")]
     [InlineData("Order.txt")]
@@ -35,6 +43,15 @@ public sealed class CodeFolderTests : IDisposable
     [InlineData("")]
     public void A_file_path_outside_the_rules_is_refused(string path)
         => Assert.Throws<CodePathException>(() => Folder.Resolve(path, file: true));
+
+    [Theory]
+    [InlineData("Réservations.cs")]
+    [InlineData("Order Form.cs")]
+    [InlineData("Commandes/Bon de commande.cs")]
+    [InlineData("Заказы/Форма.cs")]
+    [InlineData("-Draft.cs")]
+    public void A_name_in_any_language_or_with_spaces_inside_it_is_taken(string path)
+        => Assert.Equal(Path.Combine([root, .. path.Split('/')]), Folder.Resolve(path, file: true));
 
     [Fact]
     public void A_path_inside_the_root_resolves_with_either_separator()
