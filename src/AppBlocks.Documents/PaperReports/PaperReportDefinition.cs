@@ -21,25 +21,38 @@ public sealed record PaperReportDefinition(Guid DataSourceKey, IReadOnlyDictiona
     {
         string Text(string alias) => Convert.ToString(value(alias), CultureInfo.InvariantCulture)?.Trim() ?? "";
         var source = value("dataSource");
-        var key = source is Umbraco.Cms.Core.Models.PublishedContent.IPublishedContent node ? node.Key : PickedKey(Text("dataSource"));
+        var key = source is Umbraco.Cms.Core.Models.PublishedContent.IPublishedContent node ? node.Key : AppBlocks.DocumentOutput.PaperReportLinks.PickedKey(Text("dataSource"));
         if (key is null) throw new DataSourceException("Choose a published SQL data source for the paper report.");
         var parameters = Text("parameters") is { Length: > 0 } json
             ? JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? [] : new Dictionary<string, string>();
-        var options = Text("pageOptions") is { Length: > 0 } settings
-            ? JsonSerializer.Deserialize<RenderOptions>(settings, JsonDefaults.Options) ?? new() : new RenderOptions();
+        var settings = Text("pageOptions");
+        var options = settings.Length > 0 ? JsonSerializer.Deserialize<RenderOptions>(settings, JsonDefaults.Options) ?? new() : new RenderOptions();
+        // Pressroom's own defaults are one fixed time zone and an English footer: options that name neither get the web server's
+        // time zone and a footer of page numbers alone.
+        var named = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (settings.Length > 0)
+        {
+            using var written = JsonDocument.Parse(settings);
+            if (written.RootElement.ValueKind == JsonValueKind.Object) named.UnionWith(written.RootElement.EnumerateObject().Select(property => property.Name));
+        }
+        options = options with {
+            TimeZone = named.Contains(nameof(RenderOptions.TimeZone)) ? options.TimeZone : AppBlocks.DocumentOutput.DocumentRenderOptions.ServerTimeZone,
+            FooterTemplate = named.Contains(nameof(RenderOptions.FooterTemplate)) ? options.FooterTemplate : AppBlocks.DocumentOutput.DocumentRenderOptions.PageNumberFooter,
+        };
         var errors = RequestValidator.Validate(new RenderRequest { Html = "<!doctype html><html><body></body></html>", Options = options }, maxTimeoutMs: 300_000);
         if (errors.Count > 0) throw new DataSourceException(string.Join(" ", errors.SelectMany(e => e.Value)));
         var rows = Text("maximumRows");
         var maximumRows = rows.Length == 0 ? DefaultMaximumRows
             : int.TryParse(rows, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) && parsed is > 0 and <= MaximumRowsLimit ? parsed
             : throw new DataSourceException($"Maximum rows must be a whole number from 1 to {MaximumRowsLimit}, or empty for {DefaultMaximumRows}.");
-        var culture = Text("culture") is { Length: > 0 } chosen ? chosen : "en-CA";
+        // Empty is the culture the site serves the download request in.
+        var culture = Text("culture");
         // A bind variable resolves on each download; a literal is checked here rather than failing every download.
-        if (!culture.StartsWith(':'))
+        if (culture.Length > 0 && !culture.StartsWith(':'))
         {
             try { CultureInfo.GetCultureInfo(culture); }
             catch (CultureNotFoundException)
-            { throw new DataSourceException($"'{culture}' is not a culture. Enter a name such as en-CA or fr-CA, or a bind variable such as :PARAM.culture."); }
+            { throw new DataSourceException($"'{culture}' is not a culture. Enter a name such as en-GB or fr-FR, a bind variable such as :PARAM.culture, or nothing for the site's culture."); }
         }
         return new(key.Value, parameters, options,
             Text("fileName") is { Length: > 0 } name ? name : "report-{date}.pdf", culture, maximumRows);
@@ -52,13 +65,6 @@ public sealed record PaperReportDefinition(Guid DataSourceKey, IReadOnlyDictiona
     public static IQueryCollection Query(IQueryCollection query) => new QueryCollection(FormEndpoints.Parameters(query, "format")
         .ToDictionary(p => p.Key, p => new StringValues(p.Value), StringComparer.OrdinalIgnoreCase));
 
-    public static Guid? PickedKey(string value)
-    {
-        if (Guid.TryParse(value, out var key)) return key;
-        const string prefix = "umb://document/";
-        return value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && Guid.TryParse(value[prefix.Length..], out key) ? key : null;
-    }
-
     public IReadOnlyDictionary<string, string> BindParameters(AppBindVariables variables)
     {
         // An empty map forwards the request's parameters (see Query). A map can rename them or supply literal/user defaults.
@@ -67,7 +73,9 @@ public sealed record PaperReportDefinition(Guid DataSourceKey, IReadOnlyDictiona
             .Where(p => p.Value is not null).ToDictionary(p => p.Key, p => p.Value!, StringComparer.OrdinalIgnoreCase);
     }
 
-    public CultureInfo ResolveCulture(AppBindVariables variables) => CultureInfo.GetCultureInfo(variables.Resolve(Culture, "text") ?? "en-CA");
+    /// <summary>The report's culture: the one it names or its bind variable resolves to, otherwise <paramref name="requestCulture"/>.</summary>
+    public CultureInfo ResolveCulture(AppBindVariables variables, CultureInfo requestCulture)
+        => Culture.Length > 0 && variables.Resolve(Culture, "text") is { Length: > 0 } name ? CultureInfo.GetCultureInfo(name) : requestCulture;
 
     public string ResolveFileName(IReadOnlyDictionary<string, string> parameters, DateTimeOffset now)
     {

@@ -32,7 +32,7 @@ public sealed class PageLevelBlocksTests
             [Block("appColumns", columns), Block("appRichText", text, ("text", "<p>Reports of the day.</p>")), Block("appReport", report, ("dataSource", ReportSource)), Block("appHtml", html, ("html", "<script src=\"/inn/page-links.js\"></script>"))],
             [Item(columns, Area(Item(text), Item(report))), Item(html)]);
         Assert.Empty(validator.Validate(page));
-        Assert.Empty(validator.ValidateWebsite(page));
+        Assert.Empty(validator.Validate(page));
     }
 
     [Fact]

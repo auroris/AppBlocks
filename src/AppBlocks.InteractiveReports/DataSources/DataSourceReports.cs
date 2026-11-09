@@ -28,7 +28,7 @@ internal static class DataSourceReportParameters
 /// <summary>Request-owned values: report SQL carries parameters, never interpolated user or URL data.</summary>
 public sealed class DataSourceReportBindings(DataSourceRuntime runtime, IDataSourceUserResolver users, IHttpContextAccessor http, BindVariableProviders? providers = null)
 {
-    internal const string Prefix = "apphost:data-source:";
+    internal const string Prefix = "appblocks:data-source:";
     private readonly Dictionary<string, object?> values = new(StringComparer.Ordinal);
     internal object? Get(string token) => values.GetValueOrDefault(token);
 

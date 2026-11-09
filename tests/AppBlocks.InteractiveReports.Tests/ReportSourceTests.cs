@@ -192,7 +192,7 @@ public sealed class ReportSourceTests
             Compiler = Services.GetRequiredService<ReportDefinitionCompiler>();
             Runtime = new(new ApplicationConnections(Services, registered, Connections), NullLogger<DataSourceRuntime>.Instance, managed: Connections);
             Queries = new(Runtime, new Users(), []);
-            Catalog = new(null!, null!, null!, Services.GetRequiredService<IOptionsMonitor<InteractiveReportOptions>>(), configuration,
+            Catalog = new(null!, null!, null!, null!, Services.GetRequiredService<IOptionsMonitor<InteractiveReportOptions>>(), configuration,
                 Runtime, Compiler, null!, NullLogger<PublishedReportCatalog>.Instance, Connections);
         }
         public void Dispose() { Services.Dispose(); Directory.Delete(root, recursive: true); }

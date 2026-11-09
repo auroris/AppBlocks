@@ -33,9 +33,8 @@ public static class InteractiveReportsExtensions
     /// <summary>Adds the optional reports companion. Its composer calls this automatically when installed.</summary>
     public static IUmbracoBuilder AddAppBlocksInteractiveReports(this IUmbracoBuilder builder, Action<InteractiveReportBuilder>? configure = null)
     {
-        // Report definition nodes keep out of pages' URLs as data source nodes do, and the reports store's own connection cannot be saved over.
-        builder.AddAppBlocks(appBlocks => appBlocks.AddKeySegmentContentType(PublishedReportCatalog.ReportAlias)
-            .ReserveConnectionName(InteractiveReportsSite.ReportsConnection));
+        // Report definition nodes keep out of pages' URLs as data source nodes do.
+        builder.AddAppBlocks(appBlocks => appBlocks.AddKeySegmentContentType(PublishedReportCatalog.ReportAlias));
         var services = builder.Services;
         if (services.FirstOrDefault(d => d.ServiceType == typeof(Registration))?.ImplementationInstance is Registration existing)
         {
@@ -70,7 +69,7 @@ public static class InteractiveReportsExtensions
             sp.GetRequiredService<IReportConnectionFactory>(), sp.GetRequiredService<ILogger<SavedViewStore>>(), sp.GetService<IHttpContextAccessor>()));
         services.Replace(ServiceDescriptor.Singleton<ISavedReportStore>(sp => sp.GetRequiredService<SavedViewStore>()));
         services.AddSingleton<IDatabaseSetupFeature, SavedViewsDatabaseSetup>();
-        // Connections only the report builder has, such as ReportsDb, remain available to forms without making the base depend on reporting.
+        // Connections only the report builder has remain available to forms without making the base depend on reporting.
         Decorate<IApplicationConnectionFactory>(services, (sp, inner) => new ReportConnectionBridge(inner,
             sp.GetRequiredService<AppBlocksBuilder>(), sp.GetRequiredService<ConnectionCatalog>(),
             sp.GetRequiredService<IReportConnectionFactory>(), sp.GetRequiredService<ReportDefinitionCompiler>()));

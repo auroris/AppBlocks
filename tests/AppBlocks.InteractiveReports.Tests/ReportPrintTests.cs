@@ -106,6 +106,41 @@ public sealed class ReportPrintTests
     }
 
     [Fact]
+    public async Task The_dialog_offers_the_configured_papers_and_a_print_may_name_any_paper_documents_accept()
+    {
+        await using (var defaults = await Site.Start())
+            Assert.Equal(["A4", "Letter", "Legal"], (await defaults.Options()).GetProperty("paperSizes").EnumerateArray().Select(p => p.GetString()));
+        await using var site = await Site.Start(true, (ReportPrintEndpoints.PaperSizesSetting + ":0", "tabloid"), (ReportPrintEndpoints.PaperSizesSetting + ":1", "A3"),
+            (ReportPrintEndpoints.PaperSizesSetting + ":2", "Folio"));
+        Assert.Equal(["Tabloid", "A3"], (await site.Options()).GetProperty("paperSizes").EnumerateArray().Select(p => p.GetString()));
+        // A paper the report library does not lay out keeps its layout and takes that paper's size.
+        foreach (var (paper, landscape, css) in new[] { ("Tabloid", true, "@page{size:17in 11in}"), ("a5", false, "@page{size:A5 portrait}") })
+        {
+            var response = await site.Client.PostAsJsonAsync("/api/reports/orders/print/preview", site.Request("all", paper, landscape));
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+            var preview = await Read(response);
+            Assert.Contains(css, preview.GetProperty("html").GetString());
+            Assert.Equal(HttpStatusCode.OK, (await site.Submit(preview)).StatusCode);
+            Assert.Equal(paper.ToUpperInvariant(), site.Gateway.Last!.Options!.PageSize!.Name!.ToUpperInvariant());
+            Assert.Equal(AppBlocks.DocumentOutput.DocumentRenderOptions.ServerTimeZone, site.Gateway.Last.Options.TimeZone);
+            Assert.False(string.IsNullOrEmpty(site.Gateway.Last.Options.Locale));
+        }
+        Assert.Equal(HttpStatusCode.BadRequest, (await site.Client.PostAsJsonAsync("/api/reports/orders/print/preview", site.Request("all", "Folio"))).StatusCode);
+    }
+
+    [Fact]
+    public void The_print_dialog_takes_its_colours_from_the_site_tokens()
+    {
+        var css = File.ReadAllText(Path.Combine(Root(), "src/AppBlocks.InteractiveReports/wwwroot/App_Plugins/ApplicationBlocks/report-print.css"));
+        // Every colour is the fallback of an --app-* token, so a themed site themes the dialog.
+        var bare = System.Text.RegularExpressions.Regex.Replace(css, @"var\(--app-[a-z0-9-]+,[^()]*(\([^()]*\))?[^()]*\)", "");
+        Assert.DoesNotMatch(@"#[0-9a-fA-F]{3,8}\b", bare.Replace("background:#fff}", "}"));
+        foreach (var token in new[] { "--app-accent", "--app-text", "--app-border", "--app-surface", "--app-muted", "--app-radius" }) Assert.Contains(token, css);
+    }
+
+    private static string Root([System.Runtime.CompilerServices.CallerFilePath] string source = "") => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(source)!, "../.."));
+
+    [Fact]
     public async Task Page_scope_keeps_paging_and_post_requires_antiforgery()
     {
         await using var site = await Site.Start();
@@ -218,7 +253,7 @@ public sealed class ReportPrintTests
         public HttpClient Client = null!;
         private WebApplication app = null!;
         private SqliteConnection database = null!;
-        public static async Task<Site> Start(bool install = true)
+        public static async Task<Site> Start(bool install = true, params (string Key, string? Value)[] settings)
         {
             var site = new Site();
             var cs = $"Data Source=print-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Pooling=False";
@@ -238,6 +273,7 @@ public sealed class ReportPrintTests
             config["InteractiveReport:Reports:capped:MaxPageSize"] = "1";
             config["InteractiveReport:Reports:capped:DefaultPageSize"] = "1";
             config["InteractiveReport:Reports:locked:Features:0"] = "search";
+            foreach (var (key, value) in settings) config[key] = value;
             builder.Configuration.AddInMemoryCollection(config);
             builder.Services.AddInteractiveReports(builder.Configuration).AddConnection("data", _ => new SqliteConnection(cs))
                 .UseAuthorization((_, _) => ValueTask.FromResult(site.Allow))
@@ -270,8 +306,8 @@ public sealed class ReportPrintTests
             if (result.GetProperty("antiforgeryToken").GetString() is { } token) Client.DefaultRequestHeaders.Add("RequestVerificationToken", token);
             return result;
         }
-        public object Request(string scope) => new {
-            destinationId = Gateway.Destinations[0].Id, scope, pageSize = "A4", landscape = false,
+        public object Request(string scope, string pageSize = "A4", bool landscape = false) => new {
+            destinationId = Gateway.Destinations[0].Id, scope, pageSize, landscape,
             document = new { page = new { index = 2, size = 1 }, activeTable = "base", tables = new Dictionary<string, object> {
                 ["base"] = new { from = "definition", composables = new object[] {
                     new { kind = "filter", filters = new[] { new { expr = "ID > 1" } } },

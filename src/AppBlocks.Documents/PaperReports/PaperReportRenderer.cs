@@ -30,7 +30,7 @@ public sealed class PaperReportRenderer(DataSourceCatalog sources, DataSourceQue
         var person = await users.ResolveAsync(execution, ct) ?? throw new UnauthorizedAccessException();
         var values = await variables.ResolveAsync(http.User, PaperReportDefinition.Query(http.Request.Query), page.Key);
         var parameters = definition.BindParameters(values);
-        var culture = definition.ResolveCulture(values);
+        var culture = definition.ResolveCulture(values, CultureInfo.CurrentCulture);
         var data = await queries.QueryAsync(source.Definition, execution with { Parameters = parameters }, definition.MaximumRows, ct);
         var theme = await presentation.ResolveAsync(page, ct);
         var model = new PaperReportModel(page, data.Columns, data.Rows, parameters, person, culture, values.Now, theme.Theme);
@@ -57,18 +57,27 @@ public sealed class PaperReportRenderer(DataSourceCatalog sources, DataSourceQue
         }
         var documentUri = new Uri($"{http.Request.Scheme}://{http.Request.Host}{http.Request.PathBase}/");
         if (page.Url() is { Length: > 0 } pageUrl && pageUrl != "#") documentUri = new Uri(documentUri, pageUrl);
-        var pageSize = definition.Options.PageSize;
-        var size = pageSize?.Width is { } width ? definition.Options.Landscape ? pageSize.Height + " " + width : width + " " + pageSize.Height
-            : (pageSize?.Name ?? "Letter") + (definition.Options.Landscape ? " landscape" : "");
-        var margins = definition.Options.Margins ?? new PageMargins();
-        var pageStyle = definition.Options.PreferCssPageSize ? null
-            : "@page { size: " + size + "; margin: " + margins.Top + " " + margins.Right + " " + margins.Bottom + " " + margins.Left + "; }";
-        var html = await assets.EmbedAsync(writer.ToString(), documentUri, http.Request.PathBase, theme.PrintStylesheet, ct, pageStyle);
+        var html = await assets.EmbedAsync(writer.ToString(), documentUri, http.Request.PathBase, theme.PrintStylesheet, ct, PageStyle(definition.Options));
         var options = definition.Options with {
-            Locale = culture.Name,
+            Locale = AppBlocks.DocumentOutput.DocumentRenderOptions.LocaleName(culture),
             HeaderTemplate = definition.Options.HeaderTemplate is { } header ? await assets.EmbedAsync(header, documentUri, http.Request.PathBase, null, ct) : null,
             FooterTemplate = definition.Options.FooterTemplate is { } footer ? await assets.EmbedAsync(footer, documentUri, http.Request.PathBase, null, ct) : null,
         };
         return new(html, definition.ResolveFileName(parameters, values.Now), options);
+    }
+
+    /// <summary>
+    /// The page rule the document gets from its options, so a browser printing the HTML file lays it out as the PDF is: the margins,
+    /// and the paper only when the options name one or turn it to landscape, so that otherwise the renderer's default paper applies.
+    /// None when the options prefer the template's own CSS page size.
+    /// </summary>
+    internal static string? PageStyle(RenderOptions options)
+    {
+        if (options.PreferCssPageSize) return null;
+        var size = options.PageSize is { Width: { } width, Height: var height } ? options.Landscape ? height + " " + width : width + " " + height
+            : options.PageSize?.Name is { } name ? name + (options.Landscape ? " landscape" : "")
+            : options.Landscape ? "landscape" : null;
+        var margins = options.Margins ?? new PageMargins();
+        return "@page { " + (size is null ? "" : "size: " + size + "; ") + "margin: " + margins.Top + " " + margins.Right + " " + margins.Bottom + " " + margins.Left + "; }";
     }
 }

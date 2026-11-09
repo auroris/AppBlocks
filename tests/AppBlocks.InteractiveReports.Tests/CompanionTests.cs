@@ -173,12 +173,13 @@ public sealed class CompanionTests
         Assert.Equal(ReportDialect.Oracle11g, compiler.Compile("Declared", new ReportDefinition { Connection = "Declared", Sql = "SELECT 1 AS id" }).Dialect);
         // A connection only the report builder has stays out of it: forms can open it, as above, but the screens do not offer it.
         Assert.DoesNotContain(listed, c => c.Name == "Legacy");
-        // The names the site and the companion own cannot be saved over: the uploads database is listed as managed, and the reports
-        // store's connection is reserved. Report definition nodes get a URL segment of their key, as data source nodes do.
+        // The names the site owns cannot be saved over: the uploads database is listed as managed. The companion reserves none, so
+        // ReportsDb is an ordinary name. Report definition nodes get a URL segment of their key, as data source nodes do.
         var catalog = provider.GetRequiredService<ConnectionCatalog>();
-        foreach (var taken in new[] { "ReportsDb", "reportsdb", "AttachmentsDb" })
-            Assert.Contains("managed by the site", (await Assert.ThrowsAsync<ArgumentException>(
-                () => catalog.SaveAsync(new(taken, "sqlite", "Data Source=" + Path.Combine(root, "taken.db")), default))).Message);
+        Assert.Contains("managed by the site", (await Assert.ThrowsAsync<ArgumentException>(
+            () => catalog.SaveAsync(new("AttachmentsDb", "sqlite", "Data Source=" + Path.Combine(root, "taken.db")), default))).Message);
+        await catalog.SaveAsync(new("ReportsDb", "sqlite", "Data Source=" + Path.Combine(root, "reports.db")), default);
+        Assert.Contains(catalog.List(), c => c.Name == "ReportsDb");
         var segments = new DataSourceUrlSegmentProvider(provider.GetRequiredService<AppBlocksBuilder>());
         var nodeKey = Guid.NewGuid();
         Assert.Equal("data-source-" + nodeKey.ToString("N"), segments.GetUrlSegment(Node(AppBlocks.InteractiveReports.DataSources.PublishedReportCatalog.ReportAlias, nodeKey)));
@@ -237,7 +238,7 @@ public sealed class CompanionTests
             layout = new Dictionary<string, object> { ["Umbraco.BlockList"] = new[] { new { contentKey = key } } },
         });
         var validator = new AppBlocksValidator(null!, plugins: [plugin]);
-        Assert.Contains("Companion validation reached", validator.ValidateEmbedded(json));
+        Assert.Contains("Companion validation reached", validator.Validate(json));
     }
 
     private sealed class TestBlock : IAppBlockPlugin

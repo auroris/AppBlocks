@@ -1,9 +1,10 @@
-@page { size: Letter; margin: 20mm 15mm; }
+/* No @page size: the paper is the document's own choice, or the renderer's default. --paper-accent, then the AppBlocks --app-text token, colour the accents. */
+@page { margin: 20mm 15mm; }
 html { color: #222; background: #fff; font: 11pt/1.45 "Noto Sans", "Segoe UI", sans-serif; }
 body { margin: 0; }
-h1 { margin: 0 0 .4em; color: var(--paper-accent, #26374a); font-size: 24pt; }
+h1 { margin: 0 0 .4em; color: var(--paper-accent, var(--app-text, #333)); font-size: 24pt; }
 .paper-kicker { margin: 0; text-transform: uppercase; letter-spacing: .08em; font-size: 9pt; }
-header { margin-bottom: 1.5em; border-bottom: 2pt solid var(--paper-accent, #26374a); }
+header { margin-bottom: 1.5em; border-bottom: 2pt solid var(--paper-accent, var(--app-text, #333)); }
 table { width: 100%; border-collapse: collapse; margin: 1em 0; font-variant-numeric: tabular-nums; }
 caption { text-align: left; font-weight: bold; margin-bottom: .5em; }
 th, td { text-align: left; vertical-align: top; padding: .5em; border-bottom: 1px solid #bbc1c7; }

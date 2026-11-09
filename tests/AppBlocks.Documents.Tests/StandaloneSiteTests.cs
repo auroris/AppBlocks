@@ -50,7 +50,7 @@ public sealed class StandaloneSiteTests
             ["Umbraco:CMS:Unattended:UnattendedUserName"] = "Documents test",
             ["Umbraco:CMS:Unattended:UnattendedUserEmail"] = "documents@example.test",
             ["Umbraco:CMS:Unattended:UnattendedUserPassword"] = password,
-            ["Pressroom:Url"] = "https://configured.example/",
+            ["AppBlocks:Documents:Pressroom:Url"] = "https://configured.example/",
         });
         builder.Services.Configure<InstallDefaultDataSettings>(Constants.Configuration.NamedOptions.InstallDefaultData.Languages,
             settings => { settings.InstallData = InstallDefaultDataOption.Values; settings.Values = new HashSet<string> { "en" }; });

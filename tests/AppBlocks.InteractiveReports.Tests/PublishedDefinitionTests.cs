@@ -26,7 +26,7 @@ public sealed class PublishedDefinitionTests
         services.AddSingleton<DataSourceRuntime>();
         using var provider = services.AddReportBlockSupport().BuildServiceProvider();
         // An inline report reads nothing from Umbraco, so the content cache, navigation and data source catalogue stay unset.
-        var catalog = new PublishedReportCatalog(null!, null!, null!, provider.GetRequiredService<IOptionsMonitor<InteractiveReportOptions>>(), configuration,
+        var catalog = new PublishedReportCatalog(null!, null!, null!, null!, provider.GetRequiredService<IOptionsMonitor<InteractiveReportOptions>>(), configuration,
             provider.GetRequiredService<DataSourceRuntime>(), provider.GetRequiredService<ReportDefinitionCompiler>(),
             new PublishedDefinitionWarnings(NullLogger<PublishedDefinitionWarnings>.Instance), NullLogger<PublishedReportCatalog>.Instance);
         (PublishedReport? Report, List<string> Errors) Read(string alias, string sql, params (string Property, string Value)[] more)
@@ -47,7 +47,16 @@ public sealed class PublishedDefinitionTests
         // No callback decides this report's marker, so Interactive Reports would refuse it on every request.
         Assert.Contains("{{RowRestriction}}", Assert.Single(Read("notes", "SELECT 1 AS ID WHERE {{RowRestriction}}").Errors));
         Assert.Empty(Read(RecentPagesReport.Name, "SELECT 1 AS ID WHERE {{RowRestriction}}").Errors);
+        // A node that takes the recent pages report's name gets its placeholders filled in as the built-in definition does; others keep their text.
+        Assert.Equal("SELECT v.versionDate AS EDITED_AT WHERE {{RowRestriction}}", Read(RecentPagesReport.Name, "SELECT {EditedAt} AS EDITED_AT WHERE {{RowRestriction}}").Report!.Definition.Sql);
+        Assert.Equal("SELECT '{EditedAt}' AS EDITED_AT", Read("notes", "SELECT '{EditedAt}' AS EDITED_AT").Report!.Definition.Sql);
         Assert.Empty(Read("seeded", "SELECT 2 AS ID WHERE {{RowRestriction}}").Errors);
+
+        // Access: Signed-in accounts by default; Specific groups needs a group.
+        Assert.Null(plain.MemberGroups);
+        Assert.Contains("Member group", Assert.Single(Read("notes", "SELECT 1 AS ID", ("access", PublishedReportCatalog.SpecificGroups)).Errors));
+        Assert.Equal("7,8", Read("notes", "SELECT 1 AS ID", ("access", PublishedReportCatalog.SpecificGroups), ("accessGroups", "7,8")).Report!.MemberGroups);
+        Assert.Null(Read("notes", "SELECT 1 AS ID", ("access", "Signed-in accounts"), ("accessGroups", "7")).Report!.MemberGroups);
 
         Assert.Contains("'sortt'", Assert.Single(Read("notes", "SELECT 1 AS ID", ("controls", "search sortt")).Errors));
         Assert.Contains("'pivots'", Assert.Single(Read("notes", "SELECT 1 AS ID", ("options", """{ "features": ["pivots"] }""")).Errors));

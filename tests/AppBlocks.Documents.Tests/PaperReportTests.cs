@@ -33,7 +33,7 @@ public sealed class PaperReportTests
             _ => throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout."),
         });
         var log = new RecordingLogger<SelfContainedHtml>();
-        var renderer = new SelfContainedHtml(new EnvironmentStub { WebRootFileProvider = provider }, requests, log);
+        var renderer = new SelfContainedHtml(new EnvironmentStub { WebRootFileProvider = provider }, requests, log, Configuration());
         var html = await renderer.EmbedAsync("""
             <html><head><link rel="stylesheet" href="https://offline.example/site.css"><style>@import url("https://slow.example/base.css"); body { background: url('https://missing.example/paper.png') }</style></head>
             <body><img src="https://missing.example/a.png"><img src="https://missing.example/a.png"><img src="file:///C:/Windows/win.ini"><img src="http://[bad"><img src="/media/logo.png"></body></html>
@@ -56,7 +56,7 @@ public sealed class PaperReportTests
     {
         var requests = new HttpFactory(_ => throw new InvalidOperationException("No asset may be requested."));
         var log = new RecordingLogger<SelfContainedHtml>();
-        var renderer = new SelfContainedHtml(new EnvironmentStub(), requests, log);
+        var renderer = new SelfContainedHtml(new EnvironmentStub(), requests, log, Configuration());
         // A forged Host header names the origin, so a site asset missing from disk is never requested from it.
         string[] sources = ["/media/absent.png", "https://attacker.example/media/absent.png", "http://127.0.0.1/a.png", "http://localhost:8080/a.png",
             "http://[::1]/a.png", "http://169.254.169.254/latest/meta-data/", "http://[fe80::1]/a.png", "http://0.0.0.0/a.png", "http://printer.localhost/a.png"];
@@ -86,12 +86,57 @@ public sealed class PaperReportTests
     [InlineData("169.254.169.254", true)]
     [InlineData("fe80::1", true)]
     [InlineData("0.0.0.0", true)]
-    [InlineData("10.0.0.5", false)]
-    [InlineData("192.168.1.20", false)]
+    [InlineData("10.0.0.5", true)]
+    [InlineData("172.16.0.1", true)]
+    [InlineData("172.31.255.254", true)]
+    [InlineData("192.168.1.20", true)]
+    [InlineData("::ffff:192.168.1.20", true)]
+    [InlineData("100.64.0.1", true)]
+    [InlineData("100.127.255.254", true)]
+    [InlineData("fc00::1", true)]
+    [InlineData("fd12:3456::1", true)]
+    [InlineData("172.15.255.254", false)]
+    [InlineData("172.32.0.1", false)]
+    [InlineData("100.63.255.254", false)]
+    [InlineData("100.128.0.1", false)]
+    [InlineData("192.169.0.1", false)]
     [InlineData("203.0.113.7", false)]
     [InlineData("2001:db8::1", false)]
-    public void Assets_are_refused_only_from_loopback_link_local_and_unspecified_addresses(string address, bool refused) =>
+    public void Assets_are_refused_from_loopback_link_local_unspecified_and_private_addresses(string address, bool refused) =>
         Assert.Equal(refused, SelfContainedHtml.IsRefusedAddress(IPAddress.Parse(address)));
+
+    [Theory]
+    [InlineData("10.20.30.40", true)]
+    [InlineData("10.21.0.1", false)]
+    [InlineData("192.168.1.20", true)]
+    [InlineData("::ffff:192.168.1.20", true)]
+    [InlineData("192.168.1.21", false)]
+    [InlineData("fd00::7", true)]
+    [InlineData("127.0.0.1", false)]
+    public void The_allowed_asset_hosts_setting_re_allows_the_addresses_and_ranges_it_names(string address, bool allowed)
+    {
+        var hosts = SelfContainedHtml.AssetHosts.From(Configuration(($"{SelfContainedHtml.AllowedHostsSetting}:0", "10.20.0.0/16"),
+            ($"{SelfContainedHtml.AllowedHostsSetting}:1", "192.168.1.20"), ($"{SelfContainedHtml.AllowedHostsSetting}:2", "fd00::/8"),
+            ($"{SelfContainedHtml.AllowedHostsSetting}:3", "reports.intranet")));
+        Assert.Equal(!allowed, SelfContainedHtml.IsRefusedAddress(IPAddress.Parse(address), hosts));
+        Assert.True(hosts.Allows("REPORTS.intranet."));
+        Assert.False(hosts.Allows("other.intranet"));
+    }
+
+    [Fact]
+    public async Task A_host_the_setting_names_is_fetched_from_and_others_on_private_addresses_are_not()
+    {
+        var requests = new HttpFactory(request => new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new ByteArrayContent([1, 2, 3]) { Headers = { ContentType = new("image/png") } },
+        });
+        var renderer = new SelfContainedHtml(new EnvironmentStub(), requests, NullLogger<SelfContainedHtml>.Instance,
+            Configuration(($"{SelfContainedHtml.AllowedHostsSetting}:0", "printer.localhost"), ($"{SelfContainedHtml.AllowedHostsSetting}:1", "10.1.0.0/16")));
+        var html = await renderer.EmbedAsync("<img src='http://printer.localhost/a.png'><img src='http://10.1.2.3/b.png'><img src='http://10.2.0.1/c.png'>",
+            new Uri("https://example.invalid/"), "", null, default);
+        Assert.Equal(2, requests.Calls);
+        Assert.Equal(2, Regex.Matches(html, Regex.Escape("data:image/png;base64,AQID")).Count);
+        Assert.Contains("src='http://10.2.0.1/c.png'", html);
+    }
 
     [Fact]
     public void A_paper_report_reads_a_bounded_row_limit_and_a_culture_that_exists()
@@ -109,6 +154,93 @@ public sealed class PaperReportTests
         Assert.Equal("fr-CA", PaperReportDefinition.Read(Values(("culture", "fr-CA"))).Culture);
         Assert.Equal(":PARAM.culture", PaperReportDefinition.Read(Values(("culture", ":PARAM.culture"))).Culture);
         Assert.Contains("'english'", Assert.Throws<DataSourceException>(() => PaperReportDefinition.Read(Values(("culture", "english")))).Message);
+    }
+
+    [Fact]
+    public void A_paper_report_without_a_culture_time_zone_or_footer_uses_the_request_the_server_and_page_numbers()
+    {
+        static Func<string, object?> Values(params (string Alias, string Value)[] values)
+        {
+            var map = values.ToDictionary(value => value.Alias, value => (object?)value.Value);
+            map.TryAdd("dataSource", Guid.NewGuid().ToString());
+            return alias => map.GetValueOrDefault(alias);
+        }
+        var variables = new AppBindVariables("1", null, "pilot", null, DateTimeOffset.Now, new QueryCollection());
+        var request = System.Globalization.CultureInfo.GetCultureInfo("de-DE");
+        var plain = PaperReportDefinition.Read(Values());
+        Assert.Equal("", plain.Culture);
+        Assert.Same(request, plain.ResolveCulture(variables, request));
+        Assert.Equal("fr-FR", PaperReportDefinition.Read(Values(("culture", "fr-FR"))).ResolveCulture(variables, request).Name);
+        // A bind variable that resolves to nothing falls back to the request's culture too.
+        Assert.Same(request, PaperReportDefinition.Read(Values(("culture", ":PARAM.culture"))).ResolveCulture(variables, request));
+        Assert.Equal(AppBlocks.DocumentOutput.DocumentRenderOptions.ServerTimeZone, plain.Options.TimeZone);
+        Assert.Equal(AppBlocks.DocumentOutput.DocumentRenderOptions.PageNumberFooter, plain.Options.FooterTemplate);
+        Assert.DoesNotContain("Page ", plain.Options.FooterTemplate);
+        var chosen = PaperReportDefinition.Read(Values(("pageOptions", """{ "timeZone": "Europe/Paris", "footerTemplate": "<div>Seite</div>" }""")));
+        Assert.Equal(("Europe/Paris", "<div>Seite</div>"), (chosen.Options.TimeZone, chosen.Options.FooterTemplate));
+    }
+
+    [Theory]
+    [InlineData("{}", "@page { margin: 20mm 15mm 20mm 15mm; }")]
+    [InlineData("""{ "landscape": true }""", "@page { size: landscape; margin: 20mm 15mm 20mm 15mm; }")]
+    [InlineData("""{ "pageSize": "A5", "landscape": true }""", "@page { size: A5 landscape; margin: 20mm 15mm 20mm 15mm; }")]
+    [InlineData("""{ "pageSize": { "width": "100mm", "height": "200mm" }, "margins": { "top": "1cm", "right": "1cm", "bottom": "1cm", "left": "1cm" } }""", "@page { size: 100mm 200mm; margin: 1cm 1cm 1cm 1cm; }")]
+    [InlineData("""{ "preferCssPageSize": true }""", null)]
+    public void The_page_rule_names_a_paper_only_when_the_options_do(string options, string? expected)
+        => Assert.Equal(expected, PaperReportRenderer.PageStyle(PaperReportDefinition.Read(alias => alias switch {
+            "dataSource" => Guid.NewGuid().ToString(), "pageOptions" => options, _ => null,
+        }).Options));
+
+    [Fact]
+    public async Task A_template_or_the_site_can_leave_the_print_stylesheet_out()
+    {
+        var renderer = new SelfContainedHtml(new EnvironmentStub(), new HttpFactory(_ => new HttpResponseMessage(HttpStatusCode.NotFound)),
+            NullLogger<SelfContainedHtml>.Instance, Configuration());
+        var uri = new Uri("https://example.invalid/");
+        var kept = await renderer.EmbedAsync("<html><head></head><body></body></html>", uri, "", DocumentPresentation.PackageStylesheet, default);
+        Assert.Contains(DocumentPresentation.PackageStylesheet, kept);
+        var optedOut = await renderer.EmbedAsync($"<html><head><meta name=\"{SelfContainedHtml.PrintStylesheetMeta}\" content=\"none\"></head><body></body></html>",
+            uri, "", DocumentPresentation.PackageStylesheet, default);
+        Assert.DoesNotContain(DocumentPresentation.PackageStylesheet, optedOut);
+
+        async Task<string?> Stylesheet(params (string Key, string? Value)[] settings)
+            => (await new DefaultDocumentPresentationProvider(Configuration(settings)).ResolveAsync(null!, default)).PrintStylesheet;
+        Assert.Equal(DocumentPresentation.PackageStylesheet, await Stylesheet());
+        Assert.Null(await Stylesheet((DocumentPresentation.PrintStylesheetSetting, "")));
+        Assert.Equal("/css/print.css", await Stylesheet((DocumentPresentation.PrintStylesheetSetting, "/css/print.css")));
+    }
+
+    [Fact]
+    public void Installed_templates_are_added_to_the_paper_report_type_unless_the_site_turns_it_off()
+    {
+        static Umbraco.Cms.Core.Models.ITemplate Template(int id)
+        {
+            var template = System.Reflection.DispatchProxy.Create<Umbraco.Cms.Core.Models.ITemplate, TemplateStub>();
+            ((TemplateStub)(object)template).Id = id;
+            return template;
+        }
+        var (one, two, three) = (Template(1), Template(2), Template(3));
+        Assert.Null(PaperReportTemplates.WithAllInstalled([one, two], [one, two]));
+        // Only adds: the type's own order and choices stay, and a template no longer installed drops out.
+        Assert.Equal([2, 1, 3], PaperReportTemplates.WithAllInstalled([two, one, Template(9)], [one, two, three])!.Select(t => t.Id));
+        Assert.True(PaperReportTemplates.AllowsAllTemplates(Configuration()));
+        Assert.False(PaperReportTemplates.AllowsAllTemplates(Configuration((PaperReportTemplates.AllowAllTemplatesSetting, "false"))));
+    }
+
+    [Fact]
+    public void A_document_that_names_no_locale_or_time_zone_gets_the_request_culture_and_the_server_zone()
+    {
+        var previous = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("nl-NL");
+            var options = DocumentOutputService.Convert(null);
+            Assert.Equal(("nl-NL", AppBlocks.DocumentOutput.DocumentRenderOptions.ServerTimeZone), (options.Locale, options.TimeZone));
+            Assert.Equal(AppBlocks.DocumentOutput.DocumentRenderOptions.PageNumberFooter, options.FooterTemplate);
+            var named = DocumentOutputService.Convert(new() { Locale = "ja-JP", TimeZone = "Asia/Tokyo" });
+            Assert.Equal(("ja-JP", "Asia/Tokyo"), (named.Locale, named.TimeZone));
+        }
+        finally { System.Globalization.CultureInfo.CurrentCulture = previous; }
     }
 
     [Fact]
@@ -132,8 +264,8 @@ public sealed class PaperReportTests
     {
         var factory = new HttpFactory(_ => throw new InvalidOperationException("No render call expected."));
         foreach (var delivery in new[] {
-            new PaperReportDelivery(Configuration(("Pressroom:Url", "pressroom without a scheme")), factory, NullLogger<PaperReportDelivery>.Instance),
-            new PaperReportDelivery(Configuration(("Pressroom:Url", "ftp://pressroom.example/")), factory, NullLogger<PaperReportDelivery>.Instance),
+            Delivery(factory, "pressroom without a scheme"),
+            Delivery(factory, "ftp://pressroom.example/"),
         })
         {
             var http = Http("reports.example");
@@ -146,24 +278,13 @@ public sealed class PaperReportTests
         Assert.StartsWith("text/html", invalid.Response.ContentType);
         Assert.Equal(0, factory.Calls);
 
-        var log = new RecordingLogger<PaperReportDelivery>();
-        var rejected = new PaperReportDelivery(Configuration(("Pressroom:Url", "https://pressroom.example/")),
-            new HttpFactory(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized)), log);
+        var log = new RecordingLogger<DocumentOutputService>();
+        var rejected = Delivery(new HttpFactory(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized)), "https://pressroom.example/", log);
         var unauthorized = Http("reports.example");
         await (await rejected.DeliverAsync(Document(), unauthorized, default)).ExecuteAsync(unauthorized);
         Assert.StartsWith("text/html", unauthorized.Response.ContentType);
         Assert.Contains(log.Entries, entry => entry.Level == LogLevel.Error && entry.Message.Contains("Unauthorized"));
     }
-
-    [Theory]
-    [InlineData("30", 30d)]
-    [InlineData("0.5", 0.5d)]
-    [InlineData("0", null)]
-    [InlineData("-5", null)]
-    [InlineData("soon", null)]
-    [InlineData(null, null)]
-    public void Only_a_positive_service_timeout_is_used(string? configured, double? seconds) =>
-        Assert.Equal(seconds is { } value ? TimeSpan.FromSeconds(value) : null, PaperReportDelivery.ServiceTimeout(Configuration(("Pressroom:TimeoutSeconds", configured))));
 
     [Fact]
     public async Task Portable_html_embeds_nested_css_images_fonts_and_virtual_path_assets()
@@ -177,7 +298,7 @@ public sealed class PaperReportTests
         await File.WriteAllBytesAsync(Path.Combine(root.FullName, "media", "font.woff2"), [4, 5, 6]);
         using var provider = new PhysicalFileProvider(root.FullName);
         var requests = new HttpFactory(_ => throw new InvalidOperationException("Local assets must not need HTTP."));
-        var renderer = new SelfContainedHtml(new EnvironmentStub { WebRootFileProvider = provider }, requests, NullLogger<SelfContainedHtml>.Instance);
+        var renderer = new SelfContainedHtml(new EnvironmentStub { WebRootFileProvider = provider }, requests, NullLogger<SelfContainedHtml>.Instance, Configuration());
         var html = await renderer.EmbedAsync("<html><head><link rel='stylesheet' href='/my-app/css/print.css'></head><body><img src='/my-app/media/logo.png' srcset='/my-app/media/logo.png 1x, /my-app/media/logo.png 2x'></body></html>",
             new Uri("https://example.invalid/my-app/"), "/my-app", null, default);
         Assert.DoesNotContain("@import", html);
@@ -196,7 +317,7 @@ public sealed class PaperReportTests
         await File.WriteAllBytesAsync(Path.Combine(root.FullName, "reports", "images", "logo.png"), [7, 8, 9]);
         using var provider = new PhysicalFileProvider(root.FullName);
         var factory = new HttpFactory(_ => throw new InvalidOperationException("Local assets must not need HTTP."));
-        var renderer = new SelfContainedHtml(new EnvironmentStub { WebRootFileProvider = provider }, factory, NullLogger<SelfContainedHtml>.Instance);
+        var renderer = new SelfContainedHtml(new EnvironmentStub { WebRootFileProvider = provider }, factory, NullLogger<SelfContainedHtml>.Instance, Configuration());
         foreach (var (html, uri) in new[] {
             ("<img src='images/logo.png'>", "https://example.invalid/my-app/reports/"),
             ("<html><head><base href='../reports/'></head><body><img src='images/logo.png'></body></html>", "https://example.invalid/my-app/other/"),
@@ -280,13 +401,13 @@ public sealed class PaperReportTests
             response.Content.Headers.ContentType = new("application/pdf");
             return response;
         });
-        var delivery = new PaperReportDelivery(site.Configuration, factory, NullLogger<PaperReportDelivery>.Instance, site.Store);
-        await site.Store.SaveAsync(new(null));
+        var delivery = new PaperReportDelivery(new DocumentOutputService(factory, NullLogger<DocumentOutputService>.Instance, site.Store));
+        await site.Store.DeleteAsync(DocumentSettingsStore.ConfiguredId);
         var first = Http("localhost");
         await (await delivery.DeliverAsync(Document(), first, default)).ExecuteAsync(first);
         Assert.StartsWith("text/html", first.Response.ContentType);
         Assert.Equal(0, factory.Calls);
-        await site.Store.SaveAsync(new("https://saved.example/printing", "new-key"));
+        await site.Store.SaveConfigurationAsync(new(null, "Printing", "https://saved.example/printing", ApiKey: "new-key"));
         var second = Http("localhost");
         await (await delivery.DeliverAsync(Document(), second, default)).ExecuteAsync(second);
         Assert.Equal("application/pdf", second.Response.ContentType);
@@ -298,14 +419,20 @@ public sealed class PaperReportTests
     {
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        var logger = new RecordingLogger<PaperReportDelivery>();
-        var delivery = new PaperReportDelivery(Configuration(("Pressroom:Url", "https://pressroom.example/")),
-            new HttpFactory(_ => throw new OperationCanceledException(cancellation.Token)), logger);
+        var logger = new RecordingLogger<DocumentOutputService>();
+        var delivery = Delivery(new HttpFactory(_ => throw new OperationCanceledException(cancellation.Token)), "https://pressroom.example/", logger);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => delivery.DeliverAsync(Document(), Http("localhost"), cancellation.Token));
         Assert.Empty(logger.Entries);
     }
-    private static PaperReportDelivery Delivery(HttpFactory factory, bool configured) => new(new ConfigurationBuilder().AddInMemoryCollection(
-        new Dictionary<string, string?> { ["Pressroom:Url"] = configured ? "https://pressroom.example/" : null }).Build(), factory, NullLogger<PaperReportDelivery>.Instance);
+    private static PaperReportDelivery Delivery(HttpFactory factory, bool configured) => Delivery(factory, configured ? "https://pressroom.example/" : null);
+    /// <summary>Delivery through the document gateway, with <paramref name="url"/> as the configured Pressroom.</summary>
+    private static PaperReportDelivery Delivery(HttpFactory factory, string? url, ILogger<DocumentOutputService>? log = null)
+    {
+        var store = new DocumentSettingsStore(Configuration(("AppBlocks:Documents:Pressroom:Url", url)),
+            new DocumentSettingsTests.TestEnvironment { ContentRootPath = Directory.CreateTempSubdirectory("paper-delivery-").FullName },
+            new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider());
+        return new(new DocumentOutputService(factory, log ?? NullLogger<DocumentOutputService>.Instance, store));
+    }
     private static DefaultHttpContext Http(string host, string query = "")
     {
         var http = new DefaultHttpContext { RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider() };
@@ -313,6 +440,11 @@ public sealed class PaperReportTests
         http.Request.QueryString = new(query);
         http.Response.Body = new MemoryStream();
         return http;
+    }
+    public class TemplateStub : System.Reflection.DispatchProxy
+    {
+        public int Id { get; set; }
+        protected override object? Invoke(System.Reflection.MethodInfo? method, object?[]? args) => method!.Name == "get_Id" ? Id : throw new NotImplementedException(method.Name);
     }
     private sealed class HttpFactory(Func<HttpRequestMessage, HttpResponseMessage> respond) : IHttpClientFactory
     {
