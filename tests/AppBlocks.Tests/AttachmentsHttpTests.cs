@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Umbraco.Cms.Core.Services;
 using AppBlocks.Blocks;
+using AppBlocks.Forms;
 
 namespace AppBlocks.Tests;
 
@@ -113,6 +114,178 @@ public sealed class AttachmentsHttpTests
         // The files belong to the record, so every block bound to it shows them.
         Assert.Single((await files.ListAsync("id=4")).Items);
         Assert.Single((await readOnly.ListAsync("id=4")).Items);
+    }
+
+    [Fact]
+    public async Task Files_wait_under_the_submission_key_until_the_uploader_adopts_them_to_the_saved_record()
+    {
+        await using var site = await BlockSite.StartAsync();
+        await site.WaitForPublishedAsync(BlockSite.FormPageKey);
+        var block = site.AttachmentsBlock;
+        using var client = await site.SignInMemberAsync(site.CreateMember("pending", "pending@example.invalid", "Pending member"));
+        using var stranger = await site.SignInMemberAsync(site.CreateMember("stranger", "stranger@example.invalid", "Stranger"));
+        var submission = Guid.NewGuid();
+        var mine = new PendingFiles(client, $"{site.PathBase}/api/attachments/{BlockSite.FormPageKey}/{block}/new/{submission}");
+
+        // The form has no record yet, so the page offers pending uploads; with a record it asks for the saved one.
+        Assert.Contains("data-new-uploads=\"allowed\"", await client.GetStringAsync(site.PathBase + "/orders-form/"));
+        Assert.Contains("data-new-uploads=\"save-first\"", await client.GetStringAsync(site.PathBase + "/orders-form/?id=4"));
+
+        // The pending list answers as the record's list does, empty to start with.
+        var (status, list) = await mine.ListAsync();
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.True(list.GetProperty("canWrite").GetBoolean());
+        Assert.Empty(list.GetProperty("items").EnumerateArray());
+        Assert.Equal("sample.orders", list.GetProperty("owner").GetProperty("alias").GetString());
+        Assert.Equal(JsonValueKind.Null, list.GetProperty("owner").GetProperty("key").ValueKind);
+
+        // Upload two, remove one, download the other.
+        var (created, first) = await mine.UploadAsync("draft.pdf", "first draft");
+        Assert.Equal(HttpStatusCode.Created, created);
+        var (_, second) = await mine.UploadAsync("spare.pdf", "spare");
+        Assert.Equal(HttpStatusCode.NoContent, await mine.RemoveAsync(second.GetProperty("id").GetInt64()));
+        var kept = first.GetProperty("id").GetInt64();
+        Assert.Equal([kept], (await mine.ListAsync()).Body.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetInt64()));
+        Assert.Equal("first draft", await client.GetStringAsync($"{site.PathBase}/api/attachments/{BlockSite.FormPageKey}/{block}/new/{submission}/{kept}"));
+
+        // Another member under the same submission key sees nothing of them, and may not adopt them to a record they can write.
+        var theirs = new PendingFiles(stranger, $"{site.PathBase}/api/attachments/{BlockSite.FormPageKey}/{block}/new/{submission}");
+        Assert.Empty((await theirs.ListAsync()).Body.GetProperty("items").EnumerateArray());
+        Assert.Equal(HttpStatusCode.Forbidden, (await theirs.AdoptAsync("4")).Status);
+        // An anonymous visitor reaches no pending files of a class that refuses them.
+        using (var anonymous = site.CreateClient())
+            Assert.False((await new PendingFiles(anonymous, $"{site.PathBase}/api/attachments/{BlockSite.FormPageKey}/{block}/new/{submission}").ListAsync()).Status == HttpStatusCode.OK);
+
+        // The uploader adopts them once the form has saved record 4: the answer is the record's list, under the same file id.
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, (await mine.SendAsync(HttpMethod.Post, "/adopt", new StringContent("4", Encoding.UTF8, "text/plain"))).Status);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await mine.AdoptAsync(" ")).Status);
+        var (adoptedStatus, adopted) = await mine.AdoptAsync("4", "?id=4");
+        Assert.Equal(HttpStatusCode.OK, adoptedStatus);
+        Assert.Equal("4", adopted.GetProperty("owner").GetProperty("key").GetString());
+        Assert.Equal([kept], adopted.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetInt64()));
+        Assert.Empty((await mine.ListAsync()).Body.GetProperty("items").EnumerateArray());
+        Assert.Equal(kept, (await site.Attachments(client, BlockSite.FormPageKey, block).ListAsync("id=4")).Items.Single().GetProperty("id").GetInt64());
+        // Adopting again moves nothing and still answers with the list.
+        Assert.Equal(HttpStatusCode.OK, (await mine.AdoptAsync("4")).Status);
+    }
+
+    [Fact]
+    public async Task A_members_only_owner_shows_the_sign_in_notice_and_an_open_one_takes_anonymous_pending_files()
+    {
+        await using var site = await BlockSite.BootAsync(configure: builder => {
+            builder.Configuration["AppBlocks:ApiRoot"] = "/services";
+            builder.Services.AddSingleton<IFormResource>(new FilesResource("files.members", requireMember: true));
+            builder.Services.AddSingleton<IFormResource>(new FilesResource("files.public", requireMember: false));
+            builder.Services.AddSingleton<IAppBlocksTextSource, FrenchSignIn>();
+        });
+        await site.PublishAsync();
+        var (membersPage, membersFiles, membersRows) = await PublishFilesFormAsync(site, "Members files", "files.members", insideForm: false);
+        var (publicPage, publicFiles, _) = await PublishFilesFormAsync(site, "Public files", "files.public", insideForm: true);
+        using var anonymous = site.CreateClient();
+
+        // The blocks name a class that takes Members only, so the anonymous visitor gets the notice, in the site's words where it has them.
+        var html = await anonymous.GetStringAsync(site.PathBase + "/members-files/?id=1");
+        Assert.Contains(FrenchSignIn.Text, html);
+        Assert.Contains("Sign in to see the rows.", html);
+        Assert.DoesNotContain("data-app-attachments", html);
+        Assert.DoesNotContain("data-app-tabular", html);
+        // The endpoints answer under the configured root, and refuse the visitor there as before.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"{site.PathBase}/services/attachments/{membersPage}/{membersFiles}?id=1")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"{site.PathBase}/services/tabular/{membersPage}/{membersRows}?id=1")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync($"{site.PathBase}/api/attachments/{membersPage}/{membersFiles}?id=1")).StatusCode);
+
+        // An open class that lets anyone create a record and write its files takes an anonymous visitor's pending files.
+        var page = await anonymous.GetStringAsync(site.PathBase + "/public-files/");
+        Assert.Contains($"data-api=\"{site.PathBase}/services/attachments/{publicPage}/{publicFiles}\"", page);
+        Assert.Contains("data-new-uploads=\"allowed\"", page);
+        var pending = new PendingFiles(anonymous, $"{site.PathBase}/services/attachments/{publicPage}/{publicFiles}/new/{Guid.NewGuid()}");
+        Assert.Equal(HttpStatusCode.OK, (await pending.ListAsync()).Status);
+        var (created, file) = await pending.UploadAsync("form.pdf", "filled in");
+        Assert.Equal(HttpStatusCode.Created, created);
+        var (status, adopted) = await pending.AdoptAsync("1");
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.Equal(file.GetProperty("id").GetInt64(), adopted.GetProperty("items").EnumerateArray().Single().GetProperty("id").GetInt64());
+    }
+
+    /// <summary>A page with an Attachments block and a Tabular form block whose records are <paramref name="resource"/>'s: inside a form over it with a title field, or on the page naming it as their owner with the key from the address.</summary>
+    private static async Task<(Guid Page, Guid Files, Guid Rows)> PublishFilesFormAsync(BlockSite site, string name, string resource, bool insideForm)
+    {
+        var blocks = BlockPages.Empty();
+        (string, string)[] owner = insideForm ? [] : [("ownerResource", resource), ("ownerKey", ":PARAM.id")];
+        var files = BlockPages.Add(blocks, AppBlockSchema.AttachmentsAlias, [("heading", "Files"), .. owner]);
+        var rows = BlockPages.Add(blocks, AppBlockSchema.TabularAlias, [("heading", "Lines"), ("dataSource", "orders.lines"), ("linkField", "orderId"), .. owner]);
+        if (insideForm) BlockPages.Layout(blocks).Add(BlockPages.FormBlock(blocks, resource, [BlockPages.Add(blocks, "appText", ("field", "title")), files, rows], []));
+        else { BlockPages.Layout(blocks).Add(files); BlockPages.Layout(blocks).Add(rows); }
+        using var scope = site.CreateScope();
+        var contents = scope.ServiceProvider.GetRequiredService<IContentService>();
+#pragma warning disable CS0618
+        var page = contents.Create(name, contents.GetById(BlockSite.FormPageKey)!.ParentId, AppBlockSchema.PageAlias);
+        page.SetValue(AppBlockSchema.BodyAlias, blocks.ToJsonString());
+        Assert.True(contents.Save(page).Success);
+        var published = contents.Publish(page, ["*"]);
+#pragma warning restore CS0618
+        Assert.True(published.Success, string.Join("; ", published.EventMessages?.GetAll().Select(m => m.Message) ?? []));
+        await site.WaitForPublishedAsync(page.Key);
+        return (page.Key, Guid.Parse(files["contentKey"]!.GetValue<string>()), Guid.Parse(rows["contentKey"]!.GetValue<string>()));
+    }
+
+    /// <summary>A form class whose records anyone it admits may load, create and attach files to.</summary>
+    private sealed class FilesResource(string alias, bool requireMember) : IFormResource, AppBlocks.Attachments.IAttachmentOwner
+    {
+        public string Alias => alias;
+        public string ContractVersion => "1";
+        public bool RequireMember => requireMember;
+        public IReadOnlyList<FormField> Fields => [new("title", "Title", "text")];
+        private static Task<FormResult> Answer(string? key) => Task.FromResult(FormResult.Ok(new(key, "1", new Dictionary<string, object?> { ["title"] = null }, new(Create: key is null, Update: true))));
+        public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => Answer(null);
+        public Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct) => Answer(key);
+        public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct) => Answer("1");
+        public Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct) => Answer(key);
+        public Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct) => Answer(key);
+        public ValueTask<bool> MayWriteAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct) => ValueTask.FromResult(true);
+    }
+
+    /// <summary>A site's own words for one text, as a dictionary-backed source would give them.</summary>
+    private sealed class FrenchSignIn : IAppBlocksTextSource
+    {
+        public const string Text = "Connectez-vous pour voir les fichiers.";
+        public string? Get(string id) => id == "attachmentsSignIn" ? Text : null;
+        public IReadOnlyDictionary<string, string> All() => new Dictionary<string, string> { ["attachmentsSignIn"] = Text };
+    }
+
+    /// <summary>Drives the pending endpoints as the runtime does: the list's antiforgery token goes on every write.</summary>
+    private sealed class PendingFiles(HttpClient client, string api)
+    {
+        private string? token;
+
+        public async Task<(HttpStatusCode Status, JsonElement Body)> ListAsync()
+        {
+            var listed = await SendAsync(HttpMethod.Get, "", null);
+            if (listed.Status == HttpStatusCode.OK) token = listed.Body.GetProperty("antiforgeryToken").GetString();
+            return listed;
+        }
+
+        public Task<(HttpStatusCode Status, JsonElement Body)> UploadAsync(string name, string text)
+        {
+            var bytes = new ByteArrayContent(Encoding.UTF8.GetBytes(text));
+            bytes.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
+            return SendAsync(HttpMethod.Post, "", new MultipartFormDataContent { { bytes, "file", name } });
+        }
+
+        public async Task<HttpStatusCode> RemoveAsync(long id) => (await SendAsync(HttpMethod.Delete, "/" + id, null)).Status;
+
+        /// <param name="query">The page's query string, which block requests carry and the adoption ignores beside the body's key.</param>
+        public Task<(HttpStatusCode Status, JsonElement Body)> AdoptAsync(string key, string query = "")
+            => SendAsync(HttpMethod.Post, "/adopt" + query, JsonContent.Create(new { key }));
+
+        public async Task<(HttpStatusCode Status, JsonElement Body)> SendAsync(HttpMethod method, string path, HttpContent? content)
+        {
+            using var request = new HttpRequestMessage(method, api + path) { Content = content };
+            if (method != HttpMethod.Get)
+                request.Headers.Add("RequestVerificationToken", token ?? throw new TestSiteException($"List {api} before writing to it."));
+            using var response = await client.SendAsync(request);
+            return (response.StatusCode, await Http.ReadJsonAsync(response));
+        }
     }
 
     /// <summary>A copy of the Orders form page with two more Attachments blocks: one read only, one accepting 1 MB of .txt or .pdf.</summary>

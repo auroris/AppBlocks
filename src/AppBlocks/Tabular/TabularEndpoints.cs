@@ -14,8 +14,8 @@ public sealed record TabularChange(string Operation, string? Key, string? Checks
 public sealed record TabularSubmission(string? SubmissionKey, IReadOnlyList<TabularChange>? Changes);
 
 /// <summary>
-/// <c>/api/tabular/{page}/{block}</c>: the rows of the record a Tabular form block shows. Every call resolves the
-/// block through <see cref="TabularAccess"/> first, so page access and the owning record's own load decide, and the
+/// <c>/api/tabular/{page}/{block}</c>, or the same under the configured <see cref="AppBlocksRoutes.Root"/>: the rows of
+/// the record a Tabular form block shows. Every call resolves the block through <see cref="TabularAccess"/> first, so page access and the owning record's own load decide, and the
 /// rows are then read and written through the child data source with its own rules. A save is one batch, applied
 /// whole or not at all, carrying the antiforgery token the list hands out; it is logged like form operations.
 /// <c>/new</c> lists a block inside a form whose record is not saved yet: no rows, and what a new row starts from. Its
@@ -23,11 +23,12 @@ public sealed record TabularSubmission(string? SubmissionKey, IReadOnlyList<Tabu
 /// </summary>
 public static class TabularEndpoints
 {
-    public const string Route = "/api/tabular";
+    /// <summary>Where the endpoints answer: <c>tabular</c> under <see cref="AppBlocksRoutes.Root"/>, by default <c>/api/tabular</c>.</summary>
+    public static string Route(IConfiguration? configuration) => AppBlocksRoutes.Under(configuration, "tabular");
 
     public static void MapTabular(this IEndpointRouteBuilder endpoints)
     {
-        var group = endpoints.MapGroup(Route + "/{pageKey:guid}/{blockKey:guid}");
+        var group = endpoints.MapGroup(Route(endpoints.ServiceProvider.GetService<IConfiguration>()) + "/{pageKey:guid}/{blockKey:guid}");
         group.MapGet("", List);
         group.MapGet("/new", ListNew);
         group.MapPost("", Save);
@@ -65,9 +66,11 @@ public static class TabularEndpoints
             return Audited(http, "save", scope, Results.Problem("This tabular form is read only.", statusCode: 403), 403);
         try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
         catch (AntiforgeryValidationException) { return Results.BadRequest(); }
+        // ReadFromJsonAsync throws for any other content type, which would otherwise be a 500.
+        if (!http.Request.HasJsonContentType()) return Results.Problem("Send the changes as JSON.", statusCode: 415);
         TabularSubmission? submission;
         try { submission = await http.Request.ReadFromJsonAsync<TabularSubmission>(ct); }
-        catch (JsonException) { return Results.BadRequest(); }
+        catch (Exception error) when (error is JsonException or BadHttpRequestException) { return Results.BadRequest(); }
         if (submission?.Changes is null) return Results.BadRequest();
         http.Response.Headers.CacheControl = "no-store";
         var block = scope.Block;

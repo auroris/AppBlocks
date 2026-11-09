@@ -2,7 +2,10 @@ using System.Collections.Concurrent;
 using System.Data;
 using System.Data.Common;
 using System.Globalization;
+using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
+using AppBlocks.Authentication;
 using AppBlocks.Connections;
 using Microsoft.Extensions.Options;
 using AppBlocks.Databases;
@@ -10,7 +13,27 @@ using AppBlocks.Databases;
 namespace AppBlocks.Attachments;
 
 /// <summary>The record a file belongs to: a form resource's alias and the record's key, as the form endpoints know them.</summary>
-public sealed record AttachmentOwner(string Alias, string Key);
+public sealed record AttachmentOwner(string Alias, string Key)
+{
+    /// <summary>What the alias of a <see cref="Pending"/> owner starts with. No resource alias does, so no record key can name pending files.</summary>
+    public const string PendingPrefix = "pending:";
+
+    /// <summary>
+    /// The owner of files uploaded for one submission of a form whose record is not saved yet: the resource's alias after
+    /// <see cref="PendingPrefix"/>, and the submission key followed by the uploader's account key, so only the uploader
+    /// reaches the files. An anonymous visitor has no account and is identified by the submission key alone.
+    /// </summary>
+    public static AttachmentOwner Pending(string resourceAlias, Guid submissionKey, ClaimsPrincipal uploader)
+        => new(PendingPrefix + resourceAlias, PendingKey(submissionKey) + (uploader.Identities.Any(identity => identity.IsAuthenticated) ? ApplicationAccessPolicy.UserKey(uploader) : ""));
+
+    /// <summary>What the key of every pending owner of one submission starts with, whoever uploaded.</summary>
+    internal static string PendingKey(Guid submissionKey) => submissionKey.ToString("D") + ":";
+
+    public bool IsPending => Alias.StartsWith(PendingPrefix, StringComparison.Ordinal);
+
+    /// <summary>The form resource's alias, also for a pending owner.</summary>
+    public string ResourceAlias => IsPending ? Alias[PendingPrefix.Length..] : Alias;
+}
 
 /// <summary>One of an owner's files: its current revision, with the earlier ones newest first.</summary>
 public sealed record AttachmentItem(long Id, string FileName, string ContentType, long Size, string Sha256, string? Purpose, string? Label, string? Notes,
@@ -29,10 +52,12 @@ public sealed record AttachmentPurge(int Links, int Files, long Bytes);
 /// The two attachment tables, in whichever registered connection <see cref="AttachmentSettings.Connection"/> names.
 /// Every method takes the owner and checks it in SQL: a file id that is not the current revision, or an earlier
 /// revision, of one of that owner's live links is simply not found, so a readable record can never be paired with
-/// another record's file. SQLite and SQL Server are supported. Every way the database can refuse the store surfaces as an
+/// another record's file. The store runs on SQLite, SQL Server, PostgreSQL and Oracle 12c or later, so the files can sit beside
+/// the application's data; the PostgreSQL and Oracle scripts and SQL are written from each database's documentation and have not
+/// been run against a live server (see <see cref="Sql"/>). Every way the database can refuse the store surfaces as an
 /// <see cref="AttachmentStoreException"/>, and a problem that needs an administrator is logged once, with what to do, until it goes away.
 /// </summary>
-public sealed class AttachmentStore(IApplicationConnectionFactory connections, IOptions<AttachmentSettings> settings, ILogger<AttachmentStore> logger)
+public sealed partial class AttachmentStore(IApplicationConnectionFactory connections, IOptions<AttachmentSettings> settings, ILogger<AttachmentStore> logger)
 {
     public static readonly ApplicationSchema Schema = ApplicationSchema.FromEmbedded(typeof(AttachmentStore).Assembly, "Attachments/Schema");
 
@@ -131,9 +156,60 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
     {
         await using var connection = await OpenAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
+        var purge = await DeleteLinksAsync(connection, transaction,
+            "SELECT LINK_ID, ATTACHMENT_ID FROM APP_ATTACHMENT_LINK WHERE REMOVED_AT IS NOT NULL AND REMOVED_AT < @before", ct, ("@before", removedBefore));
+        await transaction.CommitAsync(ct);
+        if (purge.Links > 0) logger.LogInformation("Purged {Links} removed attachment link(s) and {Files} file(s), {Bytes} bytes.", purge.Links, purge.Files, purge.Bytes);
+        return purge;
+    });
+
+    /// <summary>
+    /// Gives the pending owner's live files to <paramref name="owner"/>, the record its form has saved, and returns how many moved.
+    /// The files keep their ids, so a list the runtime holds stays valid.
+    /// </summary>
+    public Task<int> AdoptAsync(AttachmentOwner pending, AttachmentOwner owner, string by, CancellationToken ct) => GuardAsync(write: true, async () =>
+    {
+        await using var connection = await OpenAsync(ct);
+        await using var command = Command(connection, null, """
+            UPDATE APP_ATTACHMENT_LINK SET OWNER_ALIAS = @alias, OWNER_KEY = @key, UPDATED_BY = @by, UPDATED_AT = @now
+            WHERE OWNER_ALIAS = @pendingAlias AND OWNER_KEY = @pendingKey AND REMOVED_AT IS NULL
+            """, ("@alias", owner.Alias), ("@key", owner.Key), ("@by", by), ("@now", DateTime.UtcNow), ("@pendingAlias", pending.Alias), ("@pendingKey", pending.Key));
+        return await command.ExecuteNonQueryAsync(ct);
+    });
+
+    /// <summary>Whether another uploader than <paramref name="pending"/>'s has live files pending under the same submission key.</summary>
+    public Task<bool> PendingForOthersAsync(AttachmentOwner pending, Guid submissionKey, CancellationToken ct) => GuardAsync(write: false, async () =>
+    {
+        await using var connection = await OpenAsync(ct);
+        // The submission key is a GUID and the colon after it is no LIKE wildcard, so the prefix matches literally in every database.
+        await using var command = Command(connection, null, """
+            SELECT COUNT(*) FROM APP_ATTACHMENT_LINK
+            WHERE OWNER_ALIAS = @alias AND OWNER_KEY LIKE @submission AND OWNER_KEY <> @key AND REMOVED_AT IS NULL
+            """, ("@alias", pending.Alias), ("@submission", AttachmentOwner.PendingKey(submissionKey) + "%"), ("@key", pending.Key));
+        return Convert.ToInt64(await command.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture) > 0;
+    });
+
+    /// <summary>
+    /// Deletes the pending files uploaded more than <see cref="AttachmentSettings.PendingLifetimeHours"/> ago, whose form was never
+    /// saved, with their rows. The pending endpoints call it before each operation, so no background service is needed.
+    /// </summary>
+    public Task<int> ExpirePendingAsync(CancellationToken ct) => GuardAsync(write: true, async () =>
+    {
+        await using var connection = await OpenAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var expired = await DeleteLinksAsync(connection, transaction, "SELECT LINK_ID, ATTACHMENT_ID FROM APP_ATTACHMENT_LINK WHERE OWNER_ALIAS LIKE @pending AND CREATED_AT < @before", ct,
+            ("@pending", AttachmentOwner.PendingPrefix + "%"),
+            ("@before", DateTime.UtcNow.AddHours(-Math.Max(0, settings.Value.PendingLifetimeHours))));
+        await transaction.CommitAsync(ct);
+        return expired.Links;
+    });
+
+    /// <summary>Deletes the links a query selects, each with every revision behind it.</summary>
+    private static async Task<AttachmentPurge> DeleteLinksAsync(DbConnection connection, DbTransaction transaction, string select, CancellationToken ct, params (string Name, object? Value)[] values)
+    {
         var links = new List<(long Link, long Attachment)>();
-        await using (var removed = Command(connection, transaction, "SELECT LINK_ID, ATTACHMENT_ID FROM APP_ATTACHMENT_LINK WHERE REMOVED_AT IS NOT NULL AND REMOVED_AT < @before", ("@before", removedBefore)))
-        await using (var reader = await removed.ExecuteReaderAsync(ct))
+        await using (var selected = Command(connection, transaction, select, values))
+        await using (var reader = await selected.ExecuteReaderAsync(ct))
             while (await reader.ReadAsync(ct)) links.Add((reader.GetInt64(0), reader.GetInt64(1)));
         var files = 0; var bytes = 0L;
         foreach (var (link, attachment) in links)
@@ -158,10 +234,8 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
                 bytes += size;
             }
         }
-        await transaction.CommitAsync(ct);
-        if (links.Count > 0) logger.LogInformation("Purged {Links} removed attachment link(s) and {Files} file(s), {Bytes} bytes.", links.Count, files, bytes);
         return new AttachmentPurge(links.Count, files, bytes);
-    });
+    }
 
     /// <summary>The owner's items (one when <paramref name="current"/> names a current file), newest first, each with its revisions.</summary>
     private async Task<IReadOnlyList<AttachmentItem>> ListAsync(DbConnection connection, DbTransaction? transaction, AttachmentOwner owner, long? current, CancellationToken ct)
@@ -208,14 +282,22 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
 
     private static async Task<long> InsertFileAsync(DbConnection connection, DbTransaction transaction, AttachmentUpload file, string by, DateTime now, long? replaces, CancellationToken ct)
     {
-        var sqlServer = DatabaseKinds.Of(connection) == DatabaseDialect.SqlServer;
+        var kind = DatabaseKinds.Of(connection);
         var sql = "INSERT INTO APP_ATTACHMENT (FILE_NAME, CONTENT_TYPE, SIZE, SHA256, CONTENT, UPLOADED_BY, UPLOADED_AT, REPLACES)"
-            + (sqlServer ? " OUTPUT INSERTED.ATTACHMENT_ID" : "")
+            + (kind == DatabaseDialect.SqlServer ? " OUTPUT INSERTED.ATTACHMENT_ID" : "")
             + " VALUES (@name, @type, @size, @hash, @content, @by, @now, @replaces)"
-            + (sqlServer ? "" : " RETURNING ATTACHMENT_ID");
+            + kind switch { DatabaseDialect.SqlServer => "", DatabaseDialect.Oracle => " RETURNING ATTACHMENT_ID INTO @id", _ => " RETURNING ATTACHMENT_ID" };
         await using var command = Command(connection, transaction, sql, ("@name", file.FileName), ("@type", file.ContentType), ("@size", (long)file.Bytes.Length),
             ("@hash", Convert.ToHexString(SHA256.HashData(file.Bytes)).ToLowerInvariant()), ("@content", file.Bytes), ("@by", by), ("@now", now), ("@replaces", replaces));
-        return Convert.ToInt64(await command.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture);
+        if (kind != DatabaseDialect.Oracle) return Convert.ToInt64(await command.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture);
+        // Oracle hands a RETURNING value back through an output parameter, whose value may be the driver's own number type, so it is read as text.
+        var id = command.CreateParameter();
+        id.ParameterName = "id";
+        id.DbType = DbType.Int64;
+        id.Direction = ParameterDirection.Output;
+        command.Parameters.Add(id);
+        await command.ExecuteNonQueryAsync(ct);
+        return long.Parse(Convert.ToString(id.Value, CultureInfo.InvariantCulture)!, CultureInfo.InvariantCulture);
     }
 
     private async Task<DbConnection> OpenAsync(CancellationToken ct)
@@ -234,9 +316,6 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
         }
         try
         {
-            // Nothing is created on a database type the tables have no script for, and it need not be reachable to say so.
-            if (DatabaseKinds.Of(connection) is not (DatabaseDialect.Sqlite or DatabaseDialect.SqlServer))
-                throw new AttachmentStoreException($"The attachments connection {name} is not SQLite or SQL Server, the only databases uploads run on.", null, AttachmentStoreProblem.Unsupported);
             await connection.OpenAsync(ct);
             // The two tables are created in whichever database the connection opens, once per process, or found there already made by hand.
             await ApplicationDatabase.EnsureOrAcceptAsync(connection, Schema, Tables, ct);
@@ -279,7 +358,7 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
         {
             Reported[name] = error.Problem;
             logger.LogWarning(error, "File uploads are off: {Problem} {Remedy} Forms and everything else keep working, and uploads return without a restart once this is done.", error.Message, error.Problem switch {
-                AttachmentStoreProblem.Unsupported => "Set Attachments:Connection to AttachmentsDb, or to another SQLite or SQL Server connection.",
+                AttachmentStoreProblem.Unsupported => "Set Attachments:Connection to AttachmentsDb, or to another SQLite, SQL Server, PostgreSQL or Oracle 12c connection.",
                 AttachmentStoreProblem.NotRegistered => "Register that connection, or leave Attachments:Connection empty.",
                 AttachmentStoreProblem.Unavailable => "Check the connection in Settings > AppBlocks > Connections.",
                 _ => "Grant the permission or run the script shown in Settings > AppBlocks > Database setup.",
@@ -293,22 +372,49 @@ public sealed class AttachmentStore(IApplicationConnectionFactory connections, I
 
     private static DbCommand Command(DbConnection connection, DbTransaction? transaction, string sql, params (string Name, object? Value)[] parameters)
     {
+        var kind = DatabaseKinds.Of(connection);
         var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = sql;
+        command.CommandText = Sql(kind, sql);
+        // Oracle binds by position unless told otherwise, and the store's SQL uses some parameters twice.
+        if (kind == DatabaseDialect.Oracle) AppBlocks.DataSources.OracleDialect.Instance.ConfigureCommand(command);
         foreach (var (name, value) in parameters)
         {
             var parameter = command.CreateParameter();
-            parameter.ParameterName = name;
+            parameter.ParameterName = kind == DatabaseDialect.Oracle ? name.TrimStart('@') : name;
             parameter.Value = value ?? DBNull.Value;
-            // SQL Server needs to be told a blob is varbinary(max) and a time is datetime2; SQLite binds by the value's type.
-            if (connection is Microsoft.Data.Sqlite.SqliteConnection) { }
-            else if (value is byte[]) { parameter.DbType = DbType.Binary; parameter.Size = -1; }
-            else if (value is DateTime) parameter.DbType = DbType.DateTime2;
+            // SQL Server needs to be told a blob is varbinary(max) and a time is datetime2, and Oracle that a blob is a BLOB rather than a RAW,
+            // which holds 2000 bytes. SQLite and PostgreSQL bind by the value's type: a blob, and for PostgreSQL a UTC time as timestamptz.
+            if (kind == DatabaseDialect.SqlServer && value is byte[]) { parameter.DbType = DbType.Binary; parameter.Size = -1; }
+            else if (kind == DatabaseDialect.SqlServer && value is DateTime) parameter.DbType = DbType.DateTime2;
+            else if (kind == DatabaseDialect.Oracle && value is byte[] && parameter.GetType().GetProperty("OracleDbType") is { CanWrite: true } type && type.PropertyType.IsEnum)
+                type.SetValue(parameter, Enum.Parse(type.PropertyType, "Blob"));
+            else if (kind == DatabaseDialect.Oracle && value is DateTime) parameter.DbType = DbType.DateTime;
             command.Parameters.Add(parameter);
         }
         return command;
     }
+
+    /// <summary>
+    /// The store's SQL, written once with <c>@name</c> parameters and unquoted names, as <paramref name="kind"/> runs it. PostgreSQL gets
+    /// the two table names quoted, because its script creates them in capitals as the setup screen and its grants name them, and
+    /// <c>WITH RECURSIVE</c> for the revision chains. Oracle gets <c>:name</c> parameters, and <c>SIZE</c>, a reserved word there,
+    /// quoted as its script creates it. Neither database has been run against this store; the SQL follows each one's documentation.
+    /// </summary>
+    internal static string Sql(DatabaseDialect kind, string sql) => kind switch {
+        DatabaseDialect.Postgres => TableNames().Replace(sql, "\"$0\"").Replace("WITH chain (", "WITH RECURSIVE chain (", StringComparison.Ordinal),
+        DatabaseDialect.Oracle or DatabaseDialect.Oracle11g => SizeColumn().Replace(Parameters().Replace(sql, ":$1"), "\"SIZE\""),
+        _ => sql,
+    };
+
+    [GeneratedRegex(@"\bAPP_ATTACHMENT(_LINK)?\b")]
+    private static partial Regex TableNames();
+
+    [GeneratedRegex(@"@(\w+)")]
+    private static partial Regex Parameters();
+
+    [GeneratedRegex(@"\bSIZE\b")]
+    private static partial Regex SizeColumn();
 
     private static string? Null(DbDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
 

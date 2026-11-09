@@ -103,7 +103,48 @@ public sealed class AttachmentStoreTests
         Assert.Single(await Store(connectionString, open).ListAsync(Order, default));
     }
 
-    private static AttachmentStore Store(string connectionString, Func<string, DbConnection> open)
+    [Fact]
+    public async Task Pending_files_belong_to_their_uploader_move_to_the_record_and_expire_on_sqlite()
+    {
+        var file = Path.Combine(Directory.CreateTempSubdirectory("attachments-pending-").FullName, "attachments.db");
+        var connectionString = new SqliteConnection($"Data Source={file};Pooling=False").ConnectionString;
+        static System.Security.Claims.ClaimsPrincipal Member(string id) => new(new System.Security.Claims.ClaimsIdentity([new(System.Security.Claims.ClaimTypes.NameIdentifier, id)], "Test"));
+        var submission = Guid.NewGuid();
+        var mine = AttachmentOwner.Pending("sample.orders", submission, Member("7"));
+        var theirs = AttachmentOwner.Pending("sample.orders", submission, Member("8"));
+        var anonymous = AttachmentOwner.Pending("sample.orders", submission, new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity()));
+        Assert.True(mine.IsPending);
+        Assert.False(Order.IsPending);
+        Assert.Equal("sample.orders", mine.ResourceAlias);
+        Assert.Equal(submission + ":7", mine.Key);
+        Assert.Equal(submission + ":", anonymous.Key);
+        Assert.NotEqual(mine, theirs);
+
+        var store = Store(connectionString, text => new SqliteConnection(text));
+        var draft = await store.AddAsync(mine, Upload("draft.pdf", "application/pdf", "draft"), null, null, null, "member:7", default);
+        Assert.Empty(await store.ListAsync(theirs, default));
+        Assert.Null(await store.ReadAsync(theirs, draft.Id, default));
+        Assert.True(await store.PendingForOthersAsync(theirs, submission, default));
+        Assert.False(await store.PendingForOthersAsync(mine, submission, default));
+        Assert.False(await store.PendingForOthersAsync(mine, Guid.NewGuid(), default));
+
+        // Only the uploader's own pending files move, and they keep their ids.
+        Assert.Equal(0, await store.AdoptAsync(theirs, Order, "member:8", default));
+        Assert.Equal(1, await store.AdoptAsync(mine, Order, "member:7", default));
+        Assert.Empty(await store.ListAsync(mine, default));
+        Assert.Equal([draft.Id], (await store.ListAsync(Order, default)).Select(i => i.Id));
+
+        // Files left pending past the lifetime go on the next pending operation; adopted files stay.
+        var late = AttachmentOwner.Pending("sample.orders", Guid.NewGuid(), Member("7"));
+        await store.AddAsync(late, Upload("late.pdf", "application/pdf", "late"), null, null, null, "member:7", default);
+        Assert.Equal(0, await store.ExpirePendingAsync(default));
+        Assert.Equal(1, await Store(connectionString, text => new SqliteConnection(text), pendingLifetimeHours: 0).ExpirePendingAsync(default));
+        Assert.Empty(await store.ListAsync(late, default));
+        Assert.Equal(1L, await Count(connectionString, text => new SqliteConnection(text), "SELECT COUNT(*) FROM APP_ATTACHMENT"));
+        Assert.Equal([draft.Id], (await store.ListAsync(Order, default)).Select(i => i.Id));
+    }
+
+    private static AttachmentStore Store(string connectionString, Func<string, DbConnection> open, int pendingLifetimeHours = 24)
     {
         var configuration = new ConfigurationBuilder().Build();
         var services = new ServiceCollection();
@@ -112,7 +153,7 @@ public sealed class AttachmentStoreTests
         services.AddTestConnections(connections => connections.AddConnection("FilesDb", _ => open(connectionString)));
         var provider = services.BuildServiceProvider();
         return new AttachmentStore(provider.GetRequiredService<AppBlocks.Connections.IApplicationConnectionFactory>(),
-            Options.Create(new AttachmentSettings { Connection = "FilesDb" }), NullLogger<AttachmentStore>.Instance);
+            Options.Create(new AttachmentSettings { Connection = "FilesDb", PendingLifetimeHours = pendingLifetimeHours }), NullLogger<AttachmentStore>.Instance);
     }
 
     private static AttachmentUpload Upload(string name, string type, string text) => new(name, type, Encoding.UTF8.GetBytes(text));

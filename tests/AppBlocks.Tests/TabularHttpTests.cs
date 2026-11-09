@@ -62,6 +62,14 @@ public sealed class TabularHttpTests
         Assert.Equal(0m, Number(newRow, "unitPrice"));
         Assert.True(newRow.GetProperty("capabilities").GetProperty("create").GetBoolean());
 
+        // A body that is not JSON is refused as such, not answered as a server failure.
+        using (var request = new HttpRequestMessage(HttpMethod.Post, $"{site.PathBase}/api/tabular/{BlockSite.FormPageKey}/{BlockPages.LinesBlock}?id=4")
+        { Content = new StringContent("changes", System.Text.Encoding.UTF8, "text/plain") })
+        {
+            request.Headers.Add("RequestVerificationToken", list.Body.GetProperty("antiforgeryToken").GetString());
+            Assert.Equal(HttpStatusCode.UnsupportedMediaType, (await client.SendAsync(request)).StatusCode);
+        }
+
         // A save without the token is refused before anything is read.
         using (var request = new HttpRequestMessage(HttpMethod.Post, $"{site.PathBase}/api/tabular/{BlockSite.FormPageKey}/{BlockPages.LinesBlock}?id=4")
         { Content = JsonContent.Create(new { submissionKey = Guid.NewGuid(), changes = new[] { new { operation = "create", values = new { item = "Tokenless" } } } }) })

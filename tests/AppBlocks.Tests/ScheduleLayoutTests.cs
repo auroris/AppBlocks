@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using AppBlocks.DataSources;
 using AppBlocks.Schedules;
 
@@ -233,6 +234,78 @@ public sealed class ScheduleLayoutTests
     {
         Assert.Equal(expected, ScheduleSettings.ParseFlag(value));
         Assert.Equal(expected, ScheduleSettings.Read(alias => alias == ScheduleSettings.HideEmptyRowsAlias ? value : null).HideEmptyRows);
+    }
+
+    [Theory]
+    [InlineData("/stays/4", "/stays/4")]
+    [InlineData("  /stays/4?x=1:2 ", "/stays/4?x=1:2")]
+    [InlineData("/", "/")]
+    [InlineData("./stays/4", null)]
+    [InlineData("../stays", null)]
+    [InlineData("stays/4", null)]
+    [InlineData("?id=4", null)]
+    [InlineData("#bar", null)]
+    [InlineData("https://example.org/a:b", "https://example.org/a:b")]
+    [InlineData("HTTP://example.org", "HTTP://example.org")]
+    [InlineData("mailto:desk@example.org", "mailto:desk@example.org")]
+    [InlineData("tel:+15551234567", "tel:+15551234567")]
+    [InlineData("javascript:alert(document.cookie)", null)]
+    [InlineData(" JavaScript:alert(1)", null)]
+    [InlineData("java\tscript:alert(1)", null)]
+    [InlineData("\u0001javascript:alert(1)", null)]
+    [InlineData("data:text/html,<script>alert(1)</script>", null)]
+    [InlineData("vbscript:msgbox", null)]
+    [InlineData("ftp://example.org/file", null)]
+    [InlineData("//evil.example/", null)]
+    [InlineData("\\\\evil.example/", null)]
+    [InlineData("/\\evil.example/", null)]
+    [InlineData("/stays/\n4", null)]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    [InlineData(null, null)]
+    public void A_bar_link_passes_only_root_paths_and_web_mail_and_phone_addresses(string? value, string? expected)
+        => Assert.Equal(expected, ScheduleColumns.Link(value));
+
+    [Fact]
+    public void A_refused_link_falls_back_to_the_template_or_to_no_link()
+    {
+        var window = ScheduleWindow.Resolve(Settings, null, Now);
+        var rows = Result([("KEY", "key"), ("LABEL", "label"), ("GROUP", "group")], Row(("KEY", "101"), ("LABEL", "Room 101"), ("GROUP", null)));
+        var bars = Result([("STAY_ID", "key"), ("ROW", "row"), ("START", "start"), ("END", "end"), ("LABEL", "label"), ("KIND", "kind"), ("LINK", "link")],
+            Bar(1, "101", "2026-10-27", "2026-10-27", "Script", "", "javascript:alert(1)"),
+            Bar(2, "101", "2026-10-28", "2026-10-28", "Safe", "", "https://example.org/stays/2"));
+        var templated = ScheduleLayout.Build(window, rows, bars, "/stays/?id={key}", "/wing").Rows.Single().Bars;
+        Assert.Equal("/wing/stays/?id=1", templated.Single(b => b.Label == "Script").Link);
+        Assert.Equal("https://example.org/stays/2", templated.Single(b => b.Label == "Safe").Link);
+        Assert.Null(ScheduleLayout.Build(window, rows, bars).Rows.Single().Bars.Single(b => b.Label == "Script").Link);
+    }
+
+    [Fact]
+    public void The_limits_and_the_weekend_come_from_the_options_with_todays_values_as_defaults()
+    {
+        var defaults = new ScheduleOptions();
+        Assert.Equal((400, 31, 2000, 5000), (defaults.MaxDays, defaults.MaxHourDays, defaults.MaxRows, defaults.MaxBars));
+        Assert.Equal(new[] { DayOfWeek.Saturday, DayOfWeek.Sunday }, defaults.Weekend);
+
+        var bound = new ScheduleOptions();
+        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+            ["AppBlocks:Schedule:MaxDays"] = "60", ["AppBlocks:Schedule:MaxHourDays"] = "7",
+            ["AppBlocks:Schedule:WeekendDays:0"] = "Friday", ["AppBlocks:Schedule:WeekendDays:1"] = "Saturday",
+        }).Build().GetSection(ScheduleOptions.Section).Bind(bound);
+        Assert.Equal(new[] { DayOfWeek.Friday, DayOfWeek.Saturday }, bound.Weekend);
+
+        var wide = ScheduleWindow.Resolve(Settings with { DaysBefore = 100, DaysAfter = 100 }, Query(("from", "2020-01-01"), ("to", "2030-01-01")), Now, bound);
+        Assert.Equal(60, wide.Columns);
+        Assert.Equal(7 * 24, ScheduleWindow.Resolve(Settings with { Scale = ScheduleScale.Hours }, Query(("from", "2026-10-01"), ("to", "2026-12-31")), Now, bound).Columns);
+        Assert.Equal(new DateOnly(2026, 10, 29).AddDays(-60), ScheduleWindow.Resolve(Settings with { DaysBefore = 100 }, null, Now, bound).From);
+        Assert.Equal(60, ScheduleWindow.Resolve(Settings, null, Now).Quarters(1, bound).Single().Days);
+        Assert.Contains(ScheduleValidation.Validate(Settings with { DaysBefore = 61 }, null, null, bound), e => e.Contains("from 0 to 60"));
+        Assert.DoesNotContain(ScheduleValidation.Validate(Settings with { DaysBefore = 61 }, null), e => e.Contains("days before"));
+
+        // Friday 30 and Saturday 31 October are the weekend of the default window under these options.
+        var rows = Result([("KEY", "key"), ("LABEL", "label"), ("GROUP", "group")], Row(("KEY", "101"), ("LABEL", "Room 101"), ("GROUP", null)));
+        var layout = ScheduleLayout.Build(ScheduleWindow.Resolve(Settings, null, Now), rows, Result([("KEY", "key"), ("ROW", "row"), ("START", "start")]), weekend: bound.Weekend);
+        Assert.Equal(new[] { 3, 4 }, layout.Columns.Where(c => c.IsWeekend).Select(c => c.Index));
     }
 
     private static Dictionary<string, string> Query(params (string Name, string Value)[] values)

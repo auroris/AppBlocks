@@ -1,4 +1,6 @@
 @using Microsoft.AspNetCore.Mvc.Rendering
+@using Microsoft.Extensions.Configuration
+@using Microsoft.Extensions.Options
 @using AppBlocks.Blocks
 @using AppBlocks.DataSources
 @using AppBlocks.Forms
@@ -6,9 +8,12 @@
 @model AppBlockView
 @inject FormResourceRegistry Resources
 @inject IVariationContextAccessor VariationContext
+@inject IConfiguration Configuration
+@inject IOptions<TabularOptions> Options
+@inject AppBlocksText Text
 @*
     The rows of a record, edited several at a time. The server renders the frame and the column headings; the runtime
-    loads the rows from /api/tabular, draws one input per cell, and saves every change in one batch. Inside a form the
+    loads the rows from the tabular endpoints, draws one input per cell, and saves every change in one batch. Inside a form the
     block waits for the form's record (the app-form:loaded and app-form:saved events) and asks with the record's key;
     on its own it asks at once with the page's address. Inside a form the caller can save, its changes go with the form's
     own save, which names the block by data-block. The controls carry form="" so the enclosing form never submits
@@ -17,11 +22,14 @@
 *@
 @{
     var item = Model.Block;
-    var block = TabularBlock.Read(item.Content);
+    var block = TabularBlock.Read(item.Content, Options.Value.MaxRows);
     var culture = VariationContext.VariationContext?.Culture;
     var apiQuery = culture is not null && Model.Page.Cultures.ContainsKey(culture) ? "?" + AppBlockContent.CultureParameter + "=" + Uri.EscapeDataString(culture) : "";
-    var api = Context.Request.PathBase + TabularEndpoints.Route + "/" + Model.Page.Key + "/" + item.ContentKey + apiQuery;
+    var api = Context.Request.PathBase + TabularEndpoints.Route(Configuration) + "/" + Model.Page.Key + "/" + item.ContentKey + apiQuery;
     var ownedByForm = block.OwnedByForm && Model.Form is not null;
+    // A class that only Members reach refuses an anonymous visitor's every call, so the notice replaces rows that would only fail.
+    var owner = block.OwnedByForm ? Model.Form?.Resource : await Resources.FindAsync(block.OwnerResource!);
+    var membersOnly = Model.Anonymous && owner is not null && FormResourceAccess.Refusal(owner, Context.User) is not null;
     var id = "tabular-" + item.ContentKey.ToString("N");
     var level = Math.Clamp(Model.HeadingLevel, 2, 6);
     var heading = new TagBuilder("h" + level);
@@ -32,20 +40,23 @@
     var columns = await Resources.FindAsync(block.DataSource) is SqlDataSource source
         ? block.Columns(source.Fields)
         : block.Fields.Select(name => new FormField(name, name, "text")).ToArray();
+    // An editor's own label wins; the package's default goes through the site's texts.
+    var addLabel = block.AddLabel == TabularBlock.DefaultAddLabel ? Text["tabularAddRow", TabularBlock.DefaultAddLabel] : block.AddLabel;
+    var saveLabel = block.SaveLabel == TabularBlock.DefaultSaveLabel ? Text["tabularSaveRows", TabularBlock.DefaultSaveLabel] : block.SaveLabel;
 }
-@if (!Model.Admitted || Model.Anonymous && await Resources.FindAsync(block.DataSource) is not SqlDataSource { AllowsAnonymousRead: true })
+@if (!Model.Admitted || membersOnly || Model.Anonymous && await Resources.FindAsync(block.DataSource) is not SqlDataSource { AllowsAnonymousRead: true })
 {
-    <p class="app-block-signin" role="status">Sign in to see the rows.</p>
+    <p class="app-block-signin" role="status">@Text["tabularSignIn", "Sign in to see the rows."]</p>
 }
 else if (block.OwnedByForm && Model.Form is null)
 {
-    <p role="alert">This Tabular form block is not inside a form and names no owner.</p>
+    <p role="alert">@Text["tabularNoOwner", "This Tabular form block is not inside a form and names no owner."]</p>
 }
 else
 {
     <section class="app-tabular ah-tabular" id="@id" data-app-tabular data-api="@api" data-block="@item.ContentKey" data-owner="@(ownedByForm ? "form" : "page")"
         data-key-parameter="@(Model.Form?.KeyParameter ?? "id")" data-read-only="@block.ReadOnly.ToString().ToLowerInvariant()"
-        data-max-rows="@block.MaxRows" data-empty-message="@(block.EmptyMessage ?? "No rows yet.")" aria-labelledby="@(block.Heading is null ? null : id + "-title")">
+        data-max-rows="@block.MaxRows" data-empty-message="@(block.EmptyMessage ?? Text["tabularEmpty", "No rows yet."])" data-anonymous="@(Model.Anonymous ? "true" : null)" aria-labelledby="@(block.Heading is null ? null : id + "-title")">
         @if (block.Heading is not null) { @heading }
         @if (block.Help is not null) { <p class="ah-tabular__help">@block.Help</p> }
         <div class="app-tabular-message" role="status" aria-live="polite"></div>
@@ -58,7 +69,7 @@ else
                         {
                             <th scope="col" data-column="@column.Key">@column.Label@(column.Required ? " *" : "")</th>
                         }
-                        <th scope="col" class="app-tabular-actions-head"><span class="visually-hidden">Actions</span></th>
+                        <th scope="col" class="app-tabular-actions-head"><span class="visually-hidden">@Text["tabularActions", "Actions"]</span></th>
                     </tr>
                 </thead>
                 <tbody aria-busy="true"></tbody>
@@ -67,8 +78,8 @@ else
         @if (!block.ReadOnly)
         {
             <div class="app-tabular-toolbar ah-tabular__toolbar" hidden>
-                <button type="button" form="" data-tabular-add>@block.AddLabel</button>
-                <button type="button" form="" data-tabular-save>@block.SaveLabel</button>
+                <button type="button" form="" data-tabular-add>@addLabel</button>
+                <button type="button" form="" data-tabular-save>@saveLabel</button>
             </div>
         }
     </section>

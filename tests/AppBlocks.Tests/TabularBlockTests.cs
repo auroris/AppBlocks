@@ -52,6 +52,12 @@ public sealed class TabularBlockTests
         Assert.Equal(TabularBlock.DefaultMaxRows, Read(("maxRows", "0")).MaxRows);
         Assert.Equal(TabularBlock.DefaultMaxRows, Read(("maxRows", "many")).MaxRows);
         Assert.Empty(TabularBlock.ParseFields(" ,; "));
+        // The site's AppBlocks:Tabular:MaxRows moves the cap; its default is today's 1000.
+        Assert.Equal(TabularBlock.MaxRowsLimit, new TabularOptions().MaxRows);
+        Assert.Equal(1000, TabularBlock.MaxRowsLimit);
+        Assert.Equal(5000, TabularBlock.Read(alias => alias == "maxRows" ? "5000" : null, 10000).MaxRows);
+        Assert.Equal(20, TabularBlock.Read(alias => alias == "maxRows" ? "50" : null, 20).MaxRows);
+        Assert.Equal(20, TabularBlock.Read(_ => null, 20).MaxRows);
 
         // Columns: the named fields the data source has, in order; or every field but the link field.
         FormField[] fields = [new("lineId", "Line", "number"), new("orderId", "Order", "number"), new("item", "Item", "text"), new("notes", "Notes", "text")];
