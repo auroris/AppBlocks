@@ -10,13 +10,13 @@ A Schedule block draws resources against time: the rows of one data source down 
 | Rows source | The alias of a published report definition that selects a data source, or of a data source. One schedule row per row. |
 | Bars source | The alias of the source whose rows are the bars. |
 | Days before today, Days after today | The window when the page's address carries no `from` and `to`. Empty is 7 and 14. |
-| Columns | Days, or one column per hour of every day in the window. A window of hour columns is cut to 31 days. |
+| Columns | Days, or one column per hour of every day in the window. A window of hour columns is cut to 31 days, or `AppBlocks:Schedule:MaxHourDays`. |
 | Link template | Where a bar without a `link` value leads, such as `/orders-form/?id={key}`. `{key}` and any other bar column in braces are replaced, URL-encoded. An address starting with `/` is from the site's root. |
 | Hide empty rows | Leave out rows with no bar in the window, and say how many were left out. |
 
 ## The window
 
-The window comes from the page's address, `?from=2026-11-01&to=2026-11-30`, or from the days before and after today. Readers move it with the Earlier, Today and Later links, which keep every other parameter of the address, and with the Jump to menu, which lists the next twelve months and six quarters as links. A window longer than 400 days is cut at its end.
+The window comes from the page's address, `?from=2026-11-01&to=2026-11-30`, or from the days before and after today. Readers move it with the Earlier, Today and Later links, which keep every other parameter of the address, and with the Jump to menu, which lists the next twelve months and six quarters as links. A window longer than 400 days, or `AppBlocks:Schedule:MaxDays`, is cut at its end. Saturday and Sunday are shaded as the weekend; a site whose weekend falls on other days sets `AppBlocks:Schedule:WeekendDays`, such as `["Friday", "Saturday"]`.
 
 The dates shown reach both sources as `:PARAM.from` and `:PARAM.to`, so a bars query can select only the bars that touch the window:
 
@@ -38,9 +38,9 @@ Column names are matched in any letter case, by the column's own name or by the 
 | `row` | bars | The key of the row the bar belongs to. A bar on an unknown row is left out. |
 | `start`, `end` | bars | Dates or date-times. A bar with no end runs to the window's edge with an arrow; one that crosses an edge is clamped and dotted there. |
 | `kind` | bars | Groups bars for the legend and gives them a colour, the first eight kinds in turn. |
-| `link` | bars | Where the bar leads. Empty falls back to the link template. |
+| `link` | bars | Where the bar leads: a path from the site's root, starting with one `/`, or an `http`, `https`, `mailto` or `tel` address. Empty, or anything else, falls back to the link template. |
 
-Rows keep the order the query returns them, so an `ORDER BY` is the ordering. Bars that overlap in time within one row are packed into lanes, so each stays visible.
+Rows keep the order the query returns them, so an `ORDER BY` is the ordering. Bars that overlap in time within one row are packed into lanes, so each stays visible. A schedule reads at most 2000 rows and 5000 bars, or `AppBlocks:Schedule:MaxRows` and `MaxBars`; beyond them it shows a problem in place of the table, and the query needs narrowing.
 
 The same sources may carry four more columns. None is required.
 
@@ -50,21 +50,23 @@ The same sources may carry four more columns. None is required.
 | `description` | both | Text a reader opens from the bar or from the row's label, with the bar's dates and its link. A bar with a description is a button rather than a link, so its link is offered inside the details. Line breaks are kept. |
 | `orientation` | rows | `true`, `1` or `vertical` makes the row a band of markers. See below. |
 
+A bar's `link` is held to a rule for the same reason as its colours, so a value from a row never runs script in a reader's browser. It is used only when it is a path from the site's root, which starts with one `/` (a value starting `//` or `/\` names another host), or an address whose scheme is `http`, `https`, `mailto` or `tel`. Every other value counts as no value, so the link template applies, or the bar has no link when the block has no template: other schemes, `javascript:` among them, relative paths such as `./`, `../` and bare names, a value starting with `?` or `#`, and any value holding a control character such as a tab or a line break. The link template is the editor's and is used as written.
+
 ## Vertical rows and markers
 
 A row whose `orientation` is true is drawn across the top of the schedule instead of down the side. Each of its bars becomes a marker: its label is written top to bottom in a band as tall as its lanes, and its columns are shaded with its colour through every row below, behind the horizontal bars. That is what a statutory holiday, a shutdown or an exercise looks like on everyone's schedule at once. A marker is a bar in every other way. It can span several columns, it is packed into lanes when two markers share a day, and it carries the same link, colours and description. The one difference is that a marker without an end covers its start column only, since a holiday has no "onward".
 
-A rows source for categories like the ones in the original activity schedule, with holidays as a vertical category, looks like this:
+A rows source of activity categories, with holidays as a vertical category, looks like this:
 
 ```sql
 SELECT id AS "key", name AS "label", NULL AS "group", orientation, backgroundcolor AS "color", textcolor AS "textColor", description
-FROM wing_activity_category
+FROM activity_category
 ORDER BY ordering, name
 ```
 
 ## One schedule for every tenant
 
-When each unit gets its own copy of the schedule page under its own part of the site, as `/en/4wing/activity-schedule/` and `/en/units/10ftts/activity-schedule/`, the data sources need no copy. The application decides what a tenant is, in one registered `IBindVariableProvider` that reads the page from the execution context, and a SELECT binds the answer as `:APP.tenant`. A bars source filtered with `WHERE tenant_id = :APP.tenant AND enddate >= :PARAM.from AND startdate <= :PARAM.to` serves every copy, and a new tenant is a page copy and nothing else. The [worked example](activity-schedule-example.md) builds the whole application around it, provider included.
+When each branch of an organisation gets its own copy of the schedule page under its own part of the site, as `/en/harbour/activity-schedule/` and `/en/clubs/northgate/activity-schedule/`, the data sources need no copy. The application decides what a tenant is, in one registered `IBindVariableProvider` that reads the page from the execution context, and a SELECT binds the answer as `:APP.tenant`. A bars source filtered with `WHERE tenant_id = :APP.tenant AND enddate >= :PARAM.from AND startdate <= :PARAM.to` serves every copy, and a new tenant is a page copy and nothing else. The [worked example](activity-schedule-example.md) builds the whole application around it, provider included.
 
 ## Colours and styling
 
@@ -99,11 +101,11 @@ A page can lay out a schedule table itself, from rows it loads with the [data AP
 | `openEnded`, `clippedStart`, `clippedEnd` | The bar runs on past the window's end with an arrow, or is cut and dotted at the window's start or end. |
 | `vertical` | The bar is a marker in a vertical row. |
 | `key`, `kind` | Rendered as `data-key` and `data-kind`. |
-| `link` | Where the bar leads. A bar with neither a link nor a description is a focusable `span`. |
+| `link` | Where the bar leads, under the same rule as the block's `link` column: a path from the site's root or an `http`, `https`, `mailto` or `tel` address, and anything else is ignored. A bar with neither a link nor a description is a focusable `span`. |
 | `description` | Text, or nodes the page built, for the bar's popover. It makes the bar a button that opens the popover, which also shows `when` and the link. |
-| `when`, `linkText` | The popover's line under its title, and the text of its link, `Open link` by default. |
+| `when`, `linkText`, `closeLabel` | The popover's line under its title, the text of its link, `Open link` by default, and the accessible name of its close button, `Close` by default. |
 
-`scheduleRowLabel(row)` returns the `th` that starts a row, from `label`, `color`, `textColor` and `description`; a description makes the label a button that opens it.
+`scheduleRowLabel(row)` returns the `th` that starts a row, from `label`, `color`, `textColor`, `description` and `closeLabel`; a description makes the label a button that opens it.
 
 `mountSchedule(root)` scrolls today's column into view, shows a bar's `textContent` as a tooltip on hover and keyboard focus, hides it on Escape and when anything scrolls, and places a popover under the bar or label that opened it, inside the viewport. It finds bars and popovers inside the root as they are used, so the page can draw the table again, for another window or new data, without mounting again. It returns a function that removes its listeners and tooltip. Mounting the same root again replaces the earlier mount, so mounting after every redraw is also fine.
 
