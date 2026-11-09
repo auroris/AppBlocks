@@ -5,6 +5,15 @@
 
 // A colour reaches CSS only as a hex value or a name, as the server's ScheduleColumns.Color allows.
 const safeColor = value => typeof value === "string" && /^(#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|[a-z]{3,30})$/i.test(value) ? value.toLowerCase() : null;
+// A link reaches href only as a path from the site's root or an http, https, mailto or tel address, as the server's
+// ScheduleColumns.Link allows, so a value from a row never runs script. "//host" and "/\host" lead to another site, and a
+// browser drops tabs and line breaks from an address, which could turn a path into either, so all three are refused.
+function safeLink(value) {
+    const link = typeof value === "string" ? value.trim() : "";
+    if (!link || /[\u0000-\u001f\u007f]/.test(link)) return null;
+    if (link.startsWith("/")) return /^\/[/\\]/.test(link) ? null : link;
+    return /^(https?|mailto|tel):/i.test(link) ? link : null;
+}
 let popovers = 0;
 // Text, or nodes a page built itself, appended as they are.
 function fill(element, content) {
@@ -19,7 +28,7 @@ function element(tag, className, content) {
     return content === undefined ? node : fill(node, content);
 }
 // The browser's own popover, opened by its button without any script.
-function popover(title, lines) {
+function popover(title, lines, closeLabel) {
     const box = element("div", "app-schedule-popover");
     box.id = `app-schedule-popover-${++popovers}`;
     box.popover = "auto";
@@ -28,7 +37,7 @@ function popover(title, lines) {
     box.setAttribute("aria-labelledby", heading.id);
     box.append(heading, ...lines);
     const close = element("button", "app-schedule-popover__close", "×");
-    close.type = "button"; close.setAttribute("aria-label", "Close");
+    close.type = "button"; close.setAttribute("aria-label", closeLabel || "Close");
     close.setAttribute("popovertarget", box.id); close.setAttribute("popovertargetaction", "hide");
     box.append(close);
     return box;
@@ -44,9 +53,11 @@ function popover(title, lines) {
 //   openEnded, clippedStart, clippedEnd   it runs on past the window's end, or is cut at the window's start or end
 //   vertical     it is a marker in a vertical row, its label written top to bottom
 //   key, kind    carried as data-key and data-kind for a page's own script
-//   link         where it leads; a bar with neither link nor description is a focusable span
+//   link         where it leads: a path from the site's root, or an http, https, mailto or tel address; anything else
+//                is ignored. A bar with neither link nor description is a focusable span
 //   description  text or nodes for its popover, which makes it a button; the popover also shows when and link
 //   when         the popover's second line, such as "Room 1, 3 Nov 2026 to 5 Nov 2026"
+//   linkText, closeLabel   the popover's link text and its close button's name, "Open link" and "Close" unless given
 export function scheduleBar(bar) {
     const color = safeColor(bar.color), textColor = safeColor(bar.textColor);
     const classes = ["app-schedule-bar"];
@@ -56,7 +67,7 @@ export function scheduleBar(bar) {
     if (bar.clippedEnd) classes.push("app-schedule-bar--clipped-end");
     if (bar.vertical) classes.push("app-schedule-bar--vertical");
     const hasDescription = bar.description !== undefined && bar.description !== null && bar.description !== "";
-    const link = bar.link || null;
+    const link = safeLink(bar.link);
     const node = element(hasDescription ? "button" : link ? "a" : "span", classes.join(" "));
     node.style.setProperty("--ah-span", String(Math.max(1, Math.trunc(bar.span ?? 1))));
     node.style.setProperty("--ah-lane", String(Math.max(0, Math.trunc(bar.lane ?? 0))));
@@ -76,7 +87,7 @@ export function scheduleBar(bar) {
             anchor.href = link;
             lines.push(element("p", "app-schedule-popover__link", anchor));
         }
-        const box = popover(bar.label ?? "", lines);
+        const box = popover(bar.label ?? "", lines, bar.closeLabel);
         node.type = "button";
         node.setAttribute("popovertarget", box.id);
         fragment.append(box);
@@ -85,7 +96,8 @@ export function scheduleBar(bar) {
     return fragment;
 }
 
-// A row's label cell, the th that starts its tr: its label, its colours, and a description its label opens.
+// A row's label cell, the th that starts its tr: its label, its colours, and a description its label opens, whose close
+// button closeLabel names ("Close" unless given).
 export function scheduleRowLabel(row) {
     const cell = element("th", "app-schedule-row-label");
     cell.scope = "row";
@@ -96,7 +108,7 @@ export function scheduleRowLabel(row) {
         cell.append(element("span", "app-schedule-label", row.label ?? ""));
         return cell;
     }
-    const box = popover(row.label ?? "", [element("p", "app-schedule-popover__text", row.description)]);
+    const box = popover(row.label ?? "", [element("p", "app-schedule-popover__text", row.description)], row.closeLabel);
     const opener = element("button", "app-schedule-label app-schedule-label--button", row.label ?? "");
     opener.type = "button";
     opener.setAttribute("popovertarget", box.id);

@@ -1,9 +1,15 @@
-// Requests to AppBlocks' endpoints from a public page: /api/data and the blocks' own /api/forms, /api/attachments and
-// /api/tabular. The runtime sends every request through here, and a site's own script may import it to read an API
-// endpoint's rows. Nothing here uses Umbraco's backoffice client, so it works for an anonymous visitor as for anyone.
+// Requests to AppBlocks' endpoints from a public page: the API endpoints and the blocks' own forms, attachments and
+// tabular endpoints. The runtime sends every request through here, and a site's own script may import it to read an API
+// endpoint's rows or to send a signed-in Member's changes. Nothing here uses Umbraco's backoffice client, so it works for
+// an anonymous visitor as for anyone. The backoffice modules import pathBase from here too, so it is worked out once.
 
 // The site's path base: where App_Plugins is served from, so a site under /intranet asks /intranet/api/data/...
 export const pathBase = new URL(import.meta.url).pathname.split("/App_Plugins/")[0];
+
+// Where the blocks' endpoints live, path base included, such as /intranet/api: the page's appblocks-api-root meta tag,
+// which the server writes when a site moves them, or /api under the path base. Since it already holds the path base,
+// it goes to request as a URL, as antiforgeryToken below does, and not as a path from the site's root.
+export const apiRoot = (globalThis.document?.querySelector('meta[name="appblocks-api-root"]')?.content.trim() || `${pathBase}/api`).replace(/\/+$/, "");
 
 // A refused request: the HTTP status and the endpoint's body, a problem such as { status, title, detail } or a form's
 // { errors }, or {} when the answer had no JSON body.
@@ -56,4 +62,22 @@ export function errorText(error, fallback = "The request could not be completed.
     const problem = error instanceof ApiError ? error.problem : {};
     const errors = problem.errors !== null && typeof problem.errors === "object" ? Object.values(problem.errors).flat() : [];
     return problem.detail || problem.title || errors.find(entry => typeof entry === "string" && entry) || fallback;
+}
+
+let antiforgery = null;
+// The signed-in Member's antiforgery token, { token, headerName }, asked of the antiforgery endpoint once per page and
+// kept, since it stays valid for the Member's session. The endpoint answers 401 to anyone else; a refusal is not kept,
+// so asking again after signing in works.
+export function antiforgeryToken() {
+    antiforgery ??= request(new URL(`${apiRoot}/antiforgery/token`, location.origin)).catch(error => { antiforgery = null; throw error; });
+    return antiforgery;
+}
+
+// request, for a signed-in Member's changes: anything but GET and HEAD carries the antiforgery token in its header, as
+// a controller under the Member policy requires.
+export async function memberRequest(url, options = {}) {
+    const method = (options.method ?? "GET").toUpperCase();
+    if (method === "GET" || method === "HEAD") return request(url, options);
+    const { token, headerName } = await antiforgeryToken();
+    return request(url, { ...options, headers: { ...options.headers, [headerName]: token } });
 }

@@ -1,6 +1,13 @@
 import { umbHttpClient } from "@umbraco-cms/backoffice/http-client";
 
-export const pathBase = new URL(import.meta.url).pathname.split("/App_Plugins/")[0];
+import { pathBase } from "../ApplicationBlocks/data-api.js";
+
+export { pathBase };
+// The backoffice's own address, such as /intranet/umbraco: the path base and the first segment after it of the address
+// the backoffice runs at, so a link to one of its sections follows the backoffice wherever the host serves it.
+export const backofficePath = `${pathBase}/${location.pathname.slice(pathBase.length).split("/")[1] ?? ""}`;
+// The Management API's address is left as Umbraco's own client writes it for every one of its requests: it goes to
+// umbHttpClient, which adds the site's address, and Umbraco serves the API there whatever the backoffice's address.
 export async function managementRequest(path, { method = "GET", body, text = false } = {}) {
     const { data, error, response } = await umbHttpClient.request({
         url: `/umbraco/management/api/v1/${path}`, method, body,

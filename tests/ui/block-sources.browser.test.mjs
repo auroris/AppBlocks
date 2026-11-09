@@ -17,7 +17,7 @@ before(async () => {
 });
 after(async () => browser?.close());
 
-async function mount({ value = "", readonly = false, fail = false, form = false } = {}) {
+async function mount({ value = "", readonly = false, fail = false, form = false, formClasses = [{ alias: "Orders" }] } = {}) {
     const page = await browser.newPage();
     const errors = [], requests = [];
     page.on("pageerror", error => errors.push(error.message));
@@ -49,7 +49,7 @@ async function mount({ value = "", readonly = false, fail = false, form = false 
             return js(await readFile(existsSync(companion) ? companion : resolve(root, "src/AppBlocks/wwwroot", relative), "utf8"));
         }
         requests.push({ path, headers: route.request().headers() });
-        if (path.endsWith("/catalogue")) return json({ formClasses: [{ alias: "Orders" }], resources: [{ alias: "content-node", dataSource: { name: "Old source" } }] });
+        if (path.endsWith("/catalogue")) return json({ formClasses, resources: [{ alias: "content-node", dataSource: { name: "Old source" } }] });
         if (path.endsWith("/connections")) return json([{ name: "AppBlocksDb" }, { name: "Business" }]);
         if (path.endsWith("/tables")) return url.searchParams.get("connection") === "Business"
             ? fail ? json({ detail: "Connection unavailable" }, 422) : json([{ name: "sales.Order.Items", value: '"sales"."Order.Items"' }])
@@ -107,6 +107,17 @@ test("readonly SQL configuration cannot be changed", async () => {
     assert.equal(await page.getByLabel("SQL query", { exact: true }).getAttribute("readonly"), "");
     await page.evaluate(() => document.querySelector("appblocks-report-source").change({ kind: "table", connection: "AppBlocksDb", source: "Tasks" }));
     assert.equal(await page.evaluate(() => document.querySelector("appblocks-report-source").value), saved);
+    assert.deepEqual(errors, []); await page.close();
+});
+
+test("forms list registered C# classes and published data sources under their own headings", async () => {
+    const { page, errors } = await mount({ form: true, formClasses: [{ alias: "orders.lines", kind: "dataSource" }, { alias: "Orders", kind: "class" }, { alias: "Legacy" }] });
+    const picker = page.getByLabel("Form class");
+    assert.deepEqual(await picker.locator("optgroup").evaluateAll(groups => groups.map(group => [group.label, [...group.children].map(option => option.textContent)])),
+        [["Form classes", ["Orders", "Legacy"]], ["Data sources", ["orders.lines"]]]);
+    await picker.selectOption("orders.lines");
+    assert.equal(await page.evaluate(() => window.changes.at(-1)), "orders.lines");
+    assert.match(await page.locator("appblocks-form-class-picker p").textContent(), /published SQL data source/);
     assert.deepEqual(errors, []); await page.close();
 });
 

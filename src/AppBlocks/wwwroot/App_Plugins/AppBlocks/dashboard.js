@@ -2,7 +2,7 @@ import { UmbLitElement } from "@umbraco-cms/backoffice/lit-element";
 import { html, css } from "@umbraco-cms/backoffice/external/lit";
 import { UMB_AUTH_CONTEXT } from "@umbraco-cms/backoffice/auth";
 import "@umbraco-cms/backoffice/components";
-import { request, download, pathBase } from "./api.js";
+import { request, download, backofficePath } from "./api.js";
 import "./business-rules.js";
 
 const featureStates = { ready: "Ready", automatic: "Created on first use", action: "Needs setup", unsupported: "Not supported here", unreachable: "Cannot connect", siteManaged: "Managed by the site" };
@@ -33,7 +33,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
         input, select, textarea { width:100%; border:1px solid var(--uui-color-border); border-radius:var(--uui-border-radius); background:var(--uui-color-surface); color:inherit; padding:10px; font:inherit; }
         .search { max-width:300px; } table { width:100%; border-collapse:collapse; } th { text-align:left; font-size:12px; color:var(--uui-color-text-alt); font-weight:600; }
         th, td { padding:14px 10px; border-bottom:1px solid var(--uui-color-border); } td:first-child { padding-left:0; } .table { overflow:auto; }
-        td small { display:block; color:var(--uui-color-text-alt); margin-top:5px; } .badge { font-size:11px; border-radius:var(--uui-border-radius); padding:4px 8px; background:var(--uui-color-surface-alt); color:var(--uui-color-text); white-space:nowrap; }
+        td small { display:block; color:var(--uui-color-text-alt); margin-top:5px; } td small.problem { color:var(--uui-color-danger); } .badge { font-size:11px; border-radius:var(--uui-border-radius); padding:4px 8px; background:var(--uui-color-surface-alt); color:var(--uui-color-text); white-space:nowrap; }
         .empty { text-align:center; padding:48px 20px; max-width:600px; margin:auto; } .empty p { margin-bottom:24px; }
         .error, .notice { padding:14px 18px; border-left:3px solid; background:var(--uui-color-surface); margin-bottom:18px; line-height:1.5; } .error { color:var(--uui-color-danger); } .notice { color:var(--uui-color-positive); }
         .form { max-width:680px; } label { display:block; margin:18px 0 6px; font-weight:600; } .hint { margin-top:6px; font-size:12px; }
@@ -48,7 +48,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
         this.consumeContext(UMB_AUTH_CONTEXT, auth => { if (auth) { this.auth = auth; this.load(); } });
     }
     set manifest(value) { this.tab = value.meta.pathname; if (this.auth) this.load(); }
-    viewUrl(tab) { return `${pathBase}/umbraco/section/settings/workspace/appblocks/view/${tab}`; }
+    viewUrl(tab) { return `${backofficePath}/section/settings/workspace/appblocks/view/${tab}`; }
     async load() {
         this.error = undefined; this.loading = true;
         try {
@@ -139,7 +139,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
     }
     renderForms() {
         if (this.sample) return html`<uui-box class="panel" aria-label="Sample C#"><div class="toolbar"><div><p class="eyebrow">Sample code</p><h2>${this.selectedForm?.name}</h2></div><button @click=${() => this.sample = undefined}>Back to forms</button></div>
-            <p>A SQLite example using this form’s writable fields. It includes a sample table, a parameterized read and a save that compares a checksum of the row's values to refuse a stale change. AppBlocks does not execute this code. To have a working form class written for one of your own tables, use the wizard in <a href=${`${pathBase}/umbraco/section/settings/workspace/appblocks-code`}>Settings → AppBlocks → Backing Classes</a>, on a development site.</p>
+            <p>A SQLite example using this form’s writable fields. It includes a sample table, a parameterized read and a save that compares a checksum of the row's values to refuse a stale change. AppBlocks does not execute this code. To have a working form class written for one of your own tables, use the wizard in <a href=${`${backofficePath}/section/settings/workspace/appblocks-code`}>Settings → AppBlocks → Backing Classes</a>, on a development site.</p>
             <div class="actions"><button class="primary" @click=${() => download(this.sample, "SampleFormRepository.cs")}>Download sample C#</button><a href=${this.viewUrl("business-rules")}>Read business rules</a></div><pre tabindex="0"><code>${this.sample}</code></pre></uui-box>`;
         const found = this.forms.filter(f => `${f.name} ${f.pageName} ${f.resource}`.toLowerCase().includes(this.search.toLowerCase()));
         return html`<uui-box class="panel"><div class="toolbar"><div><h2>Forms on this site</h2><p>Saved forms, including drafts and language variants.</p></div><input class="search" type="search" aria-label="Find a form" placeholder="Find a form…" .value=${this.search} @input=${event => this.search = event.target.value}></div>
@@ -154,7 +154,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
             <label for="connection">Connection string</label><input id="connection" name="connectionString" type="password" autocomplete="new-password" ?required=${!this.editing.existing} placeholder=${this.editing.existing ? "Leave blank to keep the saved connection string" : "Enter the database connection string"}>
             <p class="hint">Stored encrypted for this installation. Excluded from content exports. <a href="https://www.connectionstrings.com/" target="_blank" rel="noopener noreferrer">Connection string examples ↗</a></p>
             <div class="actions"><button type="submit" class="primary" ?disabled=${this.busy}>Save connection</button><button type="button" ?disabled=${this.busy} @click=${() => this.saveConnection(true)}>Test connection</button><button type="button" ?disabled=${this.busy} @click=${() => this.editing = undefined}>Cancel</button></div></form></uui-box>`;
-        return html`<uui-box class="panel"><div class="toolbar"><div><h2>Database connections</h2><p>Use the AppBlocks database for forms, reports and uploads. It keeps application work separate from Umbraco’s SQLite database.</p></div><button class="primary" @click=${() => this.edit()}>Add connection</button></div><div class="table"><table><thead><tr><th>Connection</th><th>Database type</th><th>Managed by</th><th></th></tr></thead><tbody>${this.connections.map(connection => html`<tr><td><strong>${connection.label}</strong> ${connection.isDefault ? html`<span class="badge">Default</span>` : ""}</td><td>${connection.databaseType}</td><td>${connection.readOnly ? "Site configuration" : "AppBlocks"}</td><td>${connection.readOnly ? "" : html`<button @click=${() => this.edit(connection)}>Edit connection</button>`}</td></tr>`)}</tbody></table></div></uui-box>`;
+        return html`<uui-box class="panel"><div class="toolbar"><div><h2>Database connections</h2><p>Use the AppBlocks database for forms, reports and uploads. It keeps application work separate from Umbraco’s SQLite database.</p></div><button class="primary" @click=${() => this.edit()}>Add connection</button></div><div class="table"><table><thead><tr><th>Connection</th><th>Database type</th><th>Managed by</th><th></th></tr></thead><tbody>${this.connections.map(connection => html`<tr><td><strong>${connection.label}</strong> ${connection.isDefault ? html`<span class="badge">Default</span>` : ""}${connection.problem ? html`<small class="problem">${connection.problem}</small>` : ""}</td><td>${connection.databaseType}</td><td>${connection.readOnly ? "Site configuration" : "AppBlocks"}</td><td>${connection.readOnly ? "" : html`<button @click=${() => this.edit(connection)}>Edit connection</button>`}</td></tr>`)}</tbody></table></div></uui-box>`;
     }
     renderSetup() {
         return html`<div class="setup"><p>AppBlocks keeps a few tables of its own. It creates them on first use when the database account may. If it may not, grant the permission or run the script: either works without a restart, and everything else keeps working in the meantime.</p>
