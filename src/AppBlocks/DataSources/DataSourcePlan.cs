@@ -33,6 +33,8 @@ internal sealed class DataSourcePlan
 {
     public required DataSourceDefinition Definition { get; init; }
     public required SqlDialect Dialect { get; init; }
+    /// <summary>The timeout of every command the plan runs (<see cref="DataSourceOptions.CommandTimeoutSeconds"/>).</summary>
+    public int CommandTimeout { get; init; } = DataSourceOptions.DefaultCommandTimeoutSeconds;
     public TableName? Table { get; init; }
     public SqlTemplate? Query { get; init; }
     public required IReadOnlyList<PlanColumn> Columns { get; init; }
@@ -50,7 +52,8 @@ internal sealed class DataSourcePlan
     public required IReadOnlyList<FormField> Fields { get; init; }
     public required string ContractVersion { get; init; }
 
-    public bool Writable => Target is { IsView: false } && Keys.Count > 0 && Keys.All(k => k.Target is not null);
+    /// <summary>Whether writes have a table or view to go to and a key in it; the runtime refuses a write that does not change exactly one row.</summary>
+    public bool Writable => Target is not null && Keys.Count > 0 && Keys.All(k => k.Target is not null);
     /// <summary>Whether reading this source binds anything about the caller, so it means nothing without an account.</summary>
     public bool BindsUser => new[] { Query, Restriction }.OfType<SqlTemplate>().SelectMany(template => template.Variables)
         .Any(variable => variable.Kind is BindVariableKind.UserSid or BindVariableKind.UserName or BindVariableKind.UserKey or BindVariableKind.UserEmail or BindVariableKind.UserGroups);
@@ -59,9 +62,12 @@ internal sealed class DataSourcePlan
         .SelectMany(template => template.Variables).Concat(Defaults.Select(value => value.Variable).OfType<BindVariable>())
         .Any(variable => variable.Kind is BindVariableKind.UserSid or BindVariableKind.UserName or BindVariableKind.UserKey or BindVariableKind.UserEmail or BindVariableKind.UserGroups);
     /// <summary>The column of a field alias in any letter case, as every other alias lookup; the planner refuses aliases that differ only in case.</summary>
-    public PlanColumn? Field(string alias) => Columns.FirstOrDefault(c => c.Field.Equals(alias, StringComparison.OrdinalIgnoreCase));
+    public PlanColumn? Field(string alias) => Field(Columns, alias);
+    internal static PlanColumn? Field(IEnumerable<PlanColumn> columns, string alias) => columns.FirstOrDefault(c => c.Field.Equals(alias, StringComparison.OrdinalIgnoreCase));
     public IEnumerable<string> ReadColumns => Columns.Select(c => c.Column);
     public string From(SqlParameters parameters, Func<BindVariable, object?> value) => Dialect.From(Table, Query?.Render(parameters, value));
+    /// <summary>The parameters of a new command of this plan, which also carry its timeout.</summary>
+    public SqlParameters Parameters() => new(Dialect, CommandTimeout);
     public bool IsAudit(PlanColumn column) => column == CreatedBy || column == CreatedAt || column == UpdatedBy || column == UpdatedAt;
 }
 
@@ -75,7 +81,10 @@ internal static class DataSourcePlanner
     public const int MaxColumns = 200;
 
     /// <param name="compileStatements">Also compile the custom statements without running them; publishing does, requests do not.</param>
-    public static DataSourcePlan? Build(DataSourceDefinition definition, SqlDialect dialect, DbConnection connection, ICollection<string> errors, bool compileStatements = false)
+    /// <param name="warnings">Receives what publishing reports without refusing, such as a view written through or a statement that cannot be compiled.</param>
+    /// <param name="commandTimeout">The timeout of the catalog reads and probes, and of every command the plan runs later.</param>
+    public static DataSourcePlan? Build(DataSourceDefinition definition, SqlDialect dialect, DbConnection connection, ICollection<string> errors, bool compileStatements = false,
+        ICollection<string>? warnings = null, int commandTimeout = DataSourceOptions.DefaultCommandTimeoutSeconds)
     {
         var start = errors.Count;
         var d = definition;
@@ -94,14 +103,14 @@ internal static class DataSourcePlanner
         TableSchema? sourceTable = null;
         if (table is not null)
         {
-            sourceTable = dialect.ReadTable(connection, table);
+            sourceTable = dialect.ReadTable(connection, table, commandTimeout);
             if (sourceTable is null) { errors.Add($"The table {table} was not found through connection {d.Connection}."); return null; }
             table = sourceTable.Name;
         }
         IReadOnlyList<SourceColumn> probed;
         try
         {
-            var parameters = new SqlParameters(dialect);
+            var parameters = new SqlParameters(dialect, commandTimeout);
             probed = dialect.Probe(connection, dialect.ProbeText(dialect.From(table, query?.Render(parameters, Nothing))), parameters);
         }
         catch (DbException error) { errors.Add("The row source could not be read: " + error.Message); return null; }
@@ -113,7 +122,7 @@ internal static class DataSourcePlanner
         {
             try
             {
-                var parameters = new SqlParameters(dialect);
+                var parameters = new SqlParameters(dialect, commandTimeout);
                 var from = dialect.From(table, query?.Render(parameters, Nothing));
                 dialect.Probe(connection, dialect.ProbeText(from, restriction.Render(parameters, Nothing)), parameters);
             }
@@ -136,7 +145,7 @@ internal static class DataSourcePlanner
         {
             var bases = keySources.Select(k => (Schema: k!.BaseSchema?.ToLowerInvariant(), Table: k.BaseTable!.ToLowerInvariant())).Distinct().ToArray();
             if (bases.Length == 1)
-                target = dialect.ReadTable(connection, new TableName(keySources[0]!.BaseSchema, keySources[0]!.BaseTable!) { SchemaIsQuoted = true, NameIsQuoted = true });
+                target = dialect.ReadTable(connection, new TableName(keySources[0]!.BaseSchema, keySources[0]!.BaseTable!) { SchemaIsQuoted = true, NameIsQuoted = true }, commandTimeout);
         }
         if (d.KeySequences.Count > 0)
         {
@@ -149,7 +158,7 @@ internal static class DataSourcePlanner
                 if (column is null || !keySources.Contains(source)) { errors.Add($"Key sequence {columnName} must name a key column of the written table."); continue; }
                 if (dialect.Kind is not (DatabaseDialect.Oracle or DatabaseDialect.Oracle11g))
                 { errors.Add("Key sequences are Oracle settings; this database supplies identity or sequence defaults on its columns."); continue; }
-                var sequence = TableName.Parse(sequenceName) is { } name ? dialect.ReadSequence(connection, name) : null;
+                var sequence = TableName.Parse(sequenceName) is { } name ? dialect.ReadSequence(connection, name, commandTimeout) : null;
                 if (sequence is null) { errors.Add($"The sequence {sequenceName} was not found through connection {d.Connection}."); continue; }
                 sequences[column.Name] = sequence;
             }
@@ -227,11 +236,14 @@ internal static class DataSourcePlanner
         {
             if (target is null)
                 errors.Add(query is null ? "Writes need a table." : "Writes need the key columns to come from one table the SELECT reads; name them in the key columns.");
-            else if (target.IsView) errors.Add($"{target.Name} is a view; writes need a table.");
             else if (keys.Length != keySources.Length || keys.Any(k => k.Target is null))
                 errors.Add($"Each key column must be a column of {target.Name}, which the data source writes.");
+            // Not refused: an updatable view or a table that is unique in practice works, and the runtime refuses a read of a key that matches
+            // several rows and a generated update or delete that does not change exactly one.
+            else if (target.IsView)
+                warnings?.Add($"{target.Name} is a view, so writes work only if the view accepts them, through an INSTEAD OF trigger or as an updatable view.");
             else if (!target.UniqueKeys.Any(u => u.Count == keys.Length && u.All(n => keys.Any(k => k.Target!.Name.Equals(n, StringComparison.OrdinalIgnoreCase)))))
-                errors.Add($"The key columns must be the primary key or a unique key of {target.Name}, so a write changes exactly one row.");
+                warnings?.Add($"The key columns are not a primary key or unique key of {target.Name}: a record whose key matches several rows cannot be opened or changed.");
         }
 
         PlanColumn? Audit(string role, params string[] kinds)
@@ -254,15 +266,12 @@ internal static class DataSourcePlanner
             if (field is null) continue;
             if (field.Target is not { Computed: false, RowVersion: false, AutoValue: false } || field == createdBy || field == createdAt || field == updatedBy || field == updatedAt)
             { errors.Add($"The insert default for {value.Column} cannot be written: the database or the engine fills that column."); continue; }
-            if (value.Variable is { Kind: BindVariableKind.Field, Name: { } other } && !columns.Any(c => c.Field.Equals(other, StringComparison.OrdinalIgnoreCase)))
+            if (value.Variable is { Kind: BindVariableKind.Field, Name: { } other } && DataSourcePlan.Field(columns, other) is null)
             { errors.Add($"The insert default for {value.Column} uses :FIELD.{other}, which is not a field."); continue; }
-            // A date-time field holds the web server's local time, as :NOW and the audit columns write it; a UTC stamp needs a text column.
-            if (value.Variable is { Kind: BindVariableKind.NowUtc } && field.Kind == FieldKinds.DateTime)
-            { errors.Add($"The insert default for {value.Column} cannot use :NOW_UTC: a date-time field holds the web server's local time. Use :NOW, or map the column as a text field to store a UTC stamp."); continue; }
             object? literal = null;
             if (value.Literal is not null)
             {
-                literal = FieldValues.FromValue(value.Literal, field.Kind, out var valid);
+                literal = FieldValues.FromValue(value.Literal, field.Kind, out var valid, d.DateTimes);
                 if (!valid || literal is not null && !FieldValues.Check(literal, field, out _))
                 { errors.Add($"The insert default for {value.Column} is not a valid {field.Kind} value for that field."); continue; }
             }
@@ -271,7 +280,7 @@ internal static class DataSourcePlanner
 
         foreach (var (statement, label) in new[] { (insert, "insert"), (update, "update"), (delete, "delete") })
             foreach (var variable in statement?.Variables.Where(v => v.Kind == BindVariableKind.Field) ?? [])
-                if (!columns.Any(c => c.Field.Equals(variable.Name, StringComparison.OrdinalIgnoreCase)))
+                if (DataSourcePlan.Field(columns, variable.Name!) is null)
                     errors.Add($"The custom {label} statement uses {variable}, which is not a field.");
         if (errors.Count > start) return null;
         if (compileStatements)
@@ -283,24 +292,31 @@ internal static class DataSourcePlanner
 
         var fields = columns.Select(c => c.ToField()).ToArray();
         return new DataSourcePlan {
-            Definition = d, Dialect = dialect, Table = table, Query = query, Columns = columns, Keys = keys, Target = target,
+            Definition = d, Dialect = dialect, CommandTimeout = commandTimeout, Table = table, Query = query, Columns = columns, Keys = keys, Target = target,
             Restriction = restriction,
             Defaults = defaults, CreatedBy = createdBy, CreatedAt = createdAt, UpdatedBy = updatedBy, UpdatedAt = updatedAt,
             InsertStatement = insert, UpdateStatement = update, DeleteStatement = delete, Fields = fields,
             ContractVersion = Contract(d, columns, keys, target),
         };
 
-        SqlTemplate? Statement(string? text, string label) => text is null ? null : SqlTemplate.Parse(text, SqlUse.Statement, $"The custom {label} statement", errors);
+        SqlTemplate? Statement(string? text, string label)
+            => text is null ? null : SqlTemplate.Parse(dialect.Statement(text), SqlUse.Statement, $"The custom {label} statement", errors);
 
         void Compile(SqlTemplate statement, string label)
         {
-            // SQLite compiles one statement per EXPLAIN, so each is checked on its own; nothing runs.
-            foreach (var part in dialect.Kind is DatabaseDialect.Sqlite or DatabaseDialect.Postgres or DatabaseDialect.Oracle or DatabaseDialect.Oracle11g ? statement.Statements : [statement.Text])
+            // SQLite's and PostgreSQL's EXPLAIN take one statement, and Npgsql would run any that follow it, so each is checked on its own;
+            // the others compile the text whole, as it runs. Nothing runs either way.
+            foreach (var part in dialect.Kind is DatabaseDialect.Sqlite or DatabaseDialect.Postgres ? statement.Statements : [statement.Text])
             {
+                if (!dialect.Compiles(part))
+                {
+                    warnings?.Add($"Publishing does not check the custom {label} statement: the database cannot compile {SqlTemplate.FirstWord(part)?.ToUpperInvariant()} without running it.");
+                    continue;
+                }
                 if (SqlTemplate.Parse(part, SqlUse.Statement, "", []) is not { } single) continue;
                 try
                 {
-                    var parameters = new SqlParameters(dialect);
+                    var parameters = new SqlParameters(dialect, commandTimeout);
                     using var command = parameters.Command(connection, null, dialect.CompileOnly(single.Render(parameters, Nothing)));
                     dialect.ConfigureCompilation(command);
                     using var reader = command.ExecuteReader();

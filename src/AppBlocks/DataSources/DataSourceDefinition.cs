@@ -29,7 +29,10 @@ public sealed record FieldMapping(string Alias, string? Column = null, string? L
 public sealed record InsertDefault(string Column, BindVariable? Variable, string? Literal);
 
 /// <summary>Optional columns that record who created or changed a row and when, in the application's own table.</summary>
-public sealed record AuditColumns(string? CreatedBy = null, string? CreatedAt = null, string? UpdatedBy = null, string? UpdatedAt = null)
+/// <param name="CreatedByValue">What the created-by column records: one of the <c>:USER_</c> variables, the username unless the line names another.</param>
+/// <param name="UpdatedByValue">What the updated-by column records, as <paramref name="CreatedByValue"/>.</param>
+public sealed record AuditColumns(string? CreatedBy = null, string? CreatedAt = null, string? UpdatedBy = null, string? UpdatedAt = null,
+    BindVariableKind CreatedByValue = BindVariableKind.UserName, BindVariableKind UpdatedByValue = BindVariableKind.UserName)
 {
     [JsonIgnore]
     public IEnumerable<string> All => new[] { CreatedBy, CreatedAt, UpdatedBy, UpdatedAt }.OfType<string>();
@@ -43,6 +46,12 @@ public enum DataSourceAccess { NotPublic, Public, SpecificGroups }
 
 /// <summary>How writes handle a row changed since it was loaded.</summary>
 public enum DataSourceConcurrency { LastSaveWins, Checksum }
+
+/// <summary>
+/// What a date and time without a zone means in the data source's database: the web server's local time, or UTC. Columns that store an
+/// offset keep it either way.
+/// </summary>
+public enum DataSourceDateTimes { ServerLocal, Utc }
 
 /// <summary>
 /// A published <c>sqlDataSource</c> node, read once into plain values. Structured properties are line-based
@@ -71,6 +80,8 @@ public sealed record DataSourceDefinition
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool AllowAnonymousWrites { get; init; }
     public DataSourceConcurrency Concurrency { get; init; } = DataSourceConcurrency.LastSaveWins;
+    /// <summary>How zone-less date-times are read and written, and so the wall time the engine's clock writes; server local time unless chosen.</summary>
+    public DataSourceDateTimes DateTimes { get; init; } = DataSourceDateTimes.ServerLocal;
     public IReadOnlyList<InsertDefault> InsertDefaults { get; init; } = [];
     public AuditColumns AuditColumns { get; init; } = new();
     /// <summary>Who may read. A missing or unknown value is a configuration error, including when groups are set.</summary>
@@ -110,7 +121,7 @@ public sealed record DataSourceDefinition
     /// </summary>
     public string ComputeFingerprint() => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {
         Key, Alias, Connection, Source, KeyColumns, KeySequences, Mapping, RowRestriction, AllowInsert, AllowUpdate, AllowDelete, AllowAnonymousWrites,
-        Concurrency, InsertDefaults, AuditColumns, Access, ReadGroups, WriteGroups, CustomStatements, Handler,
+        Concurrency, DateTimes, InsertDefaults, AuditColumns, Access, ReadGroups, WriteGroups, CustomStatements, Handler,
     })));
 
     public const int MaxSourceLength = 20_000;
@@ -146,6 +157,10 @@ public sealed record DataSourceDefinition
         var concurrency = DataSourceConcurrency.LastSaveWins;
         if (mode.Length > 0 && (!Enum.TryParse(mode, true, out concurrency) || !Enum.IsDefined(concurrency)))
             errors.Add("Select a concurrency mode: LastSaveWins or Checksum.");
+        var dateTimeMode = Text("dateTimeMode");
+        var dateTimes = DataSourceDateTimes.ServerLocal;
+        if (dateTimeMode.Length > 0 && (!Enum.TryParse(dateTimeMode, true, out dateTimes) || !Enum.IsDefined(dateTimes)))
+            errors.Add("Select a date-time mode: ServerLocal or Utc.");
         var handler = Text("handler");
         if (handler.Length > 0 && !IsAlias(handler)) errors.Add($"The backing class '{handler}' is not an alias a class can have.");
 
@@ -158,6 +173,7 @@ public sealed record DataSourceDefinition
             RowRestriction = restriction.Length == 0 ? null : restriction,
             AllowInsert = Flag("allowInsert"), AllowUpdate = Flag("allowUpdate"), AllowDelete = Flag("allowDelete"),
             Concurrency = concurrency,
+            DateTimes = dateTimes,
             InsertDefaults = ReadInsertDefaults(Text("insertDefaults"), errors),
             AuditColumns = ReadAuditColumns(Text("auditColumns"), errors),
             Access = ReadAccess(Text("access")),
@@ -357,17 +373,33 @@ public sealed record DataSourceDefinition
         return defaults;
     }
 
-    /// <summary>Lines of <c>createdBy = CREATED_BY</c>; the four keys are createdBy, createdAt, updatedBy and updatedAt.</summary>
+    /// <summary>
+    /// Lines of <c>createdBy = CREATED_BY</c>; the four keys are createdBy, createdAt, updatedBy and updatedAt. A "by" line may name what it
+    /// records after a second equals sign, <c>updatedBy = UPDATED_BY = :USER_KEY</c>, for an account key that stays when a name changes.
+    /// </summary>
     private static AuditColumns ReadAuditColumns(string text, ICollection<string> errors)
     {
         var audit = new AuditColumns();
-        foreach (var (name, column) in Assignments(text, "audit column", errors))
+        foreach (var (name, assigned) in Assignments(text, "audit column", errors))
         {
-            var target = Unquote(column);
-            audit = name.Replace("_", "").Replace(" ", "").ToLowerInvariant() switch {
-                "createdby" when audit.CreatedBy is null => audit with { CreatedBy = target },
+            var role = name.Replace("_", "").Replace(" ", "").ToLowerInvariant();
+            var equals = assigned.IndexOf('=');
+            var target = Unquote(equals < 0 ? assigned : assigned[..equals]);
+            var recorded = BindVariableKind.UserName;
+            if (equals >= 0)
+            {
+                var written = assigned[(equals + 1)..].Trim();
+                var variable = written.StartsWith(':') ? BindVariable.Parse(written[1..]) : null;
+                if (role is not ("createdby" or "updatedby"))
+                    errors.Add($"The audit column line for {name} cannot name a value: the engine writes the time.");
+                else if (variable?.Kind is BindVariableKind.UserName or BindVariableKind.UserKey or BindVariableKind.UserSid or BindVariableKind.UserEmail)
+                    recorded = variable.Kind;
+                else errors.Add($"The audit column line for {name} names {written}; use :USER_NAME, :USER_KEY, :USER_SID or :USER_EMAIL.");
+            }
+            audit = role switch {
+                "createdby" when audit.CreatedBy is null => audit with { CreatedBy = target, CreatedByValue = recorded },
                 "createdat" when audit.CreatedAt is null => audit with { CreatedAt = target },
-                "updatedby" when audit.UpdatedBy is null => audit with { UpdatedBy = target },
+                "updatedby" when audit.UpdatedBy is null => audit with { UpdatedBy = target, UpdatedByValue = recorded },
                 "updatedat" when audit.UpdatedAt is null => audit with { UpdatedAt = target },
                 _ => Unknown(name),
             };

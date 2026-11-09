@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Data.Common;
+using Microsoft.Extensions.Options;
 using AppBlocks.Connections;
 
 namespace AppBlocks.DataSources;
@@ -11,7 +12,7 @@ namespace AppBlocks.DataSources;
 /// expired plan serves; a failure is retried after five seconds.
 /// </summary>
 public sealed class DataSourceRuntime(IApplicationConnectionFactory connections, ILogger<DataSourceRuntime> logger,
-    TimeProvider? time = null, ConnectionCatalog? managed = null)
+    TimeProvider? time = null, ConnectionCatalog? managed = null, IOptions<DataSourceOptions>? options = null, IDataSourceReceiptStore? receipts = null)
 {
     private static readonly TimeSpan PlanLifetime = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan ProblemLifetime = TimeSpan.FromSeconds(5);
@@ -38,13 +39,24 @@ public sealed class DataSourceRuntime(IApplicationConnectionFactory connections,
     }
 
     internal ILogger Logger => logger;
-    internal DataSourceReceipts Receipts { get; } = new(time ?? TimeProvider.System);
+    internal DataSourceOptions Options { get; } = options?.Value ?? new();
+    internal IDataSourceReceiptStore Receipts { get; } = receipts ?? new DataSourceReceipts(time, options);
     /// <summary>
     /// The current moment with the web server's offset. Its local wall time is what <c>:NOW</c> binds and the audit
     /// columns record; its UTC time is what <c>:NOW_UTC</c> binds. Both come from one reading, so they agree in the
     /// autumn hour that repeats.
     /// </summary>
     internal DateTimeOffset Now() => clock.GetLocalNow();
+
+    /// <summary>
+    /// The current moment as a data source's date-times hold it: with the web server's offset, or at UTC for a source that keeps UTC, so
+    /// that <c>:NOW</c> and the audit columns write UTC wall time there. <c>:NOW_UTC</c> is the same moment either way.
+    /// </summary>
+    internal DateTimeOffset Now(DataSourceDefinition definition) => As(definition, clock.GetUtcNow());
+
+    /// <summary>One clock reading as <paramref name="definition"/>'s date-times hold it, for a save that writes to several data sources.</summary>
+    internal DateTimeOffset As(DataSourceDefinition definition, DateTimeOffset moment)
+        => definition.DateTimes == DataSourceDateTimes.Utc ? moment.ToUniversalTime() : TimeZoneInfo.ConvertTime(moment, clock.LocalTimeZone);
 
     internal sealed record PlanEntry(DataSourcePlan? Plan, string? Problem, DateTimeOffset Expires);
 
@@ -105,18 +117,21 @@ public sealed class DataSourceRuntime(IApplicationConnectionFactory connections,
     /// Everything publishing checks against the database: the connection, the row source, the restriction, the key
     /// columns, every column and bind variable the definition names, and that custom statements compile.
     /// </summary>
-    public IReadOnlyList<string> Validate(DataSourceDefinition definition)
+    public IReadOnlyList<string> Validate(DataSourceDefinition definition) => Validate(definition, new List<string>());
+
+    /// <summary>The checks of <see cref="Validate(DataSourceDefinition)"/>, with what publishing reports without refusing in <paramref name="warnings"/>.</summary>
+    public IReadOnlyList<string> Validate(DataSourceDefinition definition, ICollection<string> warnings)
     {
         var errors = new List<string>();
-        if (Build(definition, errors, compileStatements: true) is null && errors.Count == 0) errors.Add("The data source could not be prepared.");
+        if (Build(definition, errors, compileStatements: true, warnings) is null && errors.Count == 0) errors.Add("The data source could not be prepared.");
         return errors;
     }
 
     /// <summary>Authoring tests inspect the current schema, without reusing a cached application plan.</summary>
-    internal DataSourcePlan? Inspect(DataSourceDefinition definition, List<string> errors)
-        => Build(definition, errors, compileStatements: true);
+    internal DataSourcePlan? Inspect(DataSourceDefinition definition, List<string> errors, ICollection<string>? warnings = null)
+        => Build(definition, errors, compileStatements: true, warnings);
 
-    private DataSourcePlan? Build(DataSourceDefinition definition, List<string> errors, bool compileStatements)
+    private DataSourcePlan? Build(DataSourceDefinition definition, List<string> errors, bool compileStatements, ICollection<string>? warnings = null)
     {
         var start = errors.Count;
         definition.ValidateAccess(errors);
@@ -131,7 +146,7 @@ public sealed class DataSourceRuntime(IApplicationConnectionFactory connections,
                 dialect = OracleDialect.Legacy;
                 connections.SetDetectedDialect(definition.Connection, DatabaseDialect.Oracle11g);
             }
-            return DataSourcePlanner.Build(definition, dialect, connection, errors, compileStatements);
+            return DataSourcePlanner.Build(definition, dialect, connection, errors, compileStatements, warnings, Options.CommandTimeoutSeconds);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -173,63 +188,57 @@ public sealed class DataSourceRuntime(IApplicationConnectionFactory connections,
 }
 
 /// <summary>
-/// Remembers successful creates by submission key for fifteen minutes, so a retried request returns the record it
-/// created instead of inserting it twice, and a reused key with different values is refused. Creates with the same
-/// key wait for each other. The receipts live in memory: the browser makes a new key after every successful save,
-/// so a receipt only has to outlast a retry, and an application database needs no receipts table of its own.
+/// The default <see cref="IDataSourceReceiptStore"/>: receipts in this process's memory for <see cref="DataSourceOptions.ReceiptLifetimeMinutes"/>,
+/// and creates with the same key waiting for each other on one of 64 gates. Memory is enough on one web server: the browser makes a new key
+/// after every successful save, so a receipt only has to outlast a retry, and an application database needs no receipts table of its own.
 /// </summary>
-internal sealed class DataSourceReceipts(TimeProvider clock)
+internal sealed class DataSourceReceipts(TimeProvider? time = null, IOptions<DataSourceOptions>? options = null) : IDataSourceReceiptStore
 {
-    private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
-    private readonly ConcurrentDictionary<string, (string Key, string Hash, DateTimeOffset Expires)> receipts = new();
+    private readonly TimeProvider clock = time ?? TimeProvider.System;
+    private readonly DataSourceOptions settings = options?.Value ?? new();
+    private readonly ConcurrentDictionary<string, (DataSourceReceipt Receipt, DateTimeOffset Expires)> receipts = new();
     private readonly SemaphoreSlim[] gates = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
 
-    public async Task<IDisposable> EnterAsync(string submission, CancellationToken ct)
-    {
-        var gate = gates[Gate(submission)];
-        await gate.WaitAsync(ct);
-        return new Release(gate);
-    }
-
     /// <summary>
-    /// Enters the gates of several submissions at once, as a master/detail save does, each gate once and in one order, so two
-    /// saves that share a gate wait for each other rather than for themselves.
+    /// Enters the gate of each submission once and in one order, as a master/detail save needs, so two saves that share a gate wait for
+    /// each other rather than for themselves.
     /// </summary>
-    public async Task<IDisposable> EnterAsync(IEnumerable<string> submissions, CancellationToken ct)
+    public async Task<IAsyncDisposable> EnterAsync(IReadOnlyCollection<string> submissions, CancellationToken ct)
     {
-        var entered = new List<IDisposable>();
+        var entered = new List<SemaphoreSlim>();
         try
         {
             foreach (var index in submissions.Select(Gate).Distinct().Order())
             {
                 await gates[index].WaitAsync(ct);
-                entered.Add(new Release(gates[index]));
+                entered.Add(gates[index]);
             }
             return new Releases(entered);
         }
-        catch { new Releases(entered).Dispose(); throw; }
+        catch { await new Releases(entered).DisposeAsync(); throw; }
     }
 
     private int Gate(string submission) => (submission.GetHashCode(StringComparison.Ordinal) & int.MaxValue) % gates.Length;
 
-    public (string Key, string Hash)? Find(string submission)
-        => receipts.TryGetValue(submission, out var receipt) && receipt.Expires > clock.GetUtcNow() ? (receipt.Key, receipt.Hash) : null;
+    public ValueTask<DataSourceReceipt?> FindAsync(string submission, CancellationToken ct)
+        => new(receipts.TryGetValue(submission, out var entry) && entry.Expires > clock.GetUtcNow() ? entry.Receipt : null);
 
-    public void Add(string submission, string key, string hash)
+    public ValueTask AddAsync(string submission, DataSourceReceipt receipt, CancellationToken ct)
     {
         var now = clock.GetUtcNow();
-        if (receipts.Count > 10_000) foreach (var stale in receipts.Where(r => r.Value.Expires <= now).Select(r => r.Key).ToArray()) receipts.TryRemove(stale, out _);
-        receipts[submission] = (key, hash, now + Lifetime);
+        if (receipts.Count > settings.ReceiptCapacity) foreach (var stale in receipts.Where(r => r.Value.Expires <= now).Select(r => r.Key).ToArray()) receipts.TryRemove(stale, out _);
+        receipts[submission] = (receipt, now + TimeSpan.FromMinutes(settings.ReceiptLifetimeMinutes));
+        return ValueTask.CompletedTask;
     }
 
-    private sealed class Release(SemaphoreSlim gate) : IDisposable
+    private sealed class Releases(IReadOnlyList<SemaphoreSlim> entered) : IAsyncDisposable
     {
         private int released;
-        public void Dispose() { if (Interlocked.Exchange(ref released, 1) == 0) gate.Release(); }
-    }
 
-    private sealed class Releases(IReadOnlyList<IDisposable> entered) : IDisposable
-    {
-        public void Dispose() { foreach (var release in entered.Reverse()) release.Dispose(); }
+        public ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref released, 1) == 0) foreach (var gate in entered.Reverse()) gate.Release();
+            return ValueTask.CompletedTask;
+        }
     }
 }

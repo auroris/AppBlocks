@@ -4,10 +4,10 @@ using System.Text;
 
 namespace AppBlocks.DataSources;
 
-/// <summary>The bind variables of a data source (design section 4.3), APEX's <c>:APP_USER</c> and friends in Umbraco terms.</summary>
+/// <summary>The bind variables editor SQL may use: facts about the signed-in account, the clock, request parameters, field values and application values, each bound as a parameter.</summary>
 public enum BindVariableKind
 {
-    /// <summary>The Windows SID the account is linked to; null for an account without one.</summary>
+    /// <summary>The external login provider's key for the account, which is not necessarily a Windows SID; null when no external login is linked.</summary>
     UserSid,
     /// <summary>The member's or backoffice user's username.</summary>
     UserName,
@@ -16,7 +16,7 @@ public enum BindVariableKind
     UserEmail,
     /// <summary>The Member Group names, or for a backoffice User the User Group names, usable only as <c>IN (:USER_GROUPS)</c>.</summary>
     UserGroups,
-    /// <summary>The web server's local date and time.</summary>
+    /// <summary>The current date and time as the data source's date-times hold it: the web server's local time, or UTC for a source that keeps UTC.</summary>
     Now,
     /// <summary>The current moment in UTC, bound in the form each dialect compares with stored UTC stamps.</summary>
     NowUtc,
@@ -101,6 +101,9 @@ internal sealed class SqlTemplate
 
     public static bool IsIdentifier(string text) => text.Length is > 0 and <= 64 && (char.IsAsciiLetter(text[0]) || text[0] == '_')
         && text.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
+
+    /// <summary>The first word of code, past comments and opening parentheses; null when there is none.</summary>
+    public static string? FirstWord(string sql) => new Scanner(sql).FirstWord();
 
     /// <summary>Whether a row source is a query rather than a table name: its first word is SELECT or WITH.</summary>
     public static bool IsQuery(string source)
@@ -216,6 +219,10 @@ internal sealed class SqlTemplate
             if (!inList) errors.Add($"{label} uses :USER_GROUPS outside IN (:USER_GROUPS); it stands for a list of groups.");
         }
         if (use == SqlUse.RowSource && !IsQuery(sql)) errors.Add($"{label} must start with SELECT or WITH.");
+        // Publishing compiles a statement on SQL Server between SET NOEXEC ON and OFF; one that changed those settings itself could run then.
+        if (use == SqlUse.Statement && tokens.Zip(tokens.Skip(1)).FirstOrDefault(pair => pair.First.Equals("SET", StringComparison.OrdinalIgnoreCase)
+            && (pair.Second.Equals("NOEXEC", StringComparison.OrdinalIgnoreCase) || pair.Second.Equals("PARSEONLY", StringComparison.OrdinalIgnoreCase))) is ({ } set, { } option))
+            errors.Add($"{label} cannot use {set.ToUpperInvariant()} {option.ToUpperInvariant()}: publishing sets it to check the statement without running it.");
         if (literal.Length > 0) parts.Add(literal.ToString());
         statements.Add(sql[statementStart..]);
         return errors.Count == start
@@ -316,16 +323,19 @@ internal sealed class SqlTemplate
 /// <summary>A value with the database type it must be bound as, where the provider would otherwise infer a different one.</summary>
 internal sealed record TypedValue(object? Value, DbType Type);
 
+/// <summary>Text for a column of a type the dialect does not list, bound so the database reads it as the column's type (<see cref="SqlDialect.BindUntyped"/>).</summary>
+internal sealed record UntypedText(string Value);
+
 /// <summary>
 /// The parameters of one command, named ds0, ds1 and so on. Every value a statement uses arrives here: editor
 /// literals, request values and the signed-in person's facts alike. Bounded below SQL Server's 2100.
 /// </summary>
-internal sealed class SqlParameters(SqlDialect dialect)
+/// <param name="commandTimeout">The command's timeout in seconds (<see cref="DataSourceOptions.CommandTimeoutSeconds"/>).</param>
+internal sealed class SqlParameters(SqlDialect dialect, int commandTimeout = DataSourceOptions.DefaultCommandTimeoutSeconds)
 {
     public const int Max = 2000;
     private readonly List<(string Name, object? Value)> values = [];
 
-    public int Count => values.Count;
     internal IReadOnlyList<(string Name, object? Value)> Bindings => values;
 
     public string Add(object? value)
@@ -341,13 +351,14 @@ internal sealed class SqlParameters(SqlDialect dialect)
         var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = text;
-        command.CommandTimeout = 30;
+        command.CommandTimeout = commandTimeout;
         dialect.ConfigureCommand(command);
         foreach (var (name, value) in values)
         {
             var parameter = command.CreateParameter();
             parameter.ParameterName = dialect.Marker(name);
             if (value is TypedValue typed) { parameter.DbType = typed.Type; parameter.Value = typed.Value ?? DBNull.Value; }
+            else if (value is UntypedText untyped) { parameter.Value = untyped.Value; dialect.BindUntyped(parameter); }
             else parameter.Value = value ?? DBNull.Value;
             command.Parameters.Add(parameter);
         }

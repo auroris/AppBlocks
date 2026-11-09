@@ -27,7 +27,8 @@ public static class FieldKinds
 /// text, invariant decimal text, true or false, <c>yyyy-MM-dd</c>, <c>HH:mm:ss</c> and ISO date-times with an offset.
 /// The canonical shape is one CLR type per kind (string, decimal, bool, DateOnly, TimeOnly, DateTimeOffset), which
 /// comparisons, checksums and the dialects use. Database values arrive as whatever the provider returns.
-/// Date-times without a zone in the database are the web server's local time, like <c>:NOW</c>.
+/// Date-times without a zone in the database are read as the data source's <see cref="DataSourceDateTimes"/> says: the web server's
+/// local time by default, or UTC.
 /// </summary>
 internal static class FieldValues
 {
@@ -62,7 +63,8 @@ internal static class FieldValues
     };
 
     /// <summary>The canonical value of whatever a provider returned for a column of the given kind; null when it cannot be read as that kind.</summary>
-    public static object? FromDatabase(object? value, string kind)
+    /// <param name="dateTimes">What a date-time without a zone means.</param>
+    public static object? FromDatabase(object? value, string kind, DataSourceDateTimes dateTimes = DataSourceDateTimes.ServerLocal)
     {
         if (value is null or DBNull) return null;
         switch (kind)
@@ -104,8 +106,9 @@ internal static class FieldValues
             case FieldKinds.DateTime:
                 return value switch {
                     DateTimeOffset moment => moment,
-                    DateTime moment => Local(moment),
-                    string text when DateTimeOffset.TryParse(text.Trim(), Invariant, DateTimeStyles.AssumeLocal, out var moment) => moment,
+                    DateTime moment => Moment(moment, dateTimes),
+                    string text when DateTimeOffset.TryParse(text.Trim(), Invariant,
+                        dateTimes == DataSourceDateTimes.Utc ? DateTimeStyles.AssumeUniversal : DateTimeStyles.AssumeLocal, out var moment) => moment,
                     _ => null,
                 };
             default:
@@ -127,14 +130,20 @@ internal static class FieldValues
     private static decimal? ToDecimal(double number) => double.IsFinite(number) && Math.Abs(number) < 7.9e27 ? (decimal)number : null;
 
     /// <summary>
-    /// A date-time from the database or from <c>:NOW</c>, read as server local time unless it says UTC. The
-    /// extremes (0001-01-01, 9999-12-31) cannot carry every offset; those keep their wall time at UTC instead.
+    /// A date-time from the database or from the engine's clock. One that says its kind keeps it; one without a zone is server local time,
+    /// or UTC when the data source says so. The extremes (0001-01-01, 9999-12-31) cannot carry every offset; those keep their wall time at
+    /// UTC instead.
     /// </summary>
-    public static DateTimeOffset Local(DateTime moment)
+    public static DateTimeOffset Moment(DateTime moment, DataSourceDateTimes dateTimes)
     {
         try
         {
-            return moment.Kind == DateTimeKind.Utc ? new DateTimeOffset(moment).ToLocalTime() : new DateTimeOffset(DateTime.SpecifyKind(moment, DateTimeKind.Local));
+            return moment.Kind switch {
+                DateTimeKind.Utc when dateTimes == DataSourceDateTimes.Utc => new DateTimeOffset(moment),
+                DateTimeKind.Utc => new DateTimeOffset(moment).ToLocalTime(),
+                DateTimeKind.Unspecified when dateTimes == DataSourceDateTimes.Utc => new DateTimeOffset(moment, TimeSpan.Zero),
+                _ => new DateTimeOffset(DateTime.SpecifyKind(moment, DateTimeKind.Local)),
+            };
         }
         catch (ArgumentOutOfRangeException) { return new DateTimeOffset(DateTime.SpecifyKind(moment, DateTimeKind.Unspecified), TimeSpan.Zero); }
     }
@@ -182,7 +191,8 @@ internal static class FieldValues
     }
 
     /// <summary>The canonical value of an insert default's literal text, or of a bind variable's value, for a field of the given kind.</summary>
-    public static object? FromValue(object? value, string kind, out bool valid)
+    /// <param name="dateTimes">What a date-time without a zone means, as for a value read from the data source's database.</param>
+    public static object? FromValue(object? value, string kind, out bool valid, DataSourceDateTimes dateTimes = DataSourceDateTimes.ServerLocal)
     {
         valid = true;
         switch (value)
@@ -190,15 +200,15 @@ internal static class FieldValues
             case null: return null;
             case DateTime moment when kind == FieldKinds.Date: return DateOnly.FromDateTime(moment);
             case DateTime moment when kind == FieldKinds.Time: return TimeOnly.FromDateTime(moment);
-            case DateTime moment when kind == FieldKinds.DateTime: return Local(moment);
+            case DateTime moment when kind == FieldKinds.DateTime: return Moment(moment, dateTimes);
             case DateTime moment: return moment.ToString("yyyy-MM-dd HH:mm:ss", Invariant);
             case string text when kind == FieldKinds.Text: return text;
             case string text:
-                var converted = FromDatabase(text, kind);
+                var converted = FromDatabase(text, kind, dateTimes);
                 valid = converted is not null;
                 return converted;
             default:
-                var other = FromDatabase(value, kind);
+                var other = FromDatabase(value, kind, dateTimes);
                 valid = other is not null;
                 return other;
         }

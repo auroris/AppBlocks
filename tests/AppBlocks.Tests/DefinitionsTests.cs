@@ -378,6 +378,48 @@ public sealed class DefinitionsTests
         Assert.Equal(["sqlDataSource", "listOfValues", "apiEndpoint"], Allowed());
     }
 
+    [Fact]
+    public async Task The_date_time_and_list_access_step_gives_an_existing_site_both_properties_and_tolerates_a_missing_type()
+    {
+        await using var site = await BlockSite.BootAsync();
+        using var scope = site.CreateScope();
+        var services = scope.ServiceProvider;
+        var types = services.GetRequiredService<IContentTypeService>();
+        var dataTypes = services.GetRequiredService<IDataTypeService>();
+        await WaitForInstallAsync(types);
+        var mode = types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes.Single(p => p.Alias == AddDateTimeModeAndListAccess.DateTimeProperty);
+        var audit = types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes.Single(p => p.Alias == "auditColumns").Description;
+        var access = types.Get(PublishedDataCatalog.ListAlias)!.PropertyTypes.Single(p => p.Alias == AddDateTimeModeAndListAccess.AccessProperty);
+        Assert.Equal("Application: Data source date-times", (await dataTypes.GetAsync(mode.DataTypeKey))!.Name);
+
+        // The site as it was before the step: neither property, no date-time data type, the old audit description, and the plan at the step before.
+        var source = types.Get(DataSourceSchema.SqlAlias)!;
+        source.RemovePropertyType(mode.Alias);
+        source.PropertyTypes.Single(p => p.Alias == "auditColumns").Description = "The engine writes the username and the server's local time.";
+        Assert.True((await types.UpdateAsync(source, Constants.Security.SuperUserKey)).Success);
+        Assert.True((await dataTypes.DeleteAsync(mode.DataTypeKey, Constants.Security.SuperUserKey)).Success);
+        var list = types.Get(PublishedDataCatalog.ListAlias)!;
+        list.RemovePropertyType(access.Alias);
+        Assert.True((await types.UpdateAsync(list, Constants.Security.SuperUserKey)).Success);
+        var keyValues = services.GetRequiredService<IKeyValueService>();
+        keyValues.SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-04-checksum-concurrency");
+        await RunPlanAsync(services);
+
+        var added = types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes.Single(p => p.Alias == mode.Alias);
+        Assert.Equal((mode.Key, mode.Name, mode.Description, mode.DataTypeKey), (added.Key, added.Name, added.Description, added.DataTypeKey));
+        Assert.NotNull(await dataTypes.GetAsync(mode.DataTypeKey));
+        Assert.Equal(audit, types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes.Single(p => p.Alias == "auditColumns").Description);
+        var restored = types.Get(PublishedDataCatalog.ListAlias)!.PropertyTypes.Single(p => p.Alias == access.Alias);
+        Assert.Equal((access.Key, access.DataTypeKey, access.Mandatory), (restored.Key, restored.DataTypeKey, restored.Mandatory));
+
+        // A site without the list type: the step adds what it can and the plan still completes.
+        Assert.Equal(ContentTypeOperationStatus.Success, await types.DeleteAsync(types.Get(PublishedDataCatalog.ListAlias)!.Key, Constants.Security.SuperUserKey));
+        keyValues.SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-04-checksum-concurrency");
+        await RunPlanAsync(services);
+        Assert.Null(types.Get(PublishedDataCatalog.ListAlias));
+        Assert.Single(types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes, p => p.Alias == mode.Alias);
+    }
+
     /// <summary>Takes the backing class away again, as a site that has not run its step has it, and sets the plan back before the step.</summary>
     private static async Task BeforeTheStepAsync(IServiceProvider services)
     {

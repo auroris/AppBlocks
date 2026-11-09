@@ -8,9 +8,9 @@ namespace AppBlocks.DataSources;
 
 /// <summary>
 /// A data source's backing class: application code an editor picks on a <c>sqlDataSource</c> node by its <see cref="Alias"/>,
-/// which the engine asks at each step of an operation once its own checks have passed, much as an Oracle APEX page process runs
-/// around a form's built-in row processing. A hook may rewrite the values that are written or shown, write the row itself through
-/// <see cref="DataSourceOperation.Sql"/> inside the engine's transaction, or refuse. Every hook passes through by default, so a class
+/// which the engine asks at each step of an operation once its own checks have passed, around the row it reads or writes itself.
+/// A hook may rewrite the values that are written or shown, write the row itself through <see cref="DataSourceOperation.Sql"/> inside
+/// the engine's transaction, or refuse. Every hook passes through by default, so a class
 /// implements only the ones it needs. Register one with <c>AddScoped&lt;IDataSourceHandler, YourHandler&gt;()</c>.
 /// </summary>
 /// <remarks>
@@ -233,10 +233,10 @@ public sealed class DataSourceSql : IAsyncDisposable
                 throw new DataSourceException($"The backing class's statement uses {variable}, which needs a signed-in account.");
             if (variable.Kind == BindVariableKind.Arg && !arguments.ContainsKey(variable.Name!))
                 throw new DataSourceException($"The backing class's statement uses {variable}, which the class did not pass.");
-            if (variable.Kind == BindVariableKind.Field && plan.Columns.All(c => !c.Field.Equals(variable.Name, StringComparison.OrdinalIgnoreCase)))
+            if (variable.Kind == BindVariableKind.Field && plan.Field(variable.Name!) is null)
                 throw new DataSourceException($"The backing class's statement uses {variable}, which is not a field.");
         }
-        var parameters = new SqlParameters(plan.Dialect);
+        var parameters = plan.Parameters();
         text = template.Render(parameters, variable => variable.Kind switch {
             BindVariableKind.Arg => arguments[variable.Name!],
             BindVariableKind.Field => Field(variable.Name!),
@@ -248,12 +248,12 @@ public sealed class DataSourceSql : IAsyncDisposable
     /// <summary>A field's value from the operation's values, or the stored record when there are none, as its column takes it.</summary>
     private object? Field(string alias)
     {
-        var column = plan.Columns.First(c => c.Field.Equals(alias, StringComparison.OrdinalIgnoreCase));
+        var column = plan.Field(alias)!;
         IEnumerable<KeyValuePair<string, object?>>? values = operation.Values ?? (IEnumerable<KeyValuePair<string, object?>>?)operation.Current;
         var value = values?.FirstOrDefault(pair => pair.Key == column.Field).Value;
-        var canonical = FieldValues.FromValue(value, column.Kind, out var valid);
+        var canonical = FieldValues.FromValue(value, column.Kind, out var valid, plan.Definition.DateTimes);
         if (!valid) throw new DataSourceFieldException(column.Field, "This field holds a value its kind cannot.");
-        try { return plan.Dialect.ToDatabase(canonical, column.Kind, column.Target); }
+        try { return plan.Dialect.ToDatabase(canonical, column.Kind, column.Target, plan.Definition.DateTimes); }
         catch (DataSourceException error) { throw new DataSourceFieldException(column.Field, error.Message); }
     }
 

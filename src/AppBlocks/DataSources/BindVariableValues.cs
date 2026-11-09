@@ -6,7 +6,7 @@ namespace AppBlocks.DataSources;
 /// shared queries and the authoring preview all read them here; a record's fields (<c>:FIELD.</c>) and a backing class's arguments
 /// (<c>:ARG.</c>) belong to their callers, and are null here.
 /// </summary>
-/// <param name="Now">The operation's one reading of the clock, with the web server's offset.</param>
+/// <param name="Now">The operation's one reading of the clock, with the offset of the data source's date-times (<see cref="DataSourceRuntime.Now(DataSourceDefinition)"/>).</param>
 internal readonly record struct BindVariableValues(DataSourceUser User, IReadOnlyDictionary<string, string>? Parameters, DateTimeOffset Now,
     IReadOnlyDictionary<string, object?>? Application)
 {
@@ -17,15 +17,13 @@ internal readonly record struct BindVariableValues(DataSourceUser User, IReadOnl
         _ => Value(variable),
     };
 
-    /// <summary>The plain value: the caller's facts, a parameter, an application value, or the moment itself for the clock.</summary>
+    /// <summary>The plain value: the caller's facts, a parameter or an application value; null for the clock, which <see cref="Bind"/> answers.</summary>
     public object? Value(BindVariable variable) => variable.Kind switch {
         BindVariableKind.UserSid => User.Sid,
         BindVariableKind.UserName => User.Name,
         BindVariableKind.UserKey => User.Key,
         BindVariableKind.UserEmail => User.Email,
         BindVariableKind.UserGroups => User.Groups,
-        BindVariableKind.Now => Now,
-        BindVariableKind.NowUtc => Now.ToUniversalTime(),
         BindVariableKind.Param => Parameter(variable.Name!),
         BindVariableKind.App => Application?.GetValueOrDefault(variable.Name!),
         _ => null,

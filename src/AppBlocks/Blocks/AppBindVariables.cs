@@ -8,11 +8,11 @@ namespace AppBlocks.Blocks;
 
 /// <summary>
 /// The values a field block's default can name, fixed when the page renders: who is signed in, the time, and the
-/// page's query string. They are APEX's <c>:APP_USER</c> and friends in Umbraco terms, written with the names the
-/// data sources use for their bind variables, so an editor learns one vocabulary.
+/// page's query string. They use the names the data sources use for their bind variables, so an editor learns one
+/// vocabulary.
 /// </summary>
 /// <param name="Key">The application's key for the account (<see cref="ApplicationAccessPolicy.UserKey"/>): the member id, or <c>backoffice:</c> and the user id. Empty for an anonymous visitor, whose person variables all resolve to nothing.</param>
-/// <param name="Sid">The Windows SID the account is linked to, its external login key; null for an account that only has a password.</param>
+/// <param name="Sid">The external login provider's key for the account, which is not necessarily a Windows SID; null when no external login is linked.</param>
 /// <param name="Name">The member's or backoffice user's username.</param>
 /// <param name="Email">The account's email address.</param>
 /// <param name="Now">The web server's local date and time when the page rendered, with its offset, from which <c>:NOW_UTC</c> takes the UTC moment.</param>
@@ -26,9 +26,10 @@ public sealed record AppBindVariables(string Key, string? Sid, string? Name, str
     /// a value, such as the SID of an account that has none or a parameter the address does not carry, resolves to null,
     /// which leaves the field as the resource initialised it. <c>:NOW</c> is written as the kind's own value: a date, a
     /// time, an ISO date and time with its offset, or for text the date and time in the invariant <c>yyyy-MM-dd HH:mm</c>;
-    /// a number or a checkbox has no "now". <c>:NOW_UTC</c> is the same moment in UTC: the UTC date or time, and for a text
-    /// field the ISO form with <c>Z</c>, such as <c>2026-11-01T07:30:00Z</c>. A date-time field holds the web server's
-    /// local time, so publishing refuses <c>:NOW_UTC</c> for one, and it resolves to null here.
+    /// a number or a checkbox has no "now". <c>:NOW_UTC</c> is the same moment in UTC: the UTC date or time, for a date-time
+    /// field the ISO date and time with <c>+00:00</c>, and for a text field the ISO form with <c>Z</c>, such as
+    /// <c>2026-11-01T07:30:00Z</c>. A date-time value carries its offset, so <c>:NOW</c> and <c>:NOW_UTC</c> give a
+    /// date-time field the same moment, which its data source stores in its own convention.
     /// </summary>
     public string? Resolve(string? value, string kind)
     {
@@ -53,6 +54,7 @@ public sealed record AppBindVariables(string Key, string? Sid, string? Name, str
             BindVariableKind.NowUtc => kind switch {
                 FieldKinds.Date => Now.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                 FieldKinds.Time => Now.UtcDateTime.ToString("HH:mm", CultureInfo.InvariantCulture),
+                FieldKinds.DateTime => Now.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture),
                 FieldKinds.Text => FieldValues.UtcText(Now),
                 _ => null,
             },

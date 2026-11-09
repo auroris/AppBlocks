@@ -91,11 +91,16 @@ public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMembe
     {
         foreach (var content in notification.PublishedEntities.Where(c => c.ContentType.Alias == DataSourceSchema.SqlAlias))
         {
-            var errors = await ValidateAsync(content.Key, content.Name ?? "", alias => content.GetValue(alias));
+            var warnings = new List<string>();
+            var errors = await ValidateAsync(content.Key, content.Name ?? "", alias => content.GetValue(alias), warnings);
             if (errors.Count > 0)
+            {
                 notification.CancelOperation(new EventMessage("Data source", (content.Name ?? "Data source") + ": " + string.Join(" ", errors), EventMessageType.Error));
-            else if (Warning(content.Key, content.Name ?? "", alias => content.GetValue(alias)) is { } warning)
-                notification.Messages.Add(new EventMessage("Data source", (content.Name ?? "Data source") + ": " + warning, EventMessageType.Warning));
+                continue;
+            }
+            if (Warning(content.Key, content.Name ?? "", alias => content.GetValue(alias)) is { } warning) warnings.Insert(0, warning);
+            if (warnings.Count > 0)
+                notification.Messages.Add(new EventMessage("Data source", (content.Name ?? "Data source") + ": " + string.Join(" ", warnings), EventMessageType.Warning));
         }
     }
 
@@ -108,7 +113,11 @@ public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMembe
             ? providers.UndeclaredWarning(definition.ApplicationNames()) : null;
 
     /// <param name="value">Returns the value of a property of the node being published.</param>
-    public async Task<IReadOnlyList<string>> ValidateAsync(Guid key, string name, Func<string, object?> value)
+    public Task<IReadOnlyList<string>> ValidateAsync(Guid key, string name, Func<string, object?> value) => ValidateAsync(key, name, value, new List<string>());
+
+    /// <param name="value">Returns the value of a property of the node being published.</param>
+    /// <param name="warnings">Receives what the database check reports without refusing, such as writes through a view.</param>
+    public async Task<IReadOnlyList<string>> ValidateAsync(Guid key, string name, Func<string, object?> value, ICollection<string> warnings)
     {
         var errors = new List<string>();
         var names = new MemberGroupNames((await groups.GetAllAsync()).ToArray());
@@ -121,7 +130,7 @@ public sealed class DataSourcePublishValidator(DataSourceRuntime runtime, IMembe
             errors.Add($"The alias {definition.Alias} is already used by the data source {other.Definition.Name}.");
         if (definition.Handler is { } handler && handlers?.Find(handler) is null)
             errors.Add($"The backing class {handler} is not registered in code; choose a registered one or clear it.");
-        errors.AddRange(runtime.Validate(definition));
+        errors.AddRange(runtime.Validate(definition, warnings));
         return errors;
     }
 }
@@ -150,6 +159,10 @@ public static class DataSourceExtensions
     /// </summary>
     public static IUmbracoBuilder AddDataSources(this IUmbracoBuilder builder)
     {
+        builder.Services.AddOptions<DataSourceOptions>().Bind(builder.Config.GetSection(DataSourceOptions.Section))
+            .Validate(options => options.InRange(), "AppBlocks:DataSources: CommandTimeoutSeconds cannot be negative, and MaxChanges, ReceiptLifetimeMinutes and ReceiptCapacity must be at least 1.");
+        // A load-balanced site registers a store its servers share; one registered before or after this one replaces it.
+        builder.Services.TryAddSingleton<IDataSourceReceiptStore, DataSourceReceipts>();
         builder.Services.AddSingleton<DataSourceRuntime>();
         builder.Services.TryAddScoped<IDataSourceUserResolver, UmbracoDataSourceUsers>();
         builder.Services.TryAddScoped<BindVariableProviders>();

@@ -81,5 +81,13 @@ public sealed class OwnedNodeTests
         var list = With(services => services.GetRequiredService<PublishedDataCatalog>().ReadList(Guid.NewGuid(), "Customers", alias => unnamed.GetValueOrDefault(alias), errors));
         Assert.True(list is not null, string.Join(" ", errors));
         Assert.Equal(AppBlocks.Connections.ConnectionCatalog.ApplicationConnection, list.DataSource.Connection);
+        // Its access is Public unless the list chooses Not public; Specific groups needs read groups a list cannot name.
+        Assert.Equal(DataSourceAccess.Public, list.DataSource.Access);
+        ListOfValuesDefinition? WithAccess(string access, List<string> problems) => With(services => services.GetRequiredService<PublishedDataCatalog>()
+            .ReadList(Guid.NewGuid(), "Customers", alias => new Dictionary<string, object?>(unnamed) { ["access"] = access }.GetValueOrDefault(alias), problems));
+        Assert.Equal(DataSourceAccess.NotPublic, WithAccess("Not public", errors)!.DataSource.Access);
+        var refused = new List<string>();
+        Assert.Null(WithAccess("Specific groups", refused));
+        Assert.Contains(refused, error => error.Contains("Specific groups needs read groups"));
     }
 }

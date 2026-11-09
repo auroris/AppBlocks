@@ -34,6 +34,8 @@ public sealed class PublishedDataCatalog(IUmbracoContextFactory contexts, IDocum
         var maximum = 1000;
         if (Text(value, "maximumRows") is { Length: > 0 } raw && (!int.TryParse(raw, out maximum) || maximum < 1)) errors.Add("Maximum rows must be a positive whole number.");
         if (source is null) errors.Add("Select a published SQL data source.");
+        else if (Text(value, "dataSource").Length == 0 && source.Access is not (DataSourceAccess.Public or DataSourceAccess.NotPublic))
+            errors.Add("Select Public or Not public access for the inline SQL; Specific groups needs read groups, which a data source names.");
         else if (PlanOf(source).Entry.Plan is not { } plan) errors.Add("The list's data source cannot read its database schema.");
         else
         {
@@ -43,13 +45,20 @@ public sealed class PublishedDataCatalog(IUmbracoContextFactory contexts, IDocum
         return errors.Count == start ? new(key, alias, name, source!, display, stored, maximum) : null;
     }
 
-    /// <summary>The source a list reads: the data source it selects, or its own connection and SQL. An empty connection is the AppBlocks database, as for a data source.</summary>
+    /// <summary>
+    /// The source a list reads: the data source it selects, with its own access, or the list's connection and SQL with the list's access.
+    /// An empty connection is the AppBlocks database, as for a data source.
+    /// </summary>
     private DataSourceDefinition? ListSource(Guid key, string name, Func<string, object?> value) => Text(value, "dataSource") is { Length: > 0 } selection
         ? ResolveSource(selection)
         : new DataSourceDefinition {
-            Key = key, Name = name, Alias = Text(value, "alias"), Source = Text(value, "sql"), Access = DataSourceAccess.Public,
+            Key = key, Name = name, Alias = Text(value, "alias"), Source = Text(value, "sql"), Access = InlineAccess(value),
             Connection = Text(value, "connection") is { Length: > 0 } connection ? connection : AppBlocks.Connections.ConnectionCatalog.ApplicationConnection,
         };
+
+    /// <summary>The inline SQL's access: Public when the list leaves it empty, as every list had before it could choose; null for a value that is not one.</summary>
+    private static DataSourceAccess? InlineAccess(Func<string, object?> value)
+        => Text(value, "access") is { Length: > 0 } access ? DataSourceDefinition.ReadAccess(access) : DataSourceAccess.Public;
 
 
     /// <summary>

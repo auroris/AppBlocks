@@ -83,7 +83,7 @@ public sealed record TableSchema(TableName Name, bool IsView, IReadOnlyList<Tabl
 /// <summary>A result column of the row source, read with a zero-row execution.</summary>
 /// <param name="BaseColumn">The table column it reads, when the provider can tell; null for an expression.</param>
 /// <param name="BaseCatalog">The database of that table, so a column read from another database is never written to a same-named table here.</param>
-public sealed record SourceColumn(string Name, string? StoreType, Type? ClrType, bool Nullable, string? BaseSchema, string? BaseTable, string? BaseColumn,
+public sealed record SourceColumn(string Name, string? StoreType, string? BaseSchema, string? BaseTable, string? BaseColumn,
     int? Size = null, string? BaseCatalog = null);
 
 /// <summary>
@@ -117,6 +117,14 @@ public abstract class SqlDialect
     public virtual void ConfigureCommand(DbCommand command) { }
     /// <summary>Compilers such as Oracle EXPLAIN inspect bind placeholders without accepting bound values.</summary>
     public virtual void ConfigureCompilation(DbCommand command) { }
+    /// <summary>
+    /// Whether the provider gave up waiting for the database, within the command timeout, rather than the database refusing the statement.
+    /// Read by property name, as AppBlocks references no provider; a provider that raises a <see cref="TimeoutException"/> is recognised by it.
+    /// </summary>
+    internal virtual bool IsTimeout(DbException error) => error.InnerException is TimeoutException;
+    protected static object? ErrorProperty(DbException error, string name) => error.GetType().GetProperty(name)?.GetValue(error);
+    /// <summary>Binds <see cref="UntypedText"/> so the database reads the text as the column's own type.</summary>
+    internal virtual void BindUntyped(DbParameter parameter) { }
     /// <summary>The isolation of a write transaction; a dialect without a row lock relies on its own.</summary>
     public virtual IsolationLevel WriteIsolation => IsolationLevel.Unspecified;
 
@@ -127,8 +135,14 @@ public abstract class SqlDialect
     public abstract bool IsInteger(TableColumn column);
     public virtual (decimal? Min, decimal? Max) Range(TableColumn column) => (null, null);
     /// <summary>The provider value for a canonical value written to <paramref name="column"/>, or bound for a column-less use when it is null.</summary>
-    public abstract object? ToDatabase(object? value, string kind, TableColumn? column);
-    /// <summary>The value bound for <c>:NOW</c>.</summary>
+    /// <param name="dateTimes">The wall time a date-time column without a zone receives: server local time or UTC.</param>
+    public abstract object? ToDatabase(object? value, string kind, TableColumn? column, DataSourceDateTimes dateTimes = DataSourceDateTimes.ServerLocal);
+
+    /// <summary>The wall time a zone-less column stores for a moment.</summary>
+    protected static DateTime WallTime(DateTimeOffset moment, DataSourceDateTimes dateTimes)
+        => dateTimes == DataSourceDateTimes.Utc ? DateTime.SpecifyKind(moment.UtcDateTime, DateTimeKind.Unspecified) : moment.LocalDateTime;
+
+    /// <summary>The value bound for <c>:NOW</c>, given the operation's clock reading as its wall time.</summary>
     public abstract object Now(DateTime now);
     /// <summary>
     /// The value bound for <c>:NOW_UTC</c>, given the moment as a UTC date and time: a typed timestamp holding the
@@ -136,11 +150,15 @@ public abstract class SqlDialect
     /// </summary>
     public virtual object NowUtc(DateTime utc) => new TypedValue(DateTime.SpecifyKind(utc, DateTimeKind.Utc), DbType.DateTime2);
 
-    public abstract TableSchema? ReadTable(DbConnection connection, TableName name);
+    public abstract TableSchema? ReadTable(DbConnection connection, TableName name, int commandTimeout = DataSourceOptions.DefaultCommandTimeoutSeconds);
     /// <summary>Resolves an explicitly configured Oracle sequence to its catalog spelling.</summary>
-    public virtual TableName? ReadSequence(DbConnection connection, TableName name) => null;
+    public virtual TableName? ReadSequence(DbConnection connection, TableName name, int commandTimeout = DataSourceOptions.DefaultCommandTimeoutSeconds) => null;
     /// <summary>Text that compiles <paramref name="statement"/> without running it, for publish validation.</summary>
     public abstract string CompileOnly(string statement);
+    /// <summary>Whether <see cref="CompileOnly"/> can check <paramref name="statement"/>; a block or procedure call some databases cannot explain.</summary>
+    internal virtual bool Compiles(string statement) => true;
+    /// <summary>An editor's custom statement as the provider runs it.</summary>
+    internal virtual string Statement(string text) => text;
 
     /// <summary>The result columns of <paramref name="text"/>, a zero-row probe, without reading a row.</summary>
     internal IReadOnlyList<SourceColumn> Probe(DbConnection connection, string text, SqlParameters parameters)
@@ -149,7 +167,7 @@ public abstract class SqlDialect
         using var reader = command.ExecuteReader(CommandBehavior.SchemaOnly | CommandBehavior.KeyInfo);
         return reader.GetColumnSchema().Where(c => c.IsHidden != true).Select(c => {
             var table = Blank(c.BaseTableName);
-            return new SourceColumn(c.ColumnName, Blank(c.DataTypeName), c.DataType, c.AllowDBNull ?? true, Blank(c.BaseSchemaName), table,
+            return new SourceColumn(c.ColumnName, Blank(c.DataTypeName), Blank(c.BaseSchemaName), table,
                 Blank(c.BaseColumnName) ?? (table is null || c.IsExpression == true ? null : c.ColumnName), c.ColumnSize is > 0 and < int.MaxValue ? c.ColumnSize : null,
                 Blank(c.BaseCatalogName));
         }).ToArray();
@@ -169,7 +187,15 @@ public abstract class SqlDialect
     protected string OrderBy(IReadOnlyList<(string Column, bool Descending)>? order) => order is not { Count: > 0 } ? ""
         : " ORDER BY " + string.Join(", ", order.Select(o => "src." + Quote(o.Column) + (o.Descending ? " DESC" : "")));
 
-    public abstract string Insert(TableName table, IReadOnlyList<(string Column, string Value)> values, IReadOnlyList<TableColumn> returning);
+    /// <summary>The generated insert, with <c>RETURNING</c> for the keys the database assigns, as SQLite and PostgreSQL write it.</summary>
+    public virtual string Insert(TableName table, IReadOnlyList<(string Column, string Value)> values, IReadOnlyList<TableColumn> returning)
+    {
+        var text = new StringBuilder("INSERT INTO ").Append(Quote(table));
+        if (values.Count == 0) text.Append(" DEFAULT VALUES");
+        else text.Append(" (").AppendJoin(", ", values.Select(v => Quote(v.Column))).Append(") VALUES (").AppendJoin(", ", values.Select(v => v.Value)).Append(')');
+        if (returning.Count > 0) text.Append(" RETURNING ").AppendJoin(", ", returning.Select(c => Quote(c.Name)));
+        return text.ToString();
+    }
 
     /// <summary>Reads the values returned by an insert; Oracle overrides this with output parameters.</summary>
     internal virtual async Task<object?[]> ExecuteInsertAsync(DbCommand command, IReadOnlyList<TableColumn> returning, CancellationToken ct)
@@ -211,6 +237,16 @@ public abstract class SqlDialect
     private string Where(IReadOnlyList<(string Column, string Marker)> keys, string? exists)
         => Match("", keys) + (exists is null ? "" : " AND " + exists);
     private static string Restrict(string? restriction) => restriction is null ? "" : " AND (\n" + restriction + "\n)";
+
+    /// <summary>A catalog query's command, with the engine's timeout.</summary>
+    protected static DbCommand CatalogCommand(DbConnection connection, int commandTimeout)
+    {
+        var command = connection.CreateCommand();
+        command.CommandTimeout = commandTimeout;
+        return command;
+    }
+
+    protected static int? OptionalInt(DbDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : Convert.ToInt32(reader.GetValue(ordinal), Invariant);
 
     protected static void Bind(DbCommand command, string name, object? value)
     {
@@ -265,7 +301,7 @@ public sealed class SqliteDialect : SqlDialect
 
     public override bool IsInteger(TableColumn column) => AffinityOf(column.StoreType) == Affinity.Integer;
 
-    public override object? ToDatabase(object? value, string kind, TableColumn? column)
+    public override object? ToDatabase(object? value, string kind, TableColumn? column, DataSourceDateTimes dateTimes = DataSourceDateTimes.ServerLocal)
     {
         var affinity = column is null ? Affinity.Blob : AffinityOf(column.StoreType);
         return value switch {
@@ -278,8 +314,8 @@ public sealed class SqliteDialect : SqlDialect
             decimal number => (double)number,
             DateOnly date => date.ToString("yyyy-MM-dd", Invariant),
             TimeOnly time => time.ToString("HH:mm:ss.FFF", Invariant),
-            // SQLite's date functions read this form; zone-less, like every date-time the engine stores.
-            DateTimeOffset moment => moment.ToLocalTime().DateTime.ToString("yyyy-MM-dd HH:mm:ss.FFF", Invariant).TrimEnd('.'),
+            // SQLite's date functions read this form, zone-less in the data source's convention.
+            DateTimeOffset moment => WallTime(moment, dateTimes).ToString("yyyy-MM-dd HH:mm:ss.FFF", Invariant).TrimEnd('.'),
             _ => value,
         };
     }
@@ -291,12 +327,15 @@ public sealed class SqliteDialect : SqlDialect
 
     public override string CompileOnly(string statement) => "EXPLAIN " + statement;
 
-    public override TableSchema? ReadTable(DbConnection connection, TableName name)
+    // SQLITE_BUSY or SQLITE_LOCKED once the command timeout has passed: another connection held the database throughout.
+    internal override bool IsTimeout(DbException error) => ErrorProperty(error, "SqliteErrorCode") is 5 or 6;
+
+    public override TableSchema? ReadTable(DbConnection connection, TableName name, int commandTimeout = DataSourceOptions.DefaultCommandTimeoutSeconds)
     {
         if (name.Schema is not null && !name.Schema.Equals("main", StringComparison.OrdinalIgnoreCase)) return null;
         string table;
         bool view, withoutRowid;
-        using (var command = connection.CreateCommand())
+        using (var command = CatalogCommand(connection, commandTimeout))
         {
             command.CommandText = "SELECT name, type, wr FROM pragma_table_list WHERE schema = 'main' AND type IN ('table', 'view') AND name = @name COLLATE NOCASE";
             Bind(command, "@name", name.Name);
@@ -305,7 +344,7 @@ public sealed class SqliteDialect : SqlDialect
             (table, view, withoutRowid) = (reader.GetString(0), reader.GetString(1) == "view", reader.GetInt64(2) != 0);
         }
         var rows = new List<(string Name, string Type, bool NotNull, bool Default, long Key, long Hidden)>();
-        using (var command = connection.CreateCommand())
+        using (var command = CatalogCommand(connection, commandTimeout))
         {
             command.CommandText = "SELECT name, type, \"notnull\", dflt_value IS NOT NULL, pk, hidden FROM pragma_table_xinfo(@name)";
             Bind(command, "@name", table);
@@ -319,7 +358,7 @@ public sealed class SqliteDialect : SqlDialect
         var keys = new List<IReadOnlyList<string>>();
         if (primary.Length > 0) keys.Add(primary);
         var indexes = new List<string>();
-        using (var command = connection.CreateCommand())
+        using (var command = CatalogCommand(connection, commandTimeout))
         {
             command.CommandText = "SELECT name FROM pragma_index_list(@name) WHERE \"unique\" = 1 AND partial = 0";
             Bind(command, "@name", table);
@@ -328,7 +367,7 @@ public sealed class SqliteDialect : SqlDialect
         }
         foreach (var index in indexes)
         {
-            using var command = connection.CreateCommand();
+            using var command = CatalogCommand(connection, commandTimeout);
             command.CommandText = "SELECT name FROM pragma_index_info(@name) ORDER BY seqno";
             Bind(command, "@name", index);
             using var reader = command.ExecuteReader();
@@ -346,15 +385,6 @@ public sealed class SqliteDialect : SqlDialect
         var open = type.IndexOf('(');
         var close = open < 0 ? -1 : type.IndexOfAny([')', ','], open);
         return close > open && int.TryParse(type[(open + 1)..close], NumberStyles.None, Invariant, out var length) && length > 0 ? length : null;
-    }
-
-    public override string Insert(TableName table, IReadOnlyList<(string Column, string Value)> values, IReadOnlyList<TableColumn> returning)
-    {
-        var text = new StringBuilder("INSERT INTO ").Append(Quote(table));
-        if (values.Count == 0) text.Append(" DEFAULT VALUES");
-        else text.Append(" (").AppendJoin(", ", values.Select(v => Quote(v.Column))).Append(") VALUES (").AppendJoin(", ", values.Select(v => v.Value)).Append(')');
-        if (returning.Count > 0) text.Append(" RETURNING ").AppendJoin(", ", returning.Select(c => Quote(c.Name)));
-        return text.ToString();
     }
 }
 
@@ -402,7 +432,7 @@ public sealed class SqlServerDialect : SqlDialect
         return (-max, max);
     }
 
-    public override object? ToDatabase(object? value, string kind, TableColumn? column)
+    public override object? ToDatabase(object? value, string kind, TableColumn? column, DataSourceDateTimes dateTimes = DataSourceDateTimes.ServerLocal)
     {
         var type = column?.StoreType.ToLowerInvariant() ?? "";
         try
@@ -431,9 +461,9 @@ public sealed class SqlServerDialect : SqlDialect
                 DateTimeOffset moment when IsTextType(type) => moment.ToString("O", Invariant),
                 DateTimeOffset moment => type switch {
                     "datetimeoffset" => new TypedValue(moment, DbType.DateTimeOffset),
-                    "date" => new TypedValue(moment.ToLocalTime().Date, DbType.Date),
-                    "datetime" or "smalldatetime" => new TypedValue(Stored(moment.ToLocalTime().DateTime, type), DbType.DateTime),
-                    _ => new TypedValue(moment.ToLocalTime().DateTime, DbType.DateTime2),
+                    "date" => new TypedValue(WallTime(moment, dateTimes).Date, DbType.Date),
+                    "datetime" or "smalldatetime" => new TypedValue(Stored(WallTime(moment, dateTimes), type), DbType.DateTime),
+                    _ => new TypedValue(WallTime(moment, dateTimes), DbType.DateTime2),
                 },
                 byte[] bytes => new TypedValue(bytes, DbType.Binary),
                 _ => value,
@@ -458,12 +488,15 @@ public sealed class SqlServerDialect : SqlDialect
 
     public override string CompileOnly(string statement) => "SET NOEXEC ON;\n" + statement + "\nSET NOEXEC OFF;";
 
-    public override TableSchema? ReadTable(DbConnection connection, TableName name)
+    // SqlClient reports its own timeout as error number -2.
+    internal override bool IsTimeout(DbException error) => ErrorProperty(error, "Number") is -2;
+
+    public override TableSchema? ReadTable(DbConnection connection, TableName name, int commandTimeout = DataSourceOptions.DefaultCommandTimeoutSeconds)
     {
         string schema, table;
         bool view;
         int id;
-        using (var command = connection.CreateCommand())
+        using (var command = CatalogCommand(connection, commandTimeout))
         {
             // OBJECT_ID resolves the name the way the connection's own statements would, default schema included.
             command.CommandText = "SELECT OBJECT_SCHEMA_NAME(o.object_id), o.name, o.type, o.object_id FROM sys.objects o WHERE o.object_id = OBJECT_ID(@name) AND o.type IN ('U', 'V')";
@@ -473,7 +506,7 @@ public sealed class SqlServerDialect : SqlDialect
             (schema, table, view, id) = (reader.GetString(0), reader.GetString(1), reader.GetString(2).Trim() == "V", reader.GetInt32(3));
         }
         var columns = new List<TableColumn>();
-        using (var command = connection.CreateCommand())
+        using (var command = CatalogCommand(connection, commandTimeout))
         {
             command.CommandText = """
                 SELECT c.name, COALESCE(TYPE_NAME(c.system_type_id), TYPE_NAME(c.user_type_id)), c.max_length, c.precision, c.scale, c.is_nullable, c.is_identity, c.is_computed,
@@ -493,7 +526,7 @@ public sealed class SqlServerDialect : SqlDialect
             }
         }
         var keys = new List<IReadOnlyList<string>>();
-        using (var command = connection.CreateCommand())
+        using (var command = CatalogCommand(connection, commandTimeout))
         {
             command.CommandText = """
                 SELECT i.index_id, c.name FROM sys.indexes i
