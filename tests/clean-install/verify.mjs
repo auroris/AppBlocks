@@ -78,7 +78,7 @@ for (const name of packages) {
       }
       if (key === '0ec4f87b-ecaf-9c30-dbce-df5a5ade88f4') {
         const expectedChildren = ['6a79805a-4170-811d-64a8-83ee1422bade',
-          ...(companions ? ['cf9efe5f-6142-c0a0-360e-bd3b4bc20882'] : []), '8b8fef37-dbd6-38e5-04d6-9c3bb55c3472'];
+          ...(companions ? ['e9054289-9e09-1611-f0d7-022d87544f77'] : []), '82c174da-0007-7152-7971-05a4936aed08'];
         assert.deepEqual(definition.allowedDocumentTypes.sort((a, b) => a.sortOrder - b.sortOrder).map(child => child.documentType.id), expectedChildren);
         passed('Fresh Data sources structure includes exactly the installed child types');
       }

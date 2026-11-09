@@ -2,142 +2,142 @@
 export const appBlockTypes = [
   {
     "alias": "appActions",
-    "key": "38d60627-6dd7-5518-d96f-edf0398b77c9",
+    "key": "a6f2bd72-53a0-41ab-3e1d-21fbb2c25edb",
     "name": "Form actions"
   },
   {
     "alias": "appAntiSpam",
-    "key": "2e061fe8-821d-2da6-2367-1cacd65983fe",
+    "key": "bb529b16-87cc-a2f5-2806-165bb5edcd8c",
     "name": "Anti-spam"
   },
   {
     "alias": "appAttachments",
-    "key": "7c6b382b-d731-5610-b5b9-335388d8c4ab",
+    "key": "0ebcb1a4-fee4-67c0-ffeb-000cf35c2be6",
     "name": "Attachments"
   },
   {
     "alias": "appCheckbox",
-    "key": "39245888-f93b-e859-e7b2-c1d587ce77ab",
+    "key": "c819438f-529f-e470-1160-7916132f9b9d",
     "name": "Checkbox"
   },
   {
     "alias": "appColor",
-    "key": "187ed8bd-9046-be72-a7a0-3415e7c653c1",
+    "key": "184166c8-4d0d-6246-d831-035a83206238",
     "name": "Color picker"
   },
   {
     "alias": "appColumns",
-    "key": "c2d2b5b1-43e9-f471-b583-f03f83a6c8da",
+    "key": "20c1eb05-5580-38f0-68be-0fcdc5dc49b6",
     "name": "Two columns"
   },
   {
     "alias": "appCss",
-    "key": "4eaf7d7f-96ca-e772-9471-f745267d3634",
+    "key": "e4dc84a5-75c9-3dc7-a338-e0746c1803b3",
     "name": "CSS"
   },
   {
     "alias": "appDate",
-    "key": "aa4bb142-bfa9-8213-4fd9-e0f448e3f6a8",
+    "key": "2f471a86-e0cd-370e-9b72-05f20c1af119",
     "name": "Date"
   },
   {
     "alias": "appDateTime",
-    "key": "cebb3327-2a66-b6de-e10c-89e9226632c1",
+    "key": "e56ff412-2e1b-f4f3-fa4c-97b07501c75d",
     "name": "Date and time"
   },
   {
     "alias": "appDisplay",
-    "key": "cc75a8f9-28a3-6257-ca5b-c6eab28d13e0",
+    "key": "11138a4f-ddc0-2af4-8d06-06fd79f3e268",
     "name": "Display value"
   },
   {
     "alias": "appFieldset",
-    "key": "4da09a44-5ca4-510c-5516-7991c824ed14",
+    "key": "3bb4998d-9a1a-e732-d6a0-2d6015596419",
     "name": "Fieldset"
   },
   {
     "alias": "appForm",
-    "key": "322396a8-4598-4ff5-8312-6ee2cdf866cc",
+    "key": "d84c2849-e284-4330-4ebd-eb2efdfb4344",
     "name": "Form"
   },
   {
     "alias": "appFormInterface",
-    "key": "517b713a-a066-2a47-386d-d6adb77f96ca",
+    "key": "35e2a656-168d-e61b-fc2b-620ca2f59f99",
     "name": "Form Interface"
   },
   {
     "alias": "appFormsContainer",
-    "key": "c7cd8a45-9eba-09d9-3eca-00183f7be4d4",
+    "key": "0d29493d-0fb5-7ecf-728a-6ec34c0fe7a9",
     "name": "Forms container"
   },
   {
     "alias": "appFullWidth",
-    "key": "30899623-d1e8-25aa-5496-16adde476711",
+    "key": "486f1587-ae2d-92fb-a699-2062321afd38",
     "name": "Full width"
   },
   {
     "alias": "appHtml",
-    "key": "97ae0a05-a71b-33c3-114e-6c8d6388cd2a",
+    "key": "31844585-310a-f012-7a57-6a6bf9da9637",
     "name": "HTML"
   },
   {
     "alias": "appNumber",
-    "key": "b8f7ceda-595f-abf3-1f54-b6256dcbcd3f",
+    "key": "099c3232-3ac1-7efb-9470-e7efd8412f8a",
     "name": "Number"
   },
   {
     "alias": "appRegion",
-    "key": "f329406c-e9f8-f43b-d1a2-0f24c10ce078",
+    "key": "5977326b-3a82-d6c3-6303-8063a722a7cb",
     "name": "Region"
   },
   {
     "alias": "appRichText",
-    "key": "70eed87e-49ff-37f0-8e95-4312473fb492",
+    "key": "bc947ee0-4719-c830-b4a9-e98de1f383b9",
     "name": "Rich text"
   },
   {
     "alias": "appSchedule",
-    "key": "dad30501-a579-78e7-82b9-6c35abcb2bb0",
+    "key": "e3f870e7-e565-c78a-a924-8853afc0acac",
     "name": "Schedule"
   },
   {
     "alias": "appScript",
-    "key": "7ea55d43-703d-b91f-9e28-7addfe9e29b2",
+    "key": "95e588fe-cd88-74d3-02c2-48e348f3bd53",
     "name": "JavaScript"
   },
   {
     "alias": "appSelect",
-    "key": "24e41871-a920-ba29-0a34-358bf8610199",
+    "key": "efd4bb91-7c06-4d1d-0dca-0fa25fe67ef4",
     "name": "Select"
   },
   {
     "alias": "appShuttle",
-    "key": "521484cb-5b9b-4740-c257-cce3f2f2abf6",
+    "key": "a847a825-df14-a3ed-8cbe-a3f986bdb2eb",
     "name": "Shuttle"
   },
   {
     "alias": "appTabular",
-    "key": "50f10848-f57d-705a-5ccb-bcbd4e49d613",
+    "key": "79343cba-465f-6ee6-08c7-c00efc155c40",
     "name": "Tabular form"
   },
   {
     "alias": "appText",
-    "key": "8f805183-a121-adcf-bee2-98097f3e3fa0",
+    "key": "259a78cc-393e-3fef-881d-219c597f14a6",
     "name": "Text box"
   },
   {
     "alias": "appTextArea",
-    "key": "649f6acc-f024-d8b8-d272-eb121964a48a",
+    "key": "d940e690-29a9-5ee3-cf13-90d752fa4eee",
     "name": "Text area"
   },
   {
     "alias": "appThreeColumns",
-    "key": "70e6fd76-f49e-c938-b3b0-0f7ccbeb097c",
+    "key": "a27dce00-3842-1c11-ee2c-c3bbdf10065c",
     "name": "Three columns"
   },
   {
     "alias": "appTime",
-    "key": "687fcec4-64a1-1c47-9e7c-0782e6960851",
+    "key": "528ca2a4-fab9-02eb-526c-ce80e09d9b59",
     "name": "Time"
   }
 ];

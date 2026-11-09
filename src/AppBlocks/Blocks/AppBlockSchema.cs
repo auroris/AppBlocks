@@ -68,6 +68,6 @@ public static class AppBlockSchema
     /// </summary>
     public const string AntiSpamAlias = "appAntiSpam";
 
-    // The seed is older than the namespace rename. Every stored content key derives from it, so it does not change.
-    public static Guid Key(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes("UmbracoAppHost.Blocks.v1:" + value))[..16]);
+    // Every definition key derives from this seed, so changing it changes every key: an installed site then needs Reinstall.
+    public static Guid Key(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes("AppBlocks.Blocks.v1:" + value))[..16]);
 }

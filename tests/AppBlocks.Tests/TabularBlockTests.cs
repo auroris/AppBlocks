@@ -147,7 +147,7 @@ public sealed class TabularBlockTests
     public void The_tabular_form_type_keeps_its_key_and_its_settings_in_order()
     {
         var key = AppBlockSchema.Key(AppBlockSchema.TabularAlias).ToString();
-        Assert.Equal("50f10848-f57d-705a-5ccb-bcbd4e49d613", key);
+        Assert.Equal("79343cba-465f-6ee6-08c7-c00efc155c40", key);
         var type = new AppBlocks.Setup.AppBlocksSchema(typeof(AppBlocks.AppBlocksExtensions).Assembly).Definitions("ContentTypes").Single(definition => definition.Attribute("Alias")!.Value == AppBlockSchema.TabularAlias);
         Assert.Equal(key, type.Attribute("Key")!.Value);
         Assert.Equal(AppBlockSchema.TabularAlias, type.Attribute("Alias")!.Value);
