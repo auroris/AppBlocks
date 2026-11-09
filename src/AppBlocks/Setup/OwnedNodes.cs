@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AppBlocks.Blocks;
+using AppBlocks.DataSources;
 using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Models;
 using Umbraco.Cms.Core.Scoping;
@@ -114,16 +116,56 @@ public sealed class OwnedNodeInstaller(IContentService contents, IKeyValueServic
         }
         else content.Name = node.Name;
         foreach (var (alias, value) in node.Values) content.SetValue(alias, value);
-        contents.Save(content);
-        var result = contents.Publish(content, ["*"]);
 #pragma warning restore CS0618
-        if (!result.Success)
-            throw new OwnedNodeException($"{node.Name} could not be published: {result.Result}. "
-                + string.Join(" ", result.EventMessages?.GetAll().Select(message => message.Message) ?? []));
+        Publish(content, node.Name);
         keyValues.SetValue(StoreKey(node.Key), fingerprint);
         scope.Complete();
         var change = existing is null ? OwnedNodeChange.Created : OwnedNodeChange.Updated;
         logger.LogInformation("{Change} the owned node {Name} ({Key}) to its definition {Fingerprint}.", change, node.Name, node.Key, fingerprint[..12]);
         return change;
+    }
+
+    /// <summary>The key <see cref="EnsureDataSourcesRoot"/> gives the Data sources node it creates.</summary>
+    public static readonly Guid DataSourcesRootKey = AppBlockSchema.Key("dataSourcesRoot");
+
+    /// <summary>
+    /// The key of a published Data sources node (<c>dataSources</c>) at the content root, the parent an <see cref="OwnedNode"/> data source,
+    /// list of values or API endpoint names. A site that has one keeps it, and it is published if it was not. A site with none gets one
+    /// named <paramref name="name"/> under <see cref="DataSourcesRootKey"/>, created and published. Call it before installing those nodes.
+    /// </summary>
+    /// <exception cref="OwnedNodeException">The node could not be published.</exception>
+    public Guid EnsureDataSourcesRoot(string name = "Data sources")
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        using var scope = scopes.CreateCoreScope();
+        // Before any read, as in Install, so a SQLite read transaction is never upgraded.
+        scope.EagerWriteLock(Constants.Locks.ContentTree);
+        var roots = contents.GetRootContent().Where(content => !content.Trashed && content.ContentType.Alias == DataSourceSchema.RootAlias)
+            .OrderByDescending(content => content.Published).ThenByDescending(content => content.Key == DataSourcesRootKey).ThenBy(content => content.SortOrder).ToArray();
+        var root = roots.FirstOrDefault();
+        if (root is { Published: true }) { scope.Complete(); return root.Key; }
+        if (root is null)
+        {
+#pragma warning disable CS0618 // The content service's synchronous Move, as Install uses it.
+            if (contents.GetById(DataSourcesRootKey) is { } trashed) { root = trashed; contents.Move(root, Constants.System.Root); }
+#pragma warning restore CS0618
+            else root = contents.Create(name, Constants.System.Root, DataSourceSchema.RootAlias);
+            root.Key = DataSourcesRootKey;
+        }
+        Publish(root, root.Name ?? name);
+        scope.Complete();
+        logger.LogInformation("Published the Data sources node {Name} ({Key}).", root.Name, root.Key);
+        return root.Key;
+    }
+
+    private void Publish(IContent content, string name)
+    {
+#pragma warning disable CS0618 // The content service's synchronous Save and Publish, as the package's own installers use them.
+        contents.Save(content);
+        var result = contents.Publish(content, ["*"]);
+#pragma warning restore CS0618
+        if (!result.Success)
+            throw new OwnedNodeException($"{name} could not be published: {result.Result}. "
+                + string.Join(" ", result.EventMessages?.GetAll().Select(message => message.Message) ?? []));
     }
 }

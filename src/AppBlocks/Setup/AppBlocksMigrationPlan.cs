@@ -25,5 +25,7 @@ public sealed class AppBlocksMigrationPlan() : AppBlocksPackagePlan("AppBlocks",
         To<AddDataSourceConcurrency>("2026-11-04-checksum-concurrency");
         // The data source's date-time mode and the list of values' inline SQL access.
         To<AddDateTimeModeAndListAccess>("2026-11-08-date-time-mode-and-list-access");
+        // The pickers' editor UI aliases, from AppHost.* to AppBlocks.*.
+        To<RenameEditorUiAliases>("2026-11-08-appblocks-editor-ui-aliases");
     }
 }

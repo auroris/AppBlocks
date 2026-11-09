@@ -134,6 +134,24 @@ public sealed class AntiSpamTests
         Assert.Equal(outcome, (await service.VerifyAsync(Request((decimal)threshold), default)).Outcome);
     }
 
+    [Theory]
+    [InlineData("""{"success":true,"hostname":"www.example.org"}""", "www.example.org", AntiSpamOutcome.Passed)]
+    [InlineData("""{"success":true,"hostname":"WWW.Example.org"}""", "www.example.org", AntiSpamOutcome.Passed)]
+    [InlineData("""{"success":true,"hostname":"elsewhere.example"}""", "www.example.org", AntiSpamOutcome.Failed)]
+    // Nothing to compare: no host name in the answer, or the site turned the check off.
+    [InlineData("""{"success":true}""", "www.example.org", AntiSpamOutcome.Passed)]
+    [InlineData("""{"success":true,"hostname":"elsewhere.example"}""", null, AntiSpamOutcome.Passed)]
+    public async Task A_token_solved_on_another_host_fails(string reply, string? hostname, AntiSpamOutcome outcome)
+    {
+        foreach (var alias in new[] { "turnstile", "recaptchaV2", "hcaptcha" })
+        {
+            var (service, _, _) = With(f => Adapter(alias, f), reply);
+            Assert.Equal(outcome, (await service.VerifyAsync(Request() with { Hostname = hostname }, default)).Outcome);
+        }
+        var (three, _, _) = With(f => new RecaptchaV3Service(f), reply.Replace("\"success\":true", "\"success\":true,\"score\":0.9,\"action\":\"appblocks_form\""));
+        Assert.Equal(outcome, (await three.VerifyAsync(Request() with { Hostname = hostname }, default)).Outcome);
+    }
+
     [Fact]
     public void Each_adapter_describes_its_own_widget_and_offers_only_what_it_can()
     {

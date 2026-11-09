@@ -90,4 +90,46 @@ public sealed class OwnedNodeTests
         Assert.Null(WithAccess("Specific groups", refused));
         Assert.Contains(refused, error => error.Contains("Specific groups needs read groups"));
     }
+
+    [Fact]
+    public async Task The_Data_sources_root_is_made_once_kept_published_and_a_sites_own_is_used()
+    {
+        await using var site = await BlockSite.BootAsync();
+        T With<T>(Func<IServiceProvider, T> read) { using var scope = site.CreateScope(); return read(scope.ServiceProvider); }
+        Guid Ensure() => With(services => services.GetRequiredService<OwnedNodeInstaller>().EnsureDataSourcesRoot());
+        for (var i = 0; i < 100 && With(services => services.GetRequiredService<IContentTypeService>().Get(DataSourceSchema.RootAlias)) is null; i++) await Task.Delay(100);
+
+        // None yet: one is made and published under the fixed key, and asking again changes nothing.
+        Assert.Equal(OwnedNodeInstaller.DataSourcesRootKey, Ensure());
+        var made = With(services => services.GetRequiredService<IContentService>().GetById(OwnedNodeInstaller.DataSourcesRootKey)!);
+        Assert.True(made.Published);
+        Assert.Equal("Data sources", made.Name);
+        Assert.Equal(-1, made.ParentId);
+        Assert.Equal(OwnedNodeInstaller.DataSourcesRootKey, Ensure());
+        Assert.Equal(made.VersionId, With(services => services.GetRequiredService<IContentService>().GetById(OwnedNodeInstaller.DataSourcesRootKey)!.VersionId));
+
+        // Unpublished, it is published again; nodes under an unpublished parent cannot be published.
+        With(services => {
+            var contents = services.GetRequiredService<IContentService>();
+#pragma warning disable CS0618
+            return contents.Unpublish(contents.GetById(OwnedNodeInstaller.DataSourcesRootKey)!);
+#pragma warning restore CS0618
+        });
+        Assert.Equal(OwnedNodeInstaller.DataSourcesRootKey, Ensure());
+        Assert.True(With(services => services.GetRequiredService<IContentService>().GetById(OwnedNodeInstaller.DataSourcesRootKey)!.Published));
+
+        // A site with a Data sources node of its own keeps it, and that is the one returned.
+        var own = With(services => {
+            var contents = services.GetRequiredService<IContentService>();
+#pragma warning disable CS0618
+            contents.MoveToRecycleBin(contents.GetById(OwnedNodeInstaller.DataSourcesRootKey)!);
+            var node = contents.Create("Site sources", -1, DataSourceSchema.RootAlias);
+            contents.Save(node);
+            Assert.True(contents.Publish(node, ["*"]).Success);
+#pragma warning restore CS0618
+            return node.Key;
+        });
+        Assert.Equal(own, Ensure());
+        Assert.True(With(services => services.GetRequiredService<IContentService>().GetById(OwnedNodeInstaller.DataSourcesRootKey)!.Trashed));
+    }
 }

@@ -152,6 +152,70 @@ public sealed class ConnectionRuntimeTests
         Assert.Equal(DatabaseDialect.Oracle, connections.Dialect("Business"));
     }
 
+    [Fact]
+    public async Task Connection_strings_that_belong_to_something_else_stay_out_of_the_list_without_breaking_it()
+    {
+        var root = Directory.CreateTempSubdirectory("appblocks-foreign-").FullName;
+        try
+        {
+            var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+                ["ConnectionStrings:Jobs"] = "Server=jobs;Database=hangfire;Uid=app;Pwd=jobs-secret",
+                ["ConnectionStrings:Jobs_ProviderName"] = "MySql.Data.MySqlClient",
+                ["ConnectionStrings:Cache"] = "localhost:6379,password=cache-secret",
+                ["ConnectionStrings:Storage"] = "DefaultEndpointsProtocol=https;AccountName=site;AccountKey=c3RvcmFnZQ==",
+                ["ConnectionStrings:Orders"] = "Server=db;Database=orders;Integrated Security=true",
+            }).Build();
+            var catalog = new ConnectionCatalog(config, new Environment(root), new EphemeralDataProtectionProvider());
+            var listed = catalog.List();
+            Assert.Equal("sqlServer", Assert.Single(listed, c => c.Name == "Orders").Provider);
+            Assert.DoesNotContain(listed, c => c.Name is "Jobs" or "Cache" or "Storage");
+            // Asked to open one, the catalog still says what is wrong.
+            Assert.Contains("ConnectionStrings:Jobs_ProviderName is MySql.Data.MySqlClient", Assert.Throws<ArgumentException>(() => catalog.Openable("Jobs")).Message);
+            // Its name stays the configuration's: a connection saved under it would never be the one opened.
+            Assert.Contains("managed by the site", (await Assert.ThrowsAsync<ArgumentException>(() => catalog.SaveAsync(new("Jobs", "sqlite", "Data Source=:memory:"), default))).Message);
+            await catalog.SaveAsync(new("Local", "sqlite", "Data Source=:memory:"), default);
+            Assert.Contains(catalog.List(), c => c.Name == "Local");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task A_saved_connection_this_installation_cannot_decrypt_is_listed_as_such_and_says_so_when_opened()
+    {
+        var root = Directory.CreateTempSubdirectory("appblocks-unreadable-").FullName;
+        try
+        {
+            var config = new ConfigurationBuilder().Build();
+            var file = Path.Combine(root, "business.db");
+            await new ConnectionCatalog(config, new Environment(root), new EphemeralDataProtectionProvider())
+                .SaveAsync(new("Business", "sqlite", $"Data Source={file};Pooling=False"), default);
+
+            // Another key ring, as after connections.json is copied to another server.
+            var catalog = new ConnectionCatalog(config, new Environment(root), new EphemeralDataProtectionProvider());
+            using var services = new ServiceCollection().BuildServiceProvider();
+            var connections = new ApplicationConnections(services, new AppBlocksBuilder(), catalog);
+            var listed = Assert.Single(catalog.List(), c => c.Name == "Business");
+            Assert.Contains("Save it again", listed.Problem);
+            Assert.Null(Assert.Single(catalog.List(), c => c.Name == ConnectionCatalog.ApplicationConnection).Problem);
+            Assert.Equal(DatabaseDialect.Sqlite, connections.Dialect("Business"));
+            Assert.Contains("cannot be read", Assert.Throws<ArgumentException>(() => catalog.Openable("Business")).Message);
+            Assert.Contains("cannot be read", Assert.Throws<ArgumentException>(() => connections.CreateConnection("Business")).Message);
+            // A data source on it reports the reason rather than failing the request.
+            var runtime = new DataSourceRuntime(connections, NullLogger<DataSourceRuntime>.Instance, managed: catalog);
+            var errors = new List<string>();
+            var values = new Dictionary<string, object?> { ["alias"] = "tasks", ["access"] = "Public", ["source"] = "Tasks", ["keyColumns"] = "id", ["connection"] = "Business" };
+            var definition = DataSourceDefinition.Read(Guid.NewGuid(), "Tasks", key => values.GetValueOrDefault(key), _ => [], errors)!;
+            Assert.Contains(runtime.Validate(definition), error => error.Contains("cannot be read"));
+            // Saving without a connection string cannot keep the old one, and saving with one makes it work again.
+            Assert.Contains("cannot be read", (await Assert.ThrowsAsync<ArgumentException>(() => catalog.SaveAsync(new("Business", "sqlite", null), default))).Message);
+            await catalog.SaveAsync(new("Business", "sqlite", $"Data Source={file};Pooling=False"), default);
+            Assert.Null(Assert.Single(catalog.List(), c => c.Name == "Business").Problem);
+            using var connection = catalog.Openable("Business");
+            Assert.Contains("business.db", connection.ConnectionString);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     private sealed class Environment(string root) : IWebHostEnvironment
     {
         public string ApplicationName { get; set; } = "AppBlocks.Tests";
@@ -257,7 +321,7 @@ public sealed class ConnectionRuntimeTests
 
             // A registration that cannot be built fails its own table list, which the settings endpoint answers with its fixed message.
             await Assert.ThrowsAsync<InvalidOperationException>(() => tables.ListAsync("Broken", default));
-            Assert.Throws<ArgumentException>(() => catalog.Openable("Missing"));
+            Assert.Throws<ConnectionNotRegisteredException>(() => catalog.Openable("Missing"));
             await Assert.ThrowsAsync<ArgumentException>(() => catalog.TestAsync(new("Missing", "sqlite", null), default));
             await Assert.ThrowsAsync<ArgumentException>(() => tables.ListAsync("Missing", default));
         }

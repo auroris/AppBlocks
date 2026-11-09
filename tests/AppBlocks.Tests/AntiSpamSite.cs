@@ -110,6 +110,8 @@ internal sealed class AntiSpamSite : IAsyncDisposable
             ["Umbraco:CMS:Unattended:UnattendedUserPassword"] = password,
         };
         if (realKeys) foreach (var (service, (_, secret, _)) in AntiSpamRealKeys.Passing) settings[$"AppBlocks:AntiSpam:{service}:SecretKey"] = secret;
+        // The published test keys answer with a host name of their own, never this one.
+        if (realKeys) settings["AppBlocks:AntiSpam:VerifyHostname"] = "false";
         builder.Configuration.AddInMemoryCollection(settings);
         builder.Services.Configure<InstallDefaultDataSettings>(Constants.Configuration.NamedOptions.InstallDefaultData.Languages,
             options => { options.InstallData = InstallDefaultDataOption.Values; options.Values = new HashSet<string> { "en" }; });

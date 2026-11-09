@@ -211,6 +211,21 @@ public sealed class CodeCompilationTests : IDisposable
     }
 
     [Fact]
+    public async Task A_file_too_large_is_left_out_with_a_warning_and_the_rest_compile()
+    {
+        await Write("Rules.cs", "namespace Site.Code;\npublic sealed class Rules : AppBlocks.DataSources.IDataSourceHandler { public string Alias => \"orders.rules\"; }\n");
+        await Write("Réservations/Order Form.cs", "namespace Site.Code;\npublic sealed class Bookings : AppBlocks.DataSources.IDataSourceHandler { public string Alias => \"orders.bookings\"; }\n");
+        await Write("Huge.cs", "// " + new string('x', CodeFolder.MaxFileBytes) + "\nclass Huge {}\n");
+        var site = Site();
+        var status = await site.GetRequiredService<CodeCompilation>().CompileAsync("test", default);
+        Assert.True(status.Succeeded);
+        var skipped = Assert.Single(status.Diagnostics, d => d.Id == "AB0100");
+        Assert.Equal(("Huge.cs", CodeDiagnostic.Warning), (skipped.File, skipped.Severity));
+        using (var scope = site.CreateScope())
+            Assert.Equal(["orders.bookings", "orders.rules", "site.rules"], scope.ServiceProvider.GetRequiredService<DataSourceHandlers>().All.Keys.Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
     public async Task A_cancelled_compile_does_not_hide_the_folder_from_the_next_one()
     {
         // Large enough that the compile, not the read, is running when the request goes away.

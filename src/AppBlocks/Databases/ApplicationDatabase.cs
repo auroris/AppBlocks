@@ -65,13 +65,16 @@ public static class ApplicationDatabase
 
     /// <summary>
     /// Ensures a schema on an open connection, once per process per connection string and schema id: creates the
-    /// version table <c>APP_SCHEMA</c> (<c>SCRIPT</c>, <c>HASH</c>, <c>APPLIED_AT</c>) if missing, runs every script of
-    /// the connection's dialect in file-name order, each in its own transaction with its row, then the run-once scripts of
-    /// its <c>migrations</c> folder that have no row yet, then the C# steps. Ensure scripts are idempotent, so every process
-    /// start runs them all; the table records each one's SHA-256 and when the last start applied it. A run-once script or
-    /// step runs once per database, recorded as <c>migrations/&lt;file&gt;</c> or <c>once/&lt;name&gt;</c>; a run-once script
-    /// whose text no longer matches its recorded hash stops the ensure with an <see cref="ApplicationSchemaException"/>
-    /// naming it. Any failure throws <see cref="ApplicationSchemaException"/> naming the script, and the next call tries again.
+    /// version table (<see cref="ApplicationSchema.Table"/>, <c>APP_SCHEMA</c> by default, with <c>SCRIPT</c>, <c>HASH</c> and
+    /// <c>APPLIED_AT</c>) if missing, runs every script of the connection's dialect in file-name order, each in its own transaction
+    /// with its row, then the run-once scripts of its <c>migrations</c> folder that have no row yet, then the C# steps. Ensure
+    /// scripts are idempotent, so every process start runs them all; the table records each one's SHA-256 and when the last start
+    /// applied it. A run-once script or step runs once per database. Every row begins with the schema's <see cref="ApplicationSchema.Name"/>:
+    /// <c>&lt;name&gt;/&lt;file&gt;</c>, <c>&lt;name&gt;/migrations/&lt;file&gt;</c> or <c>&lt;name&gt;/once/&lt;step&gt;</c>, so schemas
+    /// sharing a database keep their own rows. A row written before rows carried the name, such as <c>migrations/&lt;file&gt;</c>, is taken
+    /// over by the first schema that expects it, so an existing database runs nothing again. A run-once script whose text no longer
+    /// matches its recorded hash stops the ensure with an <see cref="ApplicationSchemaException"/> naming it. Any failure throws
+    /// <see cref="ApplicationSchemaException"/> naming the script, and the next call tries again.
     /// </summary>
     public static Task EnsureAsync(DbConnection connection, ApplicationSchema schema, CancellationToken ct = default)
         => EnsureOnceAsync(connection, schema, sync: false, ct);
@@ -123,9 +126,6 @@ public static class ApplicationDatabase
         return !File.Exists(path) && File.Exists(previous) ? previous : path;
     }
 
-    public static string DataFile(IWebHostEnvironment environment, string fileName)
-        => Path.Combine(environment.ContentRootPath, "App_Data", fileName);
-
     private static bool IsEnsured(DbConnection connection, ApplicationSchema schema)
         => Ensured.TryGetValue((connection.ConnectionString, schema.Id), out var memo) && memo.Done;
 
@@ -147,19 +147,21 @@ public static class ApplicationDatabase
             var dialect = Dialect(connection);
             var scripts = schema.Scripts(dialect);
             var migrations = schema.Migrations(dialect);
-            await ExecuteAsync(connection, null, dialect, VersionTable(dialect), sync, ct);
-            foreach (var (name, content) in scripts) await RunAsync(connection, dialect, name, content, sync, ct);
+            var table = schema.Table;
+            await ExecuteAsync(connection, null, dialect, VersionTable(dialect, table), sync, ct);
+            foreach (var (name, content) in scripts) await RunAsync(connection, dialect, table, schema.Name + "/" + name, name, content, sync, ct);
             var applied = migrations.Count > 0 || schema.Steps.Any(step => step.Once is not null)
-                ? await AppliedAsync(connection, dialect, sync, ct) : new Dictionary<string, string>();
+                ? await AppliedAsync(connection, table, sync, ct) : new Dictionary<string, string>();
             var ran = scripts.Count;
             foreach (var (name, content) in migrations)
             {
-                var key = ApplicationSchema.MigrationsFolder + "/" + name;
-                var label = $"run-once script {dialect}/{key}";
+                var legacy = ApplicationSchema.MigrationsFolder + "/" + name;
+                var key = schema.Name + "/" + legacy;
+                var label = $"run-once script {dialect}/{legacy} of schema {schema.Name}";
                 var hash = MigrationHash(content);
-                if (applied.TryGetValue(key, out var recorded)) { Unchanged(label, recorded, hash); continue; }
+                if (await RecordedAsync(connection, dialect, table, applied, key, legacy, hash, sync, ct) is { } recorded) { Unchanged(label, table, recorded, hash); continue; }
                 var statements = Statements(dialect, Text(content)).ToArray();
-                if (await RunOnceAsync(connection, dialect, key, hash, label, async transaction => {
+                if (await RunOnceAsync(connection, dialect, table, key, hash, label, async transaction => {
                         foreach (var statement in statements) await ExecuteAsync(connection, transaction, dialect, statement, sync, ct);
                     }, sync, ct)) ran++;
             }
@@ -167,9 +169,10 @@ public static class ApplicationDatabase
             {
                 if (step.Once is { } once)
                 {
-                    var key = "once/" + step.Name;
-                    if (applied.ContainsKey(key)) continue;
-                    await RunOnceAsync(connection, dialect, key, MigrationHash(Encoding.UTF8.GetBytes(step.Name!)), $"run-once step {step.Name} of schema {schema.Id}",
+                    var legacy = "once/" + step.Name;
+                    var hash = MigrationHash(Encoding.UTF8.GetBytes(step.Name!));
+                    if (await RecordedAsync(connection, dialect, table, applied, schema.Name + "/" + legacy, legacy, hash, sync, ct) is not null) continue;
+                    await RunOnceAsync(connection, dialect, table, schema.Name + "/" + legacy, hash, $"run-once step {step.Name} of schema {schema.Name}",
                         transaction => { once(connection, transaction, dialect); return Task.CompletedTask; }, sync, ct);
                     continue;
                 }
@@ -185,8 +188,11 @@ public static class ApplicationDatabase
         finally { memo.Gate.Release(); }
     }
 
-    /// <summary>One script with its APP_SCHEMA row in one transaction, so a failed script leaves neither.</summary>
-    private static async Task RunAsync(DbConnection connection, string dialect, string name, byte[] content, bool sync, CancellationToken ct)
+    /// <summary>
+    /// One script with its version row <paramref name="key"/> in one transaction, so a failed script leaves neither. The row the
+    /// script had before rows carried the schema's name, its bare file name <paramref name="name"/>, goes with it.
+    /// </summary>
+    private static async Task RunAsync(DbConnection connection, string dialect, string table, string key, string name, byte[] content, bool sync, CancellationToken ct)
     {
         var transaction = sync ? connection.BeginTransaction() : await connection.BeginTransactionAsync(ct);
         try
@@ -197,10 +203,11 @@ public static class ApplicationDatabase
                 catch (SqliteException error) when (error.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase) && AddColumn.IsMatch(statement)) { }
             }
             // Replaced rather than updated, because a row count is not reliable under SQL Server's NOCOUNT.
-            await ExecuteAsync(connection, transaction, dialect, $"DELETE FROM APP_SCHEMA WHERE SCRIPT = {Marker(dialect, "script")}", sync, ct, ("script", name));
+            await ExecuteAsync(connection, transaction, dialect, $"DELETE FROM {table} WHERE SCRIPT IN ({Marker(dialect, "script")}, {Marker(dialect, "legacy")})",
+                sync, ct, ("script", key), ("legacy", name));
             await ExecuteAsync(connection, transaction, dialect,
-                $"INSERT INTO APP_SCHEMA (SCRIPT, HASH, APPLIED_AT) VALUES ({Marker(dialect, "script")}, {Marker(dialect, "hash")}, {Marker(dialect, "at")})",
-                sync, ct, ("script", name), ("hash", Convert.ToHexString(SHA256.HashData(content))), ("at", DateTime.UtcNow));
+                $"INSERT INTO {table} (SCRIPT, HASH, APPLIED_AT) VALUES ({Marker(dialect, "script")}, {Marker(dialect, "hash")}, {Marker(dialect, "at")})",
+                sync, ct, ("script", key), ("hash", Convert.ToHexString(SHA256.HashData(content))), ("at", DateTime.UtcNow));
             if (sync) transaction.Commit(); else await transaction.CommitAsync(ct);
         }
         catch (Exception error) when (error is not OperationCanceledException)
@@ -222,18 +229,18 @@ public static class ApplicationDatabase
     internal static string MigrationHash(byte[] content) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Text(content).Replace("\r\n", "\n"))));
 
     /// <summary>A run-once script that ran under one hash and now has another is not run again, and the ensure stops until someone decides.</summary>
-    private static void Unchanged(string label, string recorded, string hash)
+    private static void Unchanged(string label, string table, string recorded, string hash)
     {
         if (!recorded.Equals(hash, StringComparison.OrdinalIgnoreCase))
             throw new ApplicationSchemaException($"The {label} has changed since it ran (recorded hash {recorded}, now {hash}). A script that ran once is not run again: "
-                + "restore it as it was and put the change in a new script, or, after checking the database by hand, delete its APP_SCHEMA row so it runs again.");
+                + $"restore it as it was and put the change in a new script, or, after checking the database by hand, delete its {table} row so it runs again.");
     }
 
-    /// <summary>The hashes of what <c>APP_SCHEMA</c> records, by script.</summary>
-    private static async Task<Dictionary<string, string>> AppliedAsync(DbConnection connection, string dialect, bool sync, CancellationToken ct)
+    /// <summary>The hashes of what the version table records, by script.</summary>
+    private static async Task<Dictionary<string, string>> AppliedAsync(DbConnection connection, string table, bool sync, CancellationToken ct)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT SCRIPT, HASH FROM APP_SCHEMA";
+        command.CommandText = $"SELECT SCRIPT, HASH FROM {table}";
         var applied = new Dictionary<string, string>(StringComparer.Ordinal);
         using var reader = sync ? command.ExecuteReader() : await command.ExecuteReaderAsync(ct);
         while (sync ? reader.Read() : await reader.ReadAsync(ct)) applied[reader.GetString(0)] = reader.GetString(1);
@@ -241,11 +248,30 @@ public static class ApplicationDatabase
     }
 
     /// <summary>
-    /// Runs something once with its <c>APP_SCHEMA</c> row in one transaction. The row goes in first, so a second process starting at the same
+    /// The hash recorded for <paramref name="key"/>, or null when nothing has run under it. A row written before rows carried the schema's
+    /// name, <paramref name="legacy"/>, with the same hash is renamed to <paramref name="key"/> and counts; one with another hash is left for
+    /// the schema it belongs to and is returned, so the caller stops as for a changed script rather than run something that may have run.
+    /// </summary>
+    private static async Task<string?> RecordedAsync(DbConnection connection, string dialect, string table, Dictionary<string, string> applied,
+        string key, string legacy, string hash, bool sync, CancellationToken ct)
+    {
+        if (applied.TryGetValue(key, out var recorded)) return recorded;
+        if (!applied.TryGetValue(legacy, out var earlier)) return null;
+        if (!earlier.Equals(hash, StringComparison.OrdinalIgnoreCase)) return earlier;
+        // Another process may have renamed it first, which leaves this one renaming nothing.
+        await ExecuteAsync(connection, null, dialect, $"UPDATE {table} SET SCRIPT = {Marker(dialect, "key")} WHERE SCRIPT = {Marker(dialect, "legacy")}",
+            sync, ct, ("key", key), ("legacy", legacy));
+        applied.Remove(legacy);
+        applied[key] = earlier;
+        return earlier;
+    }
+
+    /// <summary>
+    /// Runs something once with its version row in one transaction. The row goes in first, so a second process starting at the same
     /// moment waits on it and then finds it, rather than running the work twice. Oracle commits around DDL, so there the row goes in last,
     /// as only a finished script may leave one. Returns false when another process had already recorded it.
     /// </summary>
-    private static async Task<bool> RunOnceAsync(DbConnection connection, string dialect, string key, string hash, string label,
+    private static async Task<bool> RunOnceAsync(DbConnection connection, string dialect, string table, string key, string hash, string label,
         Func<DbTransaction, Task> work, bool sync, CancellationToken ct)
     {
         var rowFirst = dialect != "oracle";
@@ -254,17 +280,17 @@ public static class ApplicationDatabase
         {
             if (rowFirst)
             {
-                try { await RecordAsync(connection, transaction, dialect, key, hash, sync, ct); }
+                try { await RecordAsync(connection, transaction, dialect, table, key, hash, sync, ct); }
                 catch (DbException) when (!ct.IsCancellationRequested)
                 {
                     // Most likely another process recorded it while this one waited; its row decides.
                     if (sync) transaction.Rollback(); else await transaction.RollbackAsync(ct);
-                    if ((await AppliedAsync(connection, dialect, sync, ct)).TryGetValue(key, out var recorded)) { Unchanged(label, recorded, hash); return false; }
+                    if ((await AppliedAsync(connection, table, sync, ct)).TryGetValue(key, out var recorded)) { Unchanged(label, table, recorded, hash); return false; }
                     throw;
                 }
             }
             await work(transaction);
-            if (!rowFirst) await RecordAsync(connection, transaction, dialect, key, hash, sync, ct);
+            if (!rowFirst) await RecordAsync(connection, transaction, dialect, table, key, hash, sync, ct);
             if (sync) transaction.Commit(); else await transaction.CommitAsync(ct);
             return true;
         }
@@ -278,9 +304,9 @@ public static class ApplicationDatabase
         }
     }
 
-    private static Task<int> RecordAsync(DbConnection connection, DbTransaction transaction, string dialect, string key, string hash, bool sync, CancellationToken ct)
+    private static Task<int> RecordAsync(DbConnection connection, DbTransaction transaction, string dialect, string table, string key, string hash, bool sync, CancellationToken ct)
         => ExecuteAsync(connection, transaction, dialect,
-            $"INSERT INTO APP_SCHEMA (SCRIPT, HASH, APPLIED_AT) VALUES ({Marker(dialect, "script")}, {Marker(dialect, "hash")}, {Marker(dialect, "at")})",
+            $"INSERT INTO {table} (SCRIPT, HASH, APPLIED_AT) VALUES ({Marker(dialect, "script")}, {Marker(dialect, "hash")}, {Marker(dialect, "at")})",
             sync, ct, ("script", key), ("hash", hash), ("at", DateTime.UtcNow));
 
     /// <summary>
@@ -321,12 +347,13 @@ public static class ApplicationDatabase
         if (!string.IsNullOrWhiteSpace(script[start..])) yield return script[start..];
     }
 
-    private static string VersionTable(string dialect) => dialect switch {
-        "sqlite" => "CREATE TABLE IF NOT EXISTS APP_SCHEMA (SCRIPT TEXT NOT NULL PRIMARY KEY, HASH TEXT NOT NULL, APPLIED_AT TEXT NOT NULL)",
-        "sqlserver" => "IF OBJECT_ID(N'APP_SCHEMA', N'U') IS NULL CREATE TABLE APP_SCHEMA (SCRIPT nvarchar(400) NOT NULL PRIMARY KEY, HASH nvarchar(64) NOT NULL, APPLIED_AT datetime2 NOT NULL)",
-        "postgresql" => "CREATE TABLE IF NOT EXISTS APP_SCHEMA (SCRIPT varchar(400) NOT NULL PRIMARY KEY, HASH varchar(64) NOT NULL, APPLIED_AT timestamptz NOT NULL)",
+    /// <summary>The version table's creation; <paramref name="table"/> is a checked identifier (<see cref="ApplicationSchema.RecordIn"/>).</summary>
+    private static string VersionTable(string dialect, string table) => dialect switch {
+        "sqlite" => $"CREATE TABLE IF NOT EXISTS {table} (SCRIPT TEXT NOT NULL PRIMARY KEY, HASH TEXT NOT NULL, APPLIED_AT TEXT NOT NULL)",
+        "sqlserver" => $"IF OBJECT_ID(N'{table}', N'U') IS NULL CREATE TABLE {table} (SCRIPT nvarchar(400) NOT NULL PRIMARY KEY, HASH nvarchar(64) NOT NULL, APPLIED_AT datetime2 NOT NULL)",
+        "postgresql" => $"CREATE TABLE IF NOT EXISTS {table} (SCRIPT varchar(400) NOT NULL PRIMARY KEY, HASH varchar(64) NOT NULL, APPLIED_AT timestamptz NOT NULL)",
         // ORA-00955: the name is already used, which is the table this creates.
-        _ => "BEGIN EXECUTE IMMEDIATE 'CREATE TABLE APP_SCHEMA (SCRIPT VARCHAR2(400) NOT NULL PRIMARY KEY, HASH VARCHAR2(64) NOT NULL, APPLIED_AT TIMESTAMP NOT NULL)'; "
+        _ => $"BEGIN EXECUTE IMMEDIATE 'CREATE TABLE {table} (SCRIPT VARCHAR2(400) NOT NULL PRIMARY KEY, HASH VARCHAR2(64) NOT NULL, APPLIED_AT TIMESTAMP NOT NULL)'; "
             + "EXCEPTION WHEN OTHERS THEN IF SQLCODE != -955 THEN RAISE; END IF; END;",
     };
 
