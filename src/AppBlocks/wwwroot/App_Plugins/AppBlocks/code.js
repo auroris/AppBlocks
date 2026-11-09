@@ -8,6 +8,19 @@ import { request } from "./api.js";
 import { forgetCatalogue } from "../ApplicationBlocks/catalogue.repository.js";
 
 const blank = name => `namespace SiteCode;\n\npublic sealed class ${name}\n{\n}\n`;
+// A blank file's class name from its file name: the name's words joined, each starting with a capital, so "Order Form.cs"
+// declares OrderForm, with an underscore in front when it would start with a digit.
+function className(fileName) {
+    const words = fileName.replace(/\.cs$/, "").split(/[^\p{L}\p{Nd}_]+/u).filter(Boolean);
+    const name = words.map(word => word[0].toUpperCase() + word.slice(1)).join("");
+    return !name ? "NewClass" : /^[\p{L}_]/u.test(name) ? name : `_${name}`;
+}
+// What the server accepts as a new file's path: folders and a file ending in .cs, each name without control characters
+// or \ / : * ? " < > |, not starting with a dot or a space, not ending with a dot or a space, and not a device name such as
+// CON or LPT1. The browser compiles a pattern with the v flag, which wants / and | escaped inside a class.
+const pathCharacter = String.raw`[^\x00-\x1f\\\/:*?"<>\|]`, lastCharacter = String.raw`[^\x00-\x1f\\\/:*?"<>\|. ]`;
+const deviceName = String.raw`(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])`;
+const newFilePattern = String.raw`(?:(?![. ])(?!${deviceName}(?:\.[^\/]*)?\/)${pathCharacter}*${lastCharacter}\/)*(?![. ])(?!${deviceName}\.)${pathCharacter}*\.cs`;
 const accessChoices = [["public", "Public", "Anyone the page admits may read, with or without an account."],
     ["notPublic", "Not public", "Any signed-in Member or backoffice User may read."],
     ["specificGroups", "Specific groups", "Only Members and Users in the read or write groups below may read."]];
@@ -210,10 +223,9 @@ export default class CodeWorkspace extends UmbLitElement {
                 @keydown=${event => { if ((event.ctrlKey || event.metaKey) && event.key === "s") { event.preventDefault(); void this.save(); } }}></umb-code-editor>`;
     }
     renderNew() {
-        const name = (this.newPath ?? "").split("/").at(-1).replace(/\.cs$/, "").replace(/[^A-Za-z0-9_]/g, "") || "NewClass";
         return html`<h2>New file</h2>
-            <h3>Blank file</h3><form @submit=${event => { event.preventDefault(); void this.createFile(this.newPath, blank(/^[A-Za-z_]/.test(name) ? name : "NewClass")); }}>
-                <label for="new-path">Path</label><input id="new-path" type="text" required pattern="[A-Za-z0-9_][A-Za-z0-9_./-]*\\.cs" .value=${this.newPath} @input=${event => this.newPath = event.target.value}>
+            <h3>Blank file</h3><form @submit=${event => { event.preventDefault(); void this.createFile(this.newPath, blank(className((this.newPath ?? "").split("/").at(-1)))); }}>
+                <label for="new-path">Path</label><input id="new-path" type="text" required pattern=${newFilePattern} .value=${this.newPath} @input=${event => this.newPath = event.target.value}>
                 <p>Inside the C# folder, ending in .cs, such as Orders/OrderRules.cs. Folders are made as needed.</p>
                 <div class="actions"><button class="primary" type="submit" ?disabled=${this.busy}>Create blank file</button><button type="button" @click=${() => this.view = this.open ? "file" : "empty"}>Cancel</button></div></form>
             <h3>From a table</h3><p>The wizard writes a form class with full create, read, update and delete for a table, or a backing class for a SQL data source on it, with the access checks you choose.</p>
