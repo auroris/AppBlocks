@@ -39,8 +39,8 @@ public sealed class DataSourceReportBindings(DataSourceRuntime runtime, IDataSou
         var principal = http.HttpContext?.User ?? new ClaimsPrincipal();
         var user = await users.ResolveAsync(principal, ct) ?? DataSourceUser.Anonymous;
         var query = DataSourceReportParameters.From(http.HttpContext);
-        var parameters = new SqlParameters(plan.Dialect);
-        var now = runtime.Now();
+        var parameters = plan.Parameters();
+        var now = runtime.Now(source);
         var app = providers is null ? null : await providers.ResolveAsync(new FormExecutionContext(principal, page, block, source.ComputeFingerprint(), Parameters: query), ct);
         object? Value(BindVariable variable) => DataSourceQueries.Bind(variable, user, query, now, plan.Dialect, app);
         var from = plan.From(parameters, Value);

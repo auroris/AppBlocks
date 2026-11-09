@@ -12,8 +12,7 @@ namespace AppBlocks.Api;
 public enum ApiEndpointShape { Collection, Single }
 
 /// <summary>
-/// A published <c>apiEndpoint</c> node: a route below the base path that serves a SQL data source's rows as JSON, the way an Oracle
-/// APEX RESTful service serves a query. The source is a published data source, or the node's own connection and SQL with its own access.
+/// A published <c>apiEndpoint</c> node: a route below the base path that serves a SQL data source's rows as JSON. The source is a published data source, or the node's own connection and SQL with its own access.
 /// </summary>
 /// <param name="PicksSource">Whether <paramref name="Source"/> is a published data source the node selects, rather than its own SQL.</param>
 /// <param name="Order">Columns of the row source to sort by, as the schema spells them.</param>

@@ -130,17 +130,17 @@ public sealed class TabularBlockTests
         Assert.Empty(validator.Validate(Form(("ownerResource", "orders"), ("ownerKey", ":FIELD.customer"))));
 
         // On its own the block must name its owner, on a website page and at an application page's top level.
-        Assert.Contains(validator.ValidateWebsite(Standalone()), e => e == "Place the Tabular form block inside a form, or select the resource that owns the rows.");
         Assert.Contains(validator.Validate(Standalone()), e => e == "Place the Tabular form block inside a form, or select the resource that owns the rows.");
-        Assert.Contains(validator.ValidateWebsite(Standalone(("ownerResource", "orders"), ("ownerKey", ":FIELD.orderId"))),
+        Assert.Contains(validator.Validate(Standalone()), e => e == "Place the Tabular form block inside a form, or select the resource that owns the rows.");
+        Assert.Contains(validator.Validate(Standalone(("ownerResource", "orders"), ("ownerKey", ":FIELD.orderId"))),
             e => e == "A Tabular form block outside a form has no record to take :FIELD values from; use :PARAM.name or place it in a form.");
-        Assert.Empty(validator.ValidateWebsite(Standalone(("ownerResource", "orders"), ("ownerKey", ":PARAM.id"))));
+        Assert.Empty(validator.Validate(Standalone(("ownerResource", "orders"), ("ownerKey", ":PARAM.id"))));
         Assert.Empty(validator.Validate(Standalone(("ownerResource", "orders"), ("ownerKey", ":PARAM.id"))));
 
         // The rules moved out of the Attachments check unchanged.
         var attachments = BlockPages.Empty();
         BlockPages.Layout(attachments).Add(BlockPages.Add(attachments, AppBlockSchema.AttachmentsAlias, ("heading", "Files")));
-        Assert.Contains(validator.ValidateWebsite(attachments.ToJsonString()), e => e == "Place the Attachments block inside a form, or select the resource that owns the files.");
+        Assert.Contains(validator.Validate(attachments.ToJsonString()), e => e == "Place the Attachments block inside a form, or select the resource that owns the files.");
     }
 
     [Fact]

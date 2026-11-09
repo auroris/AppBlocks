@@ -24,7 +24,7 @@ public static class AppBlockSchema
     /// </summary>
     public static readonly string[] ColumnLayoutAliases = ["appFullWidth", "appColumns", "appThreeColumns"];
 
-    /// <summary>APEX's region: an optional title bar over one area. It is content to a column layout, not a layout.</summary>
+    /// <summary>A region: an optional title bar over one area. It is content to a column layout, not a layout.</summary>
     public const string RegionAlias = "appRegion";
 
     /// <summary>Blocks that only arrange other blocks, so a form or a validator can pass over them to their contents.</summary>

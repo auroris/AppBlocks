@@ -22,7 +22,8 @@ namespace AppBlocks.Blocks;
 public sealed class AppBlocksValidator(FormResourceRegistry resources, PublishedDataCatalog? definitions = null, IContentService? contents = null,
     IOptions<AttachmentSettings>? attachments = null, ScheduleSources? schedules = null,
     IContentTypeService? contentTypes = null, IEnumerable<IAppBlockPlugin>? plugins = null, AntiSpamGate? antiSpam = null,
-    DataSources.BindVariableProviders? providers = null) : INotificationAsyncHandler<ContentPublishingNotification>
+    DataSources.BindVariableProviders? providers = null, IOptions<TabularOptions>? tabular = null, IOptions<ScheduleOptions>? scheduleOptions = null)
+    : INotificationAsyncHandler<ContentPublishingNotification>
 {
     private static readonly string[] Aliases = ["appForm", "appFormInterface", "appFieldset", "appActions", AppBlockSchema.AttachmentsAlias, AppBlockSchema.AntiSpamAlias,
         AppBlockSchema.ScheduleAlias, AppBlockSchema.TabularAlias, ..AppBlockSchema.LayoutAliases, ..AppBlockSchema.ContentAliases, ..AppBlockSchema.FieldAliases];
@@ -63,12 +64,6 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
 
     /// <summary>The errors publishing would report for one block value, as JSON; blank is an empty value and has none.</summary>
     public IReadOnlyList<string> Validate(string? json) => Validate(json, null);
-
-    /// <summary>The same as <see cref="Validate(string?)"/>, kept for callers written when the validator had modes.</summary>
-    public IReadOnlyList<string> ValidateWebsite(string? json) => Validate(json, null);
-
-    /// <inheritdoc cref="ValidateWebsite"/>
-    public IReadOnlyList<string> ValidateEmbedded(string? json) => Validate(json, null);
 
     /// <summary>The errors for one block value, and its warnings into <paramref name="warnings"/>.</summary>
     public IReadOnlyList<string> Validate(string? json, List<string>? warnings)
@@ -259,10 +254,11 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
     private void Tabular(BlockItemData block, IFormResource? form, List<string> errors)
     {
         Owner(block, form, TabularOwner, TabularBlock.OwnerResourceAlias, TabularBlock.OwnerKeyAlias, errors);
+        var maxRows = tabular?.Value.MaxRows ?? TabularBlock.MaxRowsLimit;
         if (Text(block, TabularBlock.MaxRowsAlias) is { Length: > 0 } rows
-            && (!int.TryParse(rows, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var limit) || limit < 1 || limit > TabularBlock.MaxRowsLimit))
-            errors.Add($"The tabular form's row limit must be a whole number from 1 to {TabularBlock.MaxRowsLimit}.");
-        var settings = TabularBlock.Read(alias => Text(block, alias));
+            && (!int.TryParse(rows, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var limit) || limit < 1 || limit > maxRows))
+            errors.Add($"The tabular form's row limit must be a whole number from 1 to {maxRows}.");
+        var settings = TabularBlock.Read(alias => Text(block, alias), maxRows);
         if (settings.DataSource.Length == 0) { errors.Add("Select a published data source for the tabular form."); return; }
         var resource = resources.Find(settings.DataSource);
         if (resource is null && definitions is null) return;
@@ -294,7 +290,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
     private void Schedule(BlockItemData block, List<string> errors)
     {
         var settings = ScheduleSettings.Read(alias => Text(block, alias));
-        errors.AddRange(ScheduleValidation.Validate(settings, schedules is null || definitions is null ? null : schedules.Schema, Text(block, ScheduleSettings.ColumnsAlias)));
+        errors.AddRange(ScheduleValidation.Validate(settings, schedules is null || definitions is null ? null : schedules.Schema, Text(block, ScheduleSettings.ColumnsAlias), scheduleOptions?.Value));
     }
 
     public static bool Compatible(string alias, FormField field, bool hasListOfValues = false) => alias == "appDisplay" || alias switch {

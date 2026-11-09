@@ -41,7 +41,7 @@ public sealed class FormClassTests
     {
         var validator = new AppBlocksValidator(new FormResourceRegistry([new Resource("orders")], []));
         var legacy = Form("orders").Replace("Umbraco.SingleBlock", "Umbraco.BlockList", StringComparison.Ordinal);
-        Assert.Contains("Recreate the Form Interface using the Single Block editor.", validator.ValidateEmbedded(legacy));
+        Assert.Contains("Recreate the Form Interface using the Single Block editor.", validator.Validate(legacy));
     }
 
     [Fact]

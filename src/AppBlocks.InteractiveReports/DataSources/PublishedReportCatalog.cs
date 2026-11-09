@@ -105,7 +105,7 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
             else
             {
                 report.Connection = source.Connection;
-                var parameters = new SqlParameters(plan.Dialect);
+                var parameters = plan.Parameters();
                 report.Sql = plan.Dialect.Select(plan.From(parameters, _ => null), plan.Columns.Select(c => c.Column), [],
                     "{{RowRestriction}}" + (plan.Restriction is null ? "" : " AND (" + plan.Restriction.Render(parameters, _ => null) + ")"));
                 report.ContextParams = parameters.Bindings.ToDictionary(p => p.Name, _ => new ContextParamSpec { Claim = "appblocks-preview" });

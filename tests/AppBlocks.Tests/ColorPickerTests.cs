@@ -43,10 +43,10 @@ public sealed class ColorPickerTests
             formKey = Guid.Parse(form["contentKey"]!.GetValue<string>());
             BlockPages.Layout(blocks).Add(form);
             var validator = ActivatorUtilities.CreateInstance<AppBlocksValidator>(scope.ServiceProvider);
-            Assert.Empty(validator.ValidateEmbedded(blocks.ToJsonString()));
+            Assert.Empty(validator.Validate(blocks.ToJsonString()));
             var outside = BlockPages.Empty();
             BlockPages.Layout(outside).Add(BlockPages.Add(outside, AppBlockSchema.ColorAlias, ("field", "optional")));
-            Assert.Contains(validator.ValidateEmbedded(outside.ToJsonString()), error => error.Contains("inside a form"));
+            Assert.Contains(validator.Validate(outside.ToJsonString()), error => error.Contains("inside a form"));
             var page = contents.Create("Colors", contents.GetById(BlockSite.FormPageKey)!.ParentId, BlockSite.PageAlias);
             page.SetValue(BlockSite.BodyAlias, blocks.ToJsonString());
 #pragma warning disable CS0618

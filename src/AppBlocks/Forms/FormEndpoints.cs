@@ -278,7 +278,7 @@ public static class FormEndpoints
             if (detail is null) return (null, Results.BadRequest());
             if (details.Any(d => d.Key == detail.Block)) return (null, DetailRefusal(detail.Block, 422, "The rows of a block are sent once."));
             if (blocks.FirstOrDefault(b => b.ContentKey == detail.Block) is not { } item) return (null, DetailRefusal(detail.Block, 422, "This form has no such Tabular form block."));
-            var block = TabularBlock.Read(item.Content);
+            var block = TabularBlock.Read(item.Content, http.RequestServices.GetService<IOptions<TabularOptions>>()?.Value.MaxRows ?? TabularBlock.MaxRowsLimit);
             if (!block.OwnedByForm) return (null, DetailRefusal(detail.Block, 422, "This Tabular form block names its own owner, so its rows save on their own."));
             if (await resources.FindAsync(block.DataSource) is not SqlDataSource source || block.LinkField.Length == 0)
                 return (null, DetailRefusal(detail.Block, 422, $"The data source {block.DataSource} is not a published data source."));

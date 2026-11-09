@@ -77,7 +77,7 @@ public sealed class ShuttleTests
             BlockPages.Layout(blocks).Add(form);
             var validator = ActivatorUtilities.CreateInstance<AppBlocksValidator>(scope.ServiceProvider);
             await validator.LoadAsync();
-            Assert.Empty(validator.ValidateEmbedded(blocks.ToJsonString()));
+            Assert.Empty(validator.Validate(blocks.ToJsonString()));
             var page = contents.Create("Shuttle", parent, BlockSite.PageAlias);
             page.SetValue(BlockSite.BodyAlias, blocks.ToJsonString());
             Assert.True(contents.Save(page).Success);

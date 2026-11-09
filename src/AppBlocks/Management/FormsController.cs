@@ -14,7 +14,6 @@ namespace AppBlocks.Management;
 [Authorize(Policy = AppBlocksAuthorization.AdministratorPolicy)]
 public sealed class FormsController(FormInventory inventory) : ManagementApiControllerBase
 {
-    // TODO(merge): FormInventory.ReadAsync comes with fix/forms (316dd25); this does not compile on fix/setup alone.
     [HttpGet]
     public async Task<IActionResult> List()
     {

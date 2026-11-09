@@ -173,9 +173,7 @@ public sealed class AppReportDefinitionStore(
         var forms = new List<FormDefinition>();
         foreach (var block in AppBlockContent.Flatten(AppBlockContent.Blocks(formPage, culture), culture).Where(b => b.Content.ContentType.Alias == "appForm"))
         {
-            // TODO(merge): pass plugins as ResolveAsync's last argument (formResources, dataCatalog, culture, plugins) once the core takes it.
-            _ = plugins;
-            if (await FormDefinition.ResolveAsync(formPage, block.ContentKey, formResources, dataCatalog, culture) is { } form) forms.Add(form);
+            if (await FormDefinition.ResolveAsync(formPage, block.ContentKey, formResources, dataCatalog, culture, plugins) is { } form) forms.Add(form);
         }
         if (forms.Count == 0) return true;
         // The form page refuses this caller altogether, as its Public Access does someone not signed in.

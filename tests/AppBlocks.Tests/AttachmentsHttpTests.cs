@@ -219,8 +219,8 @@ public sealed class AttachmentsHttpTests
         using var scope = site.CreateScope();
         var contents = scope.ServiceProvider.GetRequiredService<IContentService>();
 #pragma warning disable CS0618
-        var page = contents.Create(name, contents.GetById(BlockSite.FormPageKey)!.ParentId, AppBlockSchema.PageAlias);
-        page.SetValue(AppBlockSchema.BodyAlias, blocks.ToJsonString());
+        var page = contents.Create(name, contents.GetById(BlockSite.FormPageKey)!.ParentId, BlockSite.PageAlias);
+        page.SetValue(BlockSite.BodyAlias, blocks.ToJsonString());
         Assert.True(contents.Save(page).Success);
         var published = contents.Publish(page, ["*"]);
 #pragma warning restore CS0618

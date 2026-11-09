@@ -319,35 +319,35 @@ public sealed class AntiSpamTests
     public void Publishing_takes_the_block_inside_a_form_and_nowhere_else()
     {
         var validator = Validator();
-        Assert.Empty(validator.ValidateWebsite(FormWith([("service", "honeypot")]).Json));
         Assert.Empty(validator.Validate(FormWith([("service", "honeypot")]).Json));
-        Assert.Empty(validator.ValidateEmbedded(FormWith([("service", "turnstile"), ("siteKey", "public-key"), ("scoreThreshold", "0.7"), ("theme", "dark"), ("size", "compact")]).Json));
+        Assert.Empty(validator.Validate(FormWith([("service", "honeypot")]).Json));
+        Assert.Empty(validator.Validate(FormWith([("service", "turnstile"), ("siteKey", "public-key"), ("scoreThreshold", "0.7"), ("theme", "dark"), ("size", "compact")]).Json));
 
         // Inside a fieldset inside the form is still inside the form.
         var nested = BlockPages.ContentBlocksForm();
         var fieldset = BlockPages.Wrap(nested, "appFieldset", [BlockPages.Add(nested, AppBlockSchema.AntiSpamAlias, ("service", "honeypot"))]);
         BlockPages.Layout(nested)[0]!["areas"]![0]!["items"]!.AsArray().Add(fieldset);
-        Assert.Empty(validator.ValidateWebsite(nested.ToJsonString()));
+        Assert.Empty(validator.Validate(nested.ToJsonString()));
 
         // Outside one it is refused, wherever it was left.
         var page = BlockPages.Empty();
         BlockPages.Layout(page).Add(BlockPages.Add(page, AppBlockSchema.AntiSpamAlias, ("service", "honeypot")));
-        Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.ValidateWebsite(page.ToJsonString()));
-        Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.ValidateEmbedded(page.ToJsonString()));
+        Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.Validate(page.ToJsonString()));
+        Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.Validate(page.ToJsonString()));
         Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.Validate(page.ToJsonString()));
         page = BlockPages.Empty();
         BlockPages.Layout(page).Add(BlockPages.Wrap(page, AppBlockSchema.RegionAlias, [BlockPages.Add(page, AppBlockSchema.AntiSpamAlias, ("service", "honeypot"))]));
-        Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.ValidateWebsite(page.ToJsonString()));
+        Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.Validate(page.ToJsonString()));
     }
 
     [Fact]
     public void Publishing_refuses_a_block_set_up_wrongly()
     {
         var validator = Validator();
-        Assert.Contains("Use one Anti-spam block per form.", validator.ValidateWebsite(FormWith([("service", "honeypot")], [("service", "honeypot")]).Json));
-        Assert.Contains("Choose a service for the Anti-spam block.", validator.ValidateWebsite(FormWith([("theme", "dark")]).Json));
-        Assert.Contains(validator.ValidateWebsite(FormWith([("service", "recaptchaV3"), ("scoreThreshold", "1.5")]).Json), error => error.Contains("score threshold"));
-        Assert.Contains(validator.ValidateWebsite(FormWith([("service", "turnstile"), ("siteKey", "not a key\"")]).Json), error => error.Contains("site key holds"));
+        Assert.Contains("Use one Anti-spam block per form.", validator.Validate(FormWith([("service", "honeypot")], [("service", "honeypot")]).Json));
+        Assert.Contains("Choose a service for the Anti-spam block.", validator.Validate(FormWith([("theme", "dark")]).Json));
+        Assert.Contains(validator.Validate(FormWith([("service", "recaptchaV3"), ("scoreThreshold", "1.5")]).Json), error => error.Contains("score threshold"));
+        Assert.Contains(validator.Validate(FormWith([("service", "turnstile"), ("siteKey", "not a key\"")]).Json), error => error.Contains("site key holds"));
     }
 
     private static string Config(string path)

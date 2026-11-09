@@ -125,7 +125,7 @@ public sealed class ReportAdministrationSiteTests
 
     // Refused at the second request until the core fix in AppPageAuthorizationHandler (AppBlocks/Blocks/AppPageAccess.cs) merges: it
     // compared only the primary identity, so the backoffice-only principal of /umbraco/reports failed once a Member cookie was there too.
-    [Fact(Skip = "Waits for the core fix in AppPageAuthorizationHandler (review A2); remove this Skip when the core branch merges.")]
+    [Fact]
     public async Task An_administrator_signed_in_as_a_member_too_opens_a_report_block_through_the_backoffice_route()
     {
         await using var site = await PublicSite.StartAsync();
