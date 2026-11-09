@@ -5,13 +5,14 @@ import { UMB_PROPERTY_DATASET_CONTEXT } from "@umbraco-cms/backoffice/property";
 import { UmbMediaDetailRepository } from "@umbraco-cms/backoffice/media";
 import { escape, json, values, note, renderAppBlock } from "./preview-model.js";
 import { appBlockTypes } from "./block-types.js";
+import { pathBase } from "./data-api.js";
 import "@umbraco-cms/backoffice/block-grid";
 import { UMB_BLOCK_LIST } from "@umbraco-cms/backoffice/block-list";
 import { UMB_BLOCK_SINGLE } from "@umbraco-cms/backoffice/block-single";
 import "@umbraco-cms/backoffice/ufm";
 
-// The site root under any path base: this module lives at <root>/App_Plugins/ApplicationBlocks/.
-const siteRoot = new URL("../../", import.meta.url);
+// The site root under any path base.
+const siteRoot = new URL(`${pathBase}/`, import.meta.url);
 // Stylesheet URLs loaded into every preview, in order. A site's appEntryPoint adds its frontend stylesheet here
 // once at backoffice startup, so previews look like the page.
 export const previewStylesheets = [new URL("runtime.css", import.meta.url).pathname];

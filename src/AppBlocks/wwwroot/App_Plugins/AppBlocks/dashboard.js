@@ -2,7 +2,7 @@ import { UmbLitElement } from "@umbraco-cms/backoffice/lit-element";
 import { html, css } from "@umbraco-cms/backoffice/external/lit";
 import { UMB_AUTH_CONTEXT } from "@umbraco-cms/backoffice/auth";
 import "@umbraco-cms/backoffice/components";
-import { request, download, pathBase } from "./api.js";
+import { request, download, backofficePath } from "./api.js";
 import "./business-rules.js";
 
 const featureStates = { ready: "Ready", automatic: "Created on first use", action: "Needs setup", unsupported: "Not supported here", unreachable: "Cannot connect", siteManaged: "Managed by the site" };
@@ -48,7 +48,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
         this.consumeContext(UMB_AUTH_CONTEXT, auth => { if (auth) { this.auth = auth; this.load(); } });
     }
     set manifest(value) { this.tab = value.meta.pathname; if (this.auth) this.load(); }
-    viewUrl(tab) { return `${pathBase}/umbraco/section/settings/workspace/appblocks/view/${tab}`; }
+    viewUrl(tab) { return `${backofficePath}/section/settings/workspace/appblocks/view/${tab}`; }
     async load() {
         this.error = undefined; this.loading = true;
         try {
@@ -139,7 +139,7 @@ export default class AppBlocksDashboard extends UmbLitElement {
     }
     renderForms() {
         if (this.sample) return html`<uui-box class="panel" aria-label="Sample C#"><div class="toolbar"><div><p class="eyebrow">Sample code</p><h2>${this.selectedForm?.name}</h2></div><button @click=${() => this.sample = undefined}>Back to forms</button></div>
-            <p>A SQLite example using this form’s writable fields. It includes a sample table, a parameterized read and a save that compares a checksum of the row's values to refuse a stale change. AppBlocks does not execute this code. To have a working form class written for one of your own tables, use the wizard in <a href=${`${pathBase}/umbraco/section/settings/workspace/appblocks-code`}>Settings → AppBlocks → Backing Classes</a>, on a development site.</p>
+            <p>A SQLite example using this form’s writable fields. It includes a sample table, a parameterized read and a save that compares a checksum of the row's values to refuse a stale change. AppBlocks does not execute this code. To have a working form class written for one of your own tables, use the wizard in <a href=${`${backofficePath}/section/settings/workspace/appblocks-code`}>Settings → AppBlocks → Backing Classes</a>, on a development site.</p>
             <div class="actions"><button class="primary" @click=${() => download(this.sample, "SampleFormRepository.cs")}>Download sample C#</button><a href=${this.viewUrl("business-rules")}>Read business rules</a></div><pre tabindex="0"><code>${this.sample}</code></pre></uui-box>`;
         const found = this.forms.filter(f => `${f.name} ${f.pageName} ${f.resource}`.toLowerCase().includes(this.search.toLowerCase()));
         return html`<uui-box class="panel"><div class="toolbar"><div><h2>Forms on this site</h2><p>Saved forms, including drafts and language variants.</p></div><input class="search" type="search" aria-label="Find a form" placeholder="Find a form…" .value=${this.search} @input=${event => this.search = event.target.value}></div>
