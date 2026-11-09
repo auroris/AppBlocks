@@ -10,7 +10,7 @@ internal sealed class AttachmentDatabaseSetup(ConnectionCatalog connections, IAp
 {
     private const string Title = "File uploads";
     private const string Lost = "Without them, Attachments blocks show a notice instead of files, and nothing can be uploaded. Forms keep working.";
-    private const string OtherDatabases = "File uploads run on SQLite and SQL Server only. Set Attachments:Connection in the site's configuration to AttachmentsDb, or to another SQLite or SQL Server connection. See the separate upload store in the AppBlocks README.";
+    private const string OtherDatabases = "File uploads need identity columns, which Oracle has from 12c. Set Attachments:Connection in the site's configuration to AttachmentsDb, or to a SQLite, SQL Server, PostgreSQL or Oracle 12c connection. See the separate upload store in the AppBlocks README.";
 
     public string Alias => "uploads";
 
@@ -60,8 +60,8 @@ internal sealed class AttachmentDatabaseSetup(ConnectionCatalog connections, IAp
         return await DatabaseInspector.InspectAsync(connection, [], false, ct);
     }
 
-    /// <summary>The databases the upload store has scripts for.</summary>
-    private static bool Supported(DatabaseDialect kind) => kind is DatabaseDialect.Sqlite or DatabaseDialect.SqlServer;
+    /// <summary>The databases the upload store has scripts for: all but Oracle 11.2, which has no identity columns.</summary>
+    private static bool Supported(DatabaseDialect kind) => kind is not DatabaseDialect.Oracle11g;
 
     /// <summary>A connection the catalog knows, or one only the report builder has, which ensures nothing either way.</summary>
     private DbConnection Inspectable(string name)

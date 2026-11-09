@@ -25,9 +25,9 @@ public sealed record ScheduleSettings(string? Heading, string? Help, string Rows
         DaysBeforeAlias = "daysBefore", DaysAfterAlias = "daysAfter", ColumnsAlias = "columns", LinkTemplateAlias = "linkTemplate", HideEmptyRowsAlias = "hideEmptyRows";
     public const string DaysOption = "Days", HoursOption = "Hours";
     public const int DefaultDaysBefore = 7, DefaultDaysAfter = 14;
-    /// <summary>The most days a window spans, whatever the address or the settings ask for.</summary>
+    /// <summary>The default of <see cref="ScheduleOptions.MaxDays"/>, the most days a window spans.</summary>
     public const int MaxDays = 400;
-    /// <summary>The most days a window of hour columns spans: a month is 744 columns.</summary>
+    /// <summary>The default of <see cref="ScheduleOptions.MaxHourDays"/>, the most days a window of hour columns spans.</summary>
     public const int MaxHourDays = 31;
 
     /// <summary>The columns a rows source must have, in any letter case, by column name or by field alias.</summary>
@@ -93,19 +93,21 @@ public sealed record ScheduleWindow(DateOnly From, DateOnly To, ScheduleScale Sc
     /// Resolves the window for a request. A parameter that is not a date is ignored; an end before the start becomes the
     /// start; a window longer than the scale allows is cut at its end, so an address can never ask for an unbounded table.
     /// </summary>
-    public static ScheduleWindow Resolve(ScheduleSettings settings, IReadOnlyDictionary<string, string>? parameters, DateTime now)
+    public static ScheduleWindow Resolve(ScheduleSettings settings, IReadOnlyDictionary<string, string>? parameters, DateTime now, ScheduleOptions? options = null)
     {
         var today = DateOnly.FromDateTime(now);
-        var from = ParseDate(parameters?.GetValueOrDefault(FromParameter)) ?? today.AddDays(-Math.Clamp(settings.DaysBefore, 0, ScheduleSettings.MaxDays));
-        var to = ParseDate(parameters?.GetValueOrDefault(ToParameter)) ?? today.AddDays(Math.Clamp(settings.DaysAfter, 0, ScheduleSettings.MaxDays));
-        return Bounded(from, to, settings.Scale, now);
+        var maxDays = Math.Max(1, (options ?? ScheduleOptions.Default).MaxDays);
+        var from = ParseDate(parameters?.GetValueOrDefault(FromParameter)) ?? today.AddDays(-Math.Clamp(settings.DaysBefore, 0, maxDays));
+        var to = ParseDate(parameters?.GetValueOrDefault(ToParameter)) ?? today.AddDays(Math.Clamp(settings.DaysAfter, 0, maxDays));
+        return Bounded(from, to, settings.Scale, now, options);
     }
 
     /// <summary>A window over the dates given, with the end pulled back to the start and to the scale's limit as <see cref="Resolve"/> does.</summary>
-    public static ScheduleWindow Bounded(DateOnly from, DateOnly to, ScheduleScale scale, DateTime now)
+    public static ScheduleWindow Bounded(DateOnly from, DateOnly to, ScheduleScale scale, DateTime now, ScheduleOptions? options = null)
     {
         if (to < from) to = from;
-        var limit = scale == ScheduleScale.Hours ? ScheduleSettings.MaxHourDays : ScheduleSettings.MaxDays;
+        options ??= ScheduleOptions.Default;
+        var limit = Math.Max(1, scale == ScheduleScale.Hours ? options.MaxHourDays : options.MaxDays);
         if (to.DayNumber - from.DayNumber + 1 > limit) to = from.AddDays(limit - 1);
         return new(from, to, scale, now);
     }
@@ -142,29 +144,32 @@ public sealed record ScheduleWindow(DateOnly From, DateOnly To, ScheduleScale Sc
     public bool SameDates(ScheduleWindow other) => From == other.From && To == other.To;
 
     /// <summary>Whole calendar months a reader can jump to: this month and the ones after it, <paramref name="count"/> in all.</summary>
-    public IEnumerable<ScheduleWindow> Months(int count)
+    public IEnumerable<ScheduleWindow> Months(int count, ScheduleOptions? options = null)
     {
         var first = new DateOnly(Now.Year, Now.Month, 1);
         for (var i = 0; i < count; i++)
         {
             var from = first.AddMonths(i);
-            yield return Bounded(from, from.AddMonths(1).AddDays(-1), Scale, Now);
+            yield return Bounded(from, from.AddMonths(1).AddDays(-1), Scale, Now, options);
         }
     }
 
     /// <summary>Whole calendar quarters a reader can jump to: this quarter and the ones after it, <paramref name="count"/> in all.</summary>
-    public IEnumerable<ScheduleWindow> Quarters(int count)
+    public IEnumerable<ScheduleWindow> Quarters(int count, ScheduleOptions? options = null)
     {
         var first = new DateOnly(Now.Year, (Now.Month - 1) / 3 * 3 + 1, 1);
         for (var i = 0; i < count; i++)
         {
             var from = first.AddMonths(3 * i);
-            yield return Bounded(from, from.AddMonths(3).AddDays(-1), Scale, Now);
+            yield return Bounded(from, from.AddMonths(3).AddDays(-1), Scale, Now, options);
         }
     }
 
     /// <summary>The quarter a window starts in, as <c>Q4 2026</c>.</summary>
-    public string QuarterName => $"Q{(From.Month - 1) / 3 + 1} {From.Year}";
+    public string QuarterName => $"Q{Quarter} {From.Year}";
+
+    /// <summary>The number of the quarter a window starts in, from 1 to 4.</summary>
+    public int Quarter => (From.Month - 1) / 3 + 1;
 
     /// <summary>
     /// The page's parameters with <c>from</c> and <c>to</c> filled in from the resolved window, so a source's

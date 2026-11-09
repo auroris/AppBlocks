@@ -313,6 +313,8 @@ public sealed class DatabaseSetupTests
     [Theory]
     [InlineData("sqlite")]
     [InlineData("sqlserver")]
+    [InlineData("postgresql")]
+    [InlineData("oracle")]
     public void The_script_is_the_installed_schema_file_itself(string dialect)
     {
         var script = ApplicationDatabase.Script(AttachmentStore.Schema, dialect);
@@ -322,36 +324,46 @@ public sealed class DatabaseSetupTests
     }
 
     [Fact]
-    public async Task A_postgres_upload_store_gets_a_notice_and_never_a_connection_or_a_table()
+    public void The_store_sql_is_rewritten_for_postgres_and_oracle_as_their_scripts_name_things()
+    {
+        const string sql = "WITH chain (ROOT_ID) AS (SELECT a.SIZE FROM APP_ATTACHMENT a JOIN APP_ATTACHMENT_LINK l ON l.ATTACHMENT_ID = a.ATTACHMENT_ID WHERE l.OWNER_KEY = @key AND a.SIZE > @size)";
+        Assert.Equal(sql, AttachmentStore.Sql(DatabaseDialect.Sqlite, sql));
+        Assert.Equal(sql, AttachmentStore.Sql(DatabaseDialect.SqlServer, sql));
+        Assert.Equal("WITH RECURSIVE chain (ROOT_ID) AS (SELECT a.SIZE FROM \"APP_ATTACHMENT\" a JOIN \"APP_ATTACHMENT_LINK\" l ON l.ATTACHMENT_ID = a.ATTACHMENT_ID WHERE l.OWNER_KEY = @key AND a.SIZE > @size)",
+            AttachmentStore.Sql(DatabaseDialect.Postgres, sql));
+        Assert.Equal("WITH chain (ROOT_ID) AS (SELECT a.\"SIZE\" FROM APP_ATTACHMENT a JOIN APP_ATTACHMENT_LINK l ON l.ATTACHMENT_ID = a.ATTACHMENT_ID WHERE l.OWNER_KEY = :key AND a.\"SIZE\" > :size)",
+            AttachmentStore.Sql(DatabaseDialect.Oracle, sql));
+        // The scripts create what the rewritten SQL names.
+        Assert.Contains("CREATE TABLE IF NOT EXISTS \"APP_ATTACHMENT_LINK\"", ApplicationDatabase.Script(AttachmentStore.Schema, "postgresql"));
+        Assert.Contains("\"SIZE\"", ApplicationDatabase.Script(AttachmentStore.Schema, "oracle"));
+    }
+
+    [Fact]
+    public async Task A_postgres_upload_store_that_does_not_open_is_unreachable_and_never_shows_its_secret()
     {
         const string secret = "Host=127.0.0.1;Port=1;Database=nothing;Username=someone;Password=never-shown";
         var site = Site(secret, connection => new NpgsqlConnection(connection));
 
         var error = await Assert.ThrowsAsync<AttachmentStoreException>(() => site.Store().ListAsync(Order, default));
-        Assert.Equal(AttachmentStoreProblem.Unsupported, error.Problem);
-        Assert.True(error.NeedsSetup);
-        Assert.Contains("SQLite or SQL Server", Assert.Single(site.Logs.Entries, entry => entry.Level == LogLevel.Warning).Message);
+        Assert.Equal(AttachmentStoreProblem.Unavailable, error.Problem);
+        Assert.False(error.NeedsSetup);
 
         var status = await site.Setup().StatusAsync(default);
-        Assert.Equal(DatabaseFeatureState.Unsupported, status.State);
+        Assert.Equal(DatabaseFeatureState.Unreachable, status.State);
         Assert.Equal("postgres", status.Provider);
-        Assert.Contains("Attachments:Connection", status.Summary);
-        Assert.False(status.HasScript);
-        Assert.Null(status.GrantSql);
-        Assert.Null(await site.Setup().ScriptAsync(default));
         Assert.DoesNotContain("never-shown", System.Text.Json.JsonSerializer.Serialize(status));
     }
 
     [Fact]
-    public async Task An_oracle_upload_store_gets_the_same_notice_where_its_driver_is_present()
+    public async Task An_oracle_upload_store_is_tried_like_any_other_where_its_driver_is_present()
     {
         DbConnection oracle;
         try { oracle = DatabaseDrivers.Oracle.Create("Data Source=nowhere;User Id=someone;Password=never-shown"); }
         catch (DatabaseDrivers.MissingDriverException) { Assert.Skip("The Oracle driver is not beside this test run."); throw; }
         await oracle.DisposeAsync();
         var site = Site("Data Source=nowhere;User Id=someone;Password=never-shown", DatabaseDrivers.Oracle.Create);
-        Assert.Equal(AttachmentStoreProblem.Unsupported, (await Assert.ThrowsAsync<AttachmentStoreException>(() => site.Store().ListAsync(Order, default))).Problem);
-        Assert.Equal(DatabaseFeatureState.Unsupported, (await site.Setup().StatusAsync(default)).State);
+        Assert.Equal(AttachmentStoreProblem.Unavailable, (await Assert.ThrowsAsync<AttachmentStoreException>(() => site.Store().ListAsync(Order, default))).Problem);
+        Assert.NotEqual(DatabaseFeatureState.Unsupported, (await site.Setup().StatusAsync(default)).State);
     }
 
     [Fact]

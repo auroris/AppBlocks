@@ -2,10 +2,10 @@ namespace AppBlocks.Schedules;
 
 /// <summary>
 /// Packs the bars of one row into sub-rows, called lanes, so bars that overlap in time stay individually visible:
-/// each bar takes the first lane in which none of its columns is used yet. It is the rule the activity schedule's
-/// <c>renderHorizontalCategories</c> applies through <c>isCellUsed</c> and <c>mergeCells</c>, without the table.
-/// Columns are inclusive indexes, so a bar that ends in the column where the next one begins shares that column and
-/// the next one takes another lane. Bars are packed in the order given; the caller sorts them by start.
+/// each bar takes the first lane in which none of its columns is used yet. Columns are inclusive indexes, so a bar
+/// that ends in the column where the next one begins shares that column and the next one takes another lane. Bars are
+/// packed in the order given; the caller sorts them by start, and then a row needs only as many lanes as the most bars
+/// that share one column.
 /// </summary>
 public static class ScheduleLanes
 {
