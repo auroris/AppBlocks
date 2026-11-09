@@ -132,6 +132,7 @@ public static class ApiEndpointExtensions
     /// <summary>Registers the published API endpoints: their catalogue, the runner, and the check publishing makes.</summary>
     public static IUmbracoBuilder AddApiEndpoints(this IUmbracoBuilder builder)
     {
+        builder.Services.AddOptions<ApiEndpointOptions>().Bind(builder.Config.GetSection(ApiEndpointOptions.Section));
         builder.Services.AddScoped<ApiEndpointCatalog>();
         builder.Services.AddScoped<ApiEndpointRunner>();
         builder.AddNotificationAsyncHandler<ContentPublishingNotification, ApiEndpointValidator>();

@@ -25,8 +25,8 @@ public static class AppBlocksAuthorization
 
     /// <summary>
     /// The policy name for a backoffice management controller or action that only administrators may use: an approved, unlocked
-    /// backoffice User in Umbraco's Administrators group, read afresh through <see cref="ApplicationAccessPolicy.ActiveUserAsync"/> on
-    /// every request, so a User removed from the group or locked out is refused at once. It adds to the backoffice access that every
+    /// backoffice User in Umbraco's Administrators group or a group <c>AppBlocks:AdministratorGroups</c> names, read afresh through
+    /// <see cref="ApplicationAccessPolicy.ActiveUserAsync"/> on every request, so a User removed from the group or locked out is refused at once. It adds to the backoffice access that every
     /// management controller already requires, and answers 403 to anyone else.
     /// </summary>
     public const string AdministratorPolicy = "AppBlocks.Administrator";
@@ -34,16 +34,21 @@ public static class AppBlocksAuthorization
     /// <summary>The authentication scheme the policy uses: Umbraco's Member cookie, with 401 and 403 for API-style requests.</summary>
     public const string MemberScheme = "AppBlocks.Member";
 
-    /// <summary>Where a signed-in Member's script fetches an antiforgery token for a companion's own endpoints.</summary>
-    public const string AntiforgeryTokenPath = "/api/antiforgery/token";
+    /// <summary>
+    /// Where a signed-in Member's script fetches an antiforgery token for a companion's own endpoints: <c>antiforgery/token</c> below
+    /// <see cref="AppBlocksRoutes.Root"/>, so <c>/api/antiforgery/token</c> unless the site moves the root.
+    /// </summary>
+    public static string AntiforgeryTokenPath(IConfiguration? configuration) => AppBlocksRoutes.Under(configuration, "antiforgery/token");
 
     /// <summary>
-    /// Whether a request expects an API answer rather than a page: its path is under <c>/api/</c>, its endpoint is an
-    /// <c>[ApiController]</c>, it accepts JSON, or it says it was made by script with <c>X-Requested-With: XMLHttpRequest</c>.
+    /// Whether a request expects an API answer rather than a page: its path is under the blocks' API root (<see cref="AppBlocksRoutes.Root"/>,
+    /// <c>/api</c> by default), its endpoint is an <c>[ApiController]</c>, it accepts JSON, or it says it was made by script with
+    /// <c>X-Requested-With: XMLHttpRequest</c>.
     /// </summary>
     public static bool IsApiRequest(HttpContext context)
     {
-        if (context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)) return true;
+        var root = AppBlocksRoutes.Root(context.RequestServices?.GetService<IConfiguration>());
+        if (context.Request.Path.StartsWithSegments(root, StringComparison.OrdinalIgnoreCase)) return true;
         if (context.GetEndpoint()?.Metadata.GetMetadata<IApiBehaviorMetadata>() is not null) return true;
         if (context.Request.Headers.XRequestedWith == "XMLHttpRequest") return true;
         return context.Request.Headers.Accept.Any(value => value?.Contains("json", StringComparison.OrdinalIgnoreCase) == true);
@@ -60,6 +65,7 @@ public static class AppBlocksAuthorization
         });
         services.AddSingleton<IAuthorizationHandler, SignedInMemberHandler>();
         services.AddSingleton<IAuthorizationHandler, BackOfficeAdministratorHandler>();
+        services.AddOptions<AdministratorOptions>().BindConfiguration(AdministratorOptions.Section);
     }
 
     /// <summary>
@@ -67,7 +73,7 @@ public static class AppBlocksAuthorization
     /// the token bound to that Member as the blocks' own tokens are. A script sends it in the named header with each change it posts.
     /// </summary>
     internal static void MapAntiforgeryToken(IEndpointRouteBuilder endpoints)
-        => endpoints.MapGet(AntiforgeryTokenPath, (HttpContext http, IAntiforgery antiforgery) => {
+        => endpoints.MapGet(AntiforgeryTokenPath(endpoints.ServiceProvider.GetService<IConfiguration>()), (HttpContext http, IAntiforgery antiforgery) => {
             http.Response.Headers.CacheControl = "no-store";
             var tokens = antiforgery.GetAndStoreTokens(http);
             return Results.Json(new { token = tokens.RequestToken, headerName = tokens.HeaderName });

@@ -297,6 +297,73 @@ public sealed class IdentityTests
     }
 
     [Theory]
+    [InlineData(PublicAccessStatus.AccessAccepted)]
+    [InlineData(PublicAccessStatus.AccessDenied)]
+    public async Task The_page_policy_admits_a_backoffice_only_caller_when_the_Member_cookie_is_also_on_the_request(PublicAccessStatus memberAccess)
+    {
+        var pageKey = Guid.NewGuid(); var userKey = Guid.NewGuid();
+        var member = Principal(IdentityConstants.ApplicationScheme, "7");
+        var backOffice = Principal(Constants.Security.BackOfficeAuthenticationType, userKey.ToString());
+        var authentication = Stub<IAuthenticationService>((method, args) => method.Name == "AuthenticateAsync" ? Task.FromResult((string)args![1]! is var scheme
+            && scheme == IdentityConstants.ApplicationScheme ? AuthenticateResult.Success(new AuthenticationTicket(member, scheme))
+            : scheme == Constants.Security.BackOfficeAuthenticationType ? AuthenticateResult.Success(new AuthenticationTicket(backOffice, scheme))
+            : AuthenticateResult.NoResult()) : throw new NotImplementedException(method.Name));
+        var user = Stub<IUser>((method, _) => method.Name switch {
+            "get_IsApproved" => true, "get_IsLockedOut" => false, _ => throw new NotImplementedException(method.Name),
+        });
+        var users = Stub<IUserService>((method, _) => method.Name == "GetAsync" ? Task.FromResult<IUser?>(user) : throw new NotImplementedException(method.Name));
+        var blocks = Stub<IPublishedPropertyType>((method, _) => method.Name == "get_EditorAlias" ? "Umbraco.BlockGrid" : throw new NotImplementedException(method.Name));
+        var type = Stub<IPublishedContentType>((method, _) => method.Name == "get_PropertyTypes" ? new[] { blocks } : throw new NotImplementedException(method.Name));
+        var page = Stub<IPublishedContent>((method, _) => method.Name switch {
+            "get_Id" => 42, "get_Key" => pageKey, "get_ContentType" => type, _ => throw new NotImplementedException(method.Name),
+        });
+        var cache = Stub<Umbraco.Cms.Core.PublishedCache.IPublishedContentCache>((method, args) => method.Name == "GetByIdAsync" && Equals(args![0], pageKey)
+            ? Task.FromResult<IPublishedContent?>(page) : throw new NotImplementedException(method.Name));
+        var umbraco = Stub<Umbraco.Cms.Core.Web.IUmbracoContext>((method, _) => method.Name == "get_Content" ? cache : throw new NotImplementedException(method.Name));
+        var factory = Stub<Umbraco.Cms.Core.Web.IUmbracoContextFactory>((method, _) => method.Name == "EnsureUmbracoContext"
+            ? new Umbraco.Cms.Core.UmbracoContextReference(umbraco, false, Stub<Umbraco.Cms.Core.Web.IUmbracoContextAccessor>(Never)) : throw new NotImplementedException(method.Name));
+        var checker = Stub<IPublicAccessChecker>((method, _) => method.Name == "HasMemberAccessToContentAsync" ? Task.FromResult(memberAccess) : throw new NotImplementedException(method.Name));
+        var http = new HttpContextAccessor();
+        var access = new AppPageAccess(new AppBlockContent(factory, http), checker, http, new ApplicationAccessPolicy(users), Stub<IPublicAccessService>(Never), []);
+        using var services = new ServiceCollection().AddSingleton(authentication).AddSingleton(access).BuildServiceProvider();
+        http.HttpContext = new DefaultHttpContext { RequestServices = services };
+        var handler = new AppPageAuthorizationHandler(http);
+        async Task<bool> Admits(ClaimsPrincipal caller)
+        {
+            var context = new Microsoft.AspNetCore.Authorization.AuthorizationHandlerContext([new AppPageRequirement(pageKey)], caller, null);
+            await handler.HandleAsync(context);
+            return context.HasSucceeded;
+        }
+        var accepted = memberAccess == PublicAccessStatus.AccessAccepted;
+        // A backoffice-only route strips the Member, while the page still finds the Member cookie and answers Member first.
+        Assert.Equal(accepted, await Admits(backOffice));
+        Assert.Equal(accepted, await Admits(new ClaimsPrincipal(member.Identities.Concat(backOffice.Identities))));
+        Assert.Equal(accepted, await Admits(member));
+        // Another account, or the same identifier from another store, is not the page's person.
+        Assert.False(await Admits(Principal(Constants.Security.BackOfficeAuthenticationType, Guid.NewGuid().ToString())));
+        Assert.False(await Admits(Principal(Constants.Security.BackOfficeAuthenticationType, "7")));
+        Assert.False(await Admits(AppPageAccess.Anonymous));
+    }
+
+    [Fact]
+    public async Task Administrator_groups_named_in_settings_pass_the_administrator_check_beside_Umbracos_own()
+    {
+        IReadOnlyUserGroup[] groups = [Group("Site operations", "siteOperations")];
+        var user = Stub<IUser>((method, _) => method.Name switch {
+            "get_IsApproved" => true, "get_IsLockedOut" => false, "get_Groups" => groups, _ => throw new NotImplementedException(method.Name),
+        });
+        var users = Stub<IUserService>((method, _) => method.Name == "GetAsync" ? Task.FromResult<IUser?>(user) : throw new NotImplementedException(method.Name));
+        var principal = Principal(Constants.Security.BackOfficeAuthenticationType, Guid.NewGuid().ToString());
+        // By default only Umbraco's Administrators group counts.
+        Assert.False(await new ApplicationAccessPolicy(users).IsBackOfficeAdministratorAsync(principal));
+        Assert.False(await new ApplicationAccessPolicy(users, Microsoft.Extensions.Options.Options.Create(new AdministratorOptions())).IsBackOfficeAdministratorAsync(principal));
+        Assert.True(await new ApplicationAccessPolicy(users, Microsoft.Extensions.Options.Options.Create(new AdministratorOptions { AdministratorGroups = ["SITEOPERATIONS"] }))
+            .IsBackOfficeAdministratorAsync(principal));
+        groups = [Group("Administrators", Constants.Security.AdminGroupAlias)];
+        Assert.True(await new ApplicationAccessPolicy(users).IsBackOfficeAdministratorAsync(principal));
+    }
+
+    [Theory]
     [InlineData(PublicAccessStatus.AccessAccepted, true)]
     [InlineData(PublicAccessStatus.AccessDenied, false)]
     public async Task An_existing_Member_session_is_not_replaced_by_a_backoffice_session(PublicAccessStatus status, bool allowed)

@@ -3,6 +3,7 @@
 @using AppBlocks.Blocks
 @model AppBlockView
 @inject AntiSpamGate Gate
+@inject AppBlocks.Blocks.AppBlocksText Text
 @*
     The Anti-spam block, inside a form. It carries only public things: the site key, the widget's options and the service's own
     script address, which the adapter writes. Enforcement is on the server, in FormEndpoints, so none of this decides anything.
@@ -26,7 +27,7 @@ else if (block.IsHoneypot)
     @* Out of sight twice over: the stylesheet may not reach a layout without AppBlocks' tag helper, and a Content-Security-Policy may refuse the style attribute. With neither, the label explains the box. *@
     var id = "field-" + Model.Block.ContentKey.ToString("N");
     <div class="app-antispam-hp" style="position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden" aria-hidden="true">
-        <label for="@id">Leave this empty</label>
+        <label for="@id">@Text["honeypotLabel", "Leave this empty"]</label>
         <input type="text" id="@id" name="@block.HoneypotField" value="" tabindex="-1" autocomplete="off" />
     </div>
 }

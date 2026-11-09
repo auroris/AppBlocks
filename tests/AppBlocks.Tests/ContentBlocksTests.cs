@@ -122,6 +122,58 @@ public sealed class ContentBlocksTests
     }
 
     [Fact]
+    public void The_layout_tells_scripts_the_API_root_and_the_sites_texts_when_it_writes_the_assets()
+    {
+        var assets = new AppPageAssets();
+        var texts = new Dictionary<string, string> { ["saved"] = "Enregistré </script>" };
+        using var services = new ServiceCollection()
+            .AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?> { [AppBlocksRoutes.Setting] = "/services" }).Build())
+            .AddSingleton(assets).AddSingleton(new AppBlocksText([new FixedTexts(texts)])).BuildServiceProvider();
+        var context = new DefaultHttpContext { RequestServices = services };
+        context.Request.PathBase = "/intranet";
+        string Write(string tag)
+        {
+            var output = new Microsoft.AspNetCore.Razor.TagHelpers.TagHelperOutput(tag, [], (_, _) => Task.FromResult<Microsoft.AspNetCore.Razor.TagHelpers.TagHelperContent>(new Microsoft.AspNetCore.Razor.TagHelpers.DefaultTagHelperContent()));
+            new AppPageAssetsTagHelperComponent(new HttpContextAccessor { HttpContext = context })
+                .Process(new Microsoft.AspNetCore.Razor.TagHelpers.TagHelperContext(tag, [], new Dictionary<object, object>(), "id"), output);
+            return output.PostContent.GetContent();
+        }
+        // Nothing registered means nothing written, the meta tag included.
+        Assert.Empty(Write("head"));
+        assets.AddStylesheet("/intranet/App_Plugins/ApplicationBlocks/runtime.css");
+        Assert.StartsWith("<meta content=\"/intranet/services\" name=\"appblocks-api-root\" />", Write("head"));
+        var body = Write("body");
+        Assert.StartsWith("<script data-appblocks-strings=\"\" type=\"application/json\">", body);
+        Assert.Contains("\"saved\":\"Enregistr\\u00E9 \\u003C/script\\u003E\"", body);
+        Assert.DoesNotContain("data-appblocks-strings", Html(assets.Body(null, new Dictionary<string, string>())));
+    }
+
+    [Fact]
+    public void The_Umbraco_dictionary_answers_texts_from_the_AppBlocks_items_children_with_or_without_the_prefix()
+    {
+        var asked = new List<string>();
+        var dictionary = TestStubs.Stub<Umbraco.Cms.Core.Dictionary.ICultureDictionary>((method, args) => {
+            Assert.Equal("GetChildren", method.Name); asked.Add((string)args![0]!);
+            return new Dictionary<string, string> { ["AppBlocks.save"] = "Enregistrer", ["cancel"] = "Annuler", ["AppBlocks.delete"] = "", ["AppBlocks."] = "Nothing" };
+        });
+        var source = new UmbracoDictionaryTextSource(TestStubs.Stub<Umbraco.Cms.Core.Dictionary.ICultureDictionaryFactory>((method, _) => dictionary));
+        var text = new AppBlocksText([source]);
+        Assert.Equal("Enregistrer", text["save", "Save"]);
+        Assert.Equal("Annuler", text["cancel", "Cancel"]);
+        // An item without a translation for the culture keeps the English.
+        Assert.Equal("Delete", text["delete", "Delete"]);
+        Assert.Equal(new Dictionary<string, string> { ["save"] = "Enregistrer", ["cancel"] = "Annuler" }, text.Overrides());
+        Assert.Equal(["AppBlocks"], asked);
+    }
+
+    private sealed class FixedTexts(IReadOnlyDictionary<string, string> texts) : IAppBlocksTextSource
+    {
+        public string? Get(string id) => texts.GetValueOrDefault(id);
+        public IReadOnlyDictionary<string, string> All() => texts;
+    }
+
+    [Fact]
     public void The_nonce_is_read_from_the_request_when_the_site_sets_one()
     {
         var context = new DefaultHttpContext();

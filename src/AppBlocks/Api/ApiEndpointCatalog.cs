@@ -27,7 +27,8 @@ public sealed record ApiEndpointDefinition(Guid Key, string Alias, string Name, 
 /// alias or overlapping routes the first in tree order wins. Requests are matched most literal segments first.
 /// </summary>
 public sealed class ApiEndpointCatalog(IUmbracoContextFactory contexts, IDocumentNavigationQueryService navigation, IMemberGroupService groups,
-    DataSourceCatalog sources, PublishedDataCatalog data, DataSourceRuntime runtime, PublishedDefinitionWarnings warnings, ILogger<ApiEndpointCatalog> logger)
+    DataSourceCatalog sources, PublishedDataCatalog data, DataSourceRuntime runtime, PublishedDefinitionWarnings warnings, ILogger<ApiEndpointCatalog> logger,
+    Microsoft.Extensions.Options.IOptions<ApiEndpointOptions>? options = null)
 {
     /// <summary>A root that keeps API endpoints together, for editors who want one: no template, allowed at root, never routed.</summary>
     public const string RootAlias = "apiEndpoints";
@@ -56,7 +57,7 @@ public sealed class ApiEndpointCatalog(IUmbracoContextFactory contexts, IDocumen
         var start = errors.Count;
         var alias = Text(value, "alias");
         if (!DataSourceDefinition.IsAlias(alias)) errors.Add("Enter an endpoint alias starting with a letter, using letters, digits, '.', '-' or '_'.");
-        var route = ApiRouteTemplate.Parse(Text(value, "route"), errors);
+        var route = ApiRouteTemplate.Parse(Text(value, "route"), errors, options?.Value.MaxRouteSegments ?? ApiRouteTemplate.DefaultMaxSegments);
         ApiEndpointShape? shape = Text(value, "shape").ToLowerInvariant() switch {
             "" or "collection" => ApiEndpointShape.Collection, "single" => ApiEndpointShape.Single, _ => null,
         };

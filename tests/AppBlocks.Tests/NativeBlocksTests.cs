@@ -3,6 +3,8 @@ using System.Xml.Linq;
 using AppBlocks.Samples;
 using Microsoft.Extensions.FileProviders;
 using AppBlocks.Blocks;
+using Umbraco.Cms.Core.Models.Blocks;
+using Umbraco.Cms.Core.Models.PublishedContent;
 
 namespace AppBlocks.Tests;
 
@@ -33,6 +35,34 @@ public sealed class NativeBlocksTests
         Assert.Equal(form, discovered.FormKey);
         Assert.Equal("checkbox", Assert.Single(discovered.Fields).Kind);
         Assert.Equal("approved", discovered.Fields[0].Key);
+    }
+
+    [Fact]
+    public void A_native_block_keeps_its_page_out_of_caches_only_when_it_or_something_inside_it_is_interactive()
+    {
+        static BlockGridItem Block(string alias, params BlockGridItem[] children)
+        {
+            var type = TestStubs.Stub<IPublishedContentType>((method, _) => method.Name switch {
+                "get_Alias" => alias, "get_PropertyTypes" => Array.Empty<IPublishedPropertyType>(), _ => throw new NotImplementedException(method.Name),
+            });
+            var element = TestStubs.Stub<IPublishedElement>((method, _) => method.Name == "get_ContentType" ? type : throw new NotImplementedException(method.Name));
+            return new(Guid.NewGuid(), element, null, null) { Areas = children.Length == 0 ? [] : [new BlockGridArea(children, "content", 1, 12)] };
+        }
+        IAppBlockPlugin[] plugins = [new Plugin("publicList", variesByData: true), new Plugin("banner", variesByData: false)];
+        Assert.False(AppBlockContent.IsInteractive([Block(AppBlockSchema.FormsContainerAlias, Block(AppBlockSchema.RichTextAlias))], plugins));
+        Assert.True(AppBlockContent.IsInteractive([Block(AppBlockSchema.FormsContainerAlias, Block(AppBlockSchema.RegionAlias, Block("appForm")))], plugins));
+        Assert.True(AppBlockContent.IsInteractive([Block(AppBlockSchema.TabularAlias)], plugins));
+        Assert.True(AppBlockContent.IsInteractive([Block(AppBlockSchema.FormsContainerAlias, Block("publicList"))], plugins));
+        Assert.False(AppBlockContent.IsInteractive([Block(AppBlockSchema.FormsContainerAlias, Block("banner"))], plugins));
+    }
+
+    private sealed class Plugin(string alias, bool variesByData) : IAppBlockPlugin
+    {
+        public string Alias => alias;
+        public string ViewPath => alias + ".cshtml";
+        public bool RequiresUser => false;
+        public bool VariesByData => variesByData;
+        public void Validate(JsonElement block, List<string> errors) { }
     }
 
     [Fact]

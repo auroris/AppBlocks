@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Models.Membership;
 using Umbraco.Cms.Core.Services;
@@ -12,7 +13,7 @@ namespace AppBlocks.Authentication;
 /// to a page or grants an application permission, and a page Umbraco's Public Access protects stays protected unless the
 /// host registers an <see cref="IProtectedPageAdmission"/>.
 /// </summary>
-public sealed class ApplicationAccessPolicy(IUserService users)
+public sealed class ApplicationAccessPolicy(IUserService users, IOptions<AdministratorOptions>? administrators = null)
 {
     /// <summary>Whether the primary identity is a backoffice User. Combined principals keep their Member first for ownership keys.</summary>
     public static bool IsBackOfficeIdentity(ClaimsPrincipal user) => user.Identity?.AuthenticationType
@@ -24,12 +25,16 @@ public sealed class ApplicationAccessPolicy(IUserService users)
     public static ClaimsIdentity? BackOfficeIdentity(ClaimsPrincipal principal) => principal.Identities.FirstOrDefault(identity =>
         identity.IsAuthenticated && identity.AuthenticationType is Constants.Security.BackOfficeAuthenticationType or Constants.Security.BackOfficeExposedAuthenticationType);
 
-    /// <summary>Whether the backoffice User is in Umbraco's Administrators group, for the backoffice's own management screens; no application permission follows from it.</summary>
+    /// <summary>
+    /// Whether the backoffice User is in Umbraco's Administrators group or one of <see cref="AdministratorOptions.AdministratorGroups"/>,
+    /// for the backoffice's own management screens; no application permission follows from it.
+    /// </summary>
     public async Task<bool> IsBackOfficeAdministratorAsync(ClaimsPrincipal principal)
     {
         var user = await ActiveUserAsync(principal);
-        return user is not null
-            && user.Groups.Any(group => group.Alias.Equals(Constants.Security.AdminGroupAlias, StringComparison.OrdinalIgnoreCase));
+        var others = administrators?.Value.AdministratorGroups ?? [];
+        return user is not null && user.Groups.Any(group => group.Alias.Equals(Constants.Security.AdminGroupAlias, StringComparison.OrdinalIgnoreCase)
+            || others.Any(alias => group.Alias.Equals(alias?.Trim(), StringComparison.OrdinalIgnoreCase)));
     }
 
     public async Task<ClaimsPrincipal?> BackOfficeAdministratorAsync(HttpContext context)

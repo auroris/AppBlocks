@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Html;
 using Microsoft.AspNetCore.Mvc.Rendering;
@@ -49,19 +50,29 @@ public sealed partial class AppPageAssets
     /// <summary>Adds a JavaScript block's code to the end of the body. Blank code adds nothing.</summary>
     public void AddScript(string? script) => Add(scripts, script);
 
+    /// <summary>The ancestors' property <see cref="RegisterAncestors"/> reads CSS from unless told another.</summary>
+    public const string DefaultCssAlias = "css";
+
+    /// <summary>The ancestors' property <see cref="RegisterAncestors"/> reads JavaScript from unless told another.</summary>
+    public const string DefaultScriptAlias = "javascript";
+
     /// <summary>
     /// Ancestor code runs root to leaf, before block assets. The page's own date is its "Date modified"; ancestor
     /// edits only invalidate the page's cache.
     /// </summary>
     public void RegisterPage(IPublishedContent page, IDocumentNavigationQueryService navigation,
-        IPublishedContentStatusFilteringService published, HttpContext context)
+        IPublishedContentStatusFilteringService published, HttpContext context, string cssAlias = DefaultCssAlias, string scriptAlias = DefaultScriptAlias)
     {
         if (pageRegistered) return;
         context.RegisterPageUpdateDate(page.UpdateDate);
-        RegisterAncestors(page.AncestorsOrSelf(navigation, published), context);
+        RegisterAncestors(page.AncestorsOrSelf(navigation, published), context, cssAlias, scriptAlias);
     }
 
-    public void RegisterAncestors(IEnumerable<IPublishedContent> ancestorsAndSelf, HttpContext context)
+    /// <summary>
+    /// The CSS and JavaScript each node carries in its <paramref name="cssAlias"/> and <paramref name="scriptAlias"/> properties, root to
+    /// leaf, ahead of the blocks' own. The aliases are the site's document types' to choose; a node without them adds nothing.
+    /// </summary>
+    public void RegisterAncestors(IEnumerable<IPublishedContent> ancestorsAndSelf, HttpContext context, string cssAlias = DefaultCssAlias, string scriptAlias = DefaultScriptAlias)
     {
         if (pageRegistered) return;
         pageRegistered = true;
@@ -70,8 +81,8 @@ public sealed partial class AppPageAssets
         foreach (var node in ancestorsAndSelf.OrderBy(node => node.Level))
         {
             context.RegisterDependencyUpdateDate(node.UpdateDate);
-            Add(pageStyles, node.Value<string>("css"));
-            Add(pageScripts, node.Value<string>("javascript"));
+            Add(pageStyles, node.Value<string>(cssAlias));
+            Add(pageScripts, node.Value<string>(scriptAlias));
         }
         foreach (var style in styles) Add(pageStyles, style);
         foreach (var script in scripts) Add(pageScripts, script);
@@ -79,10 +90,26 @@ public sealed partial class AppPageAssets
         scripts.Clear(); scripts.AddRange(pageScripts);
     }
 
-    /// <summary>The stylesheet links, then the styles, for the end of the head.</summary>
-    public IHtmlContent Head(string? nonce)
+    /// <summary>The meta tag scripts learn the blocks' API root from.</summary>
+    public const string ApiRootMetaName = "appblocks-api-root";
+
+    /// <summary>The attribute of the JSON script element that carries the site's text overrides to the page's scripts.</summary>
+    public const string StringsAttribute = "data-appblocks-strings";
+
+    /// <summary>
+    /// The stylesheet links, then the styles, for the end of the head. With <paramref name="apiRoot"/>, the path base and API root
+    /// (<see cref="AppBlocksRoutes.Root"/>), an <c>appblocks-api-root</c> meta tag comes first, so the runtime asks the endpoints where the site maps them.
+    /// </summary>
+    public IHtmlContent Head(string? nonce, string? apiRoot = null)
     {
         var html = new HtmlContentBuilder();
+        if (apiRoot is not null)
+        {
+            var meta = new TagBuilder("meta") { TagRenderMode = TagRenderMode.SelfClosing };
+            meta.Attributes["name"] = ApiRootMetaName;
+            meta.Attributes["content"] = apiRoot;
+            html.AppendLine(meta);
+        }
         foreach (var href in stylesheets)
         {
             var link = new TagBuilder("link") { TagRenderMode = TagRenderMode.SelfClosing };
@@ -95,10 +122,23 @@ public sealed partial class AppPageAssets
         return html;
     }
 
-    /// <summary>The scripts, for the end of the body.</summary>
-    public IHtmlContent Body(string? nonce)
+    /// <summary>
+    /// The scripts, for the end of the body. Non-empty <paramref name="strings"/>, the site's text overrides by id
+    /// (<see cref="AppBlocksText.Overrides"/>), come first as a JSON script element marked <c>data-appblocks-strings</c>, which the
+    /// runtime reads in place of its own English.
+    /// </summary>
+    public IHtmlContent Body(string? nonce, IReadOnlyDictionary<string, string>? strings = null)
     {
         var html = new HtmlContentBuilder();
+        if (strings is { Count: > 0 })
+        {
+            var data = new TagBuilder("script");
+            data.Attributes["type"] = "application/json";
+            data.Attributes[StringsAttribute] = "";
+            // The default encoder writes < > & and quotes as \u escapes, so no text can end the element.
+            data.InnerHtml.AppendHtml(JsonSerializer.Serialize(strings));
+            html.AppendLine(data);
+        }
         foreach (var script in scripts) html.AppendLine(Element("script", script, nonce));
         return html;
     }
@@ -145,7 +185,9 @@ public sealed class AppPageAssetsTagHelperComponent(IHttpContextAccessor http) :
     {
         if (http.HttpContext is not { } request || request.RequestServices.GetService<AppPageAssets>() is not { IsEmpty: false } assets) return;
         var nonce = AppPageAssets.Nonce(request);
-        if (string.Equals(context.TagName, "head", StringComparison.OrdinalIgnoreCase)) output.PostContent.AppendHtml(assets.Head(nonce));
-        else if (string.Equals(context.TagName, "body", StringComparison.OrdinalIgnoreCase)) output.PostContent.AppendHtml(assets.Body(nonce));
+        if (string.Equals(context.TagName, "head", StringComparison.OrdinalIgnoreCase))
+            output.PostContent.AppendHtml(assets.Head(nonce, request.Request.PathBase + AppBlocksRoutes.Root(request.RequestServices.GetService<IConfiguration>())));
+        else if (string.Equals(context.TagName, "body", StringComparison.OrdinalIgnoreCase))
+            output.PostContent.AppendHtml(assets.Body(nonce, request.RequestServices.GetService<AppBlocksText>()?.Overrides()));
     }
 }

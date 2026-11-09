@@ -142,7 +142,7 @@ public sealed class DefinitionsTests
 
         // The site's content and its own type, which uses the package's grid, are as they were, and the page still works.
         Assert.Equal("orders.lines", contents.GetById(source.Id)!.GetValue<string>("alias"));
-        Assert.Equal(FormsContainerGrid, types.Get(AppBlockSchema.PageAlias)!.PropertyTypes.Single(p => p.Alias == AppBlockSchema.BodyAlias).DataTypeKey);
+        Assert.Equal(FormsContainerGrid, types.Get(BlockSite.PageAlias)!.PropertyTypes.Single(p => p.Alias == BlockSite.BodyAlias).DataTypeKey);
         var member = site.CreateMember("definitions-" + Guid.NewGuid().ToString("N")[..8], Guid.NewGuid().ToString("N") + "@example.invalid", "Definitions member");
         using var client = await site.SignInMemberAsync(member);
         var lines = await site.Tabular(client, BlockSite.FormPageKey, BlockPages.LinesBlock).ListAsync("id=4");
@@ -182,7 +182,7 @@ public sealed class DefinitionsTests
             Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
             var detail = (await refused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("detail").GetString()!;
             Assert.Contains($"({DataSourceSchema.SqlAlias})", detail);
-            Assert.Contains($"({AppBlockSchema.PageAlias})", detail);
+            Assert.Contains($"({BlockSite.PageAlias})", detail);
             var status = await admin.GetFromJsonAsync<JsonElement>(Api);
             Assert.False(status.GetProperty("uninstalled").GetBoolean());
             var package = Assert.Single(status.GetProperty("packages").EnumerateArray());
