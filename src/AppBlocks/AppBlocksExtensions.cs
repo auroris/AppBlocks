@@ -55,6 +55,8 @@ public static class AppBlocksExtensions
         services.TryAddScoped<ApplicationAccessPolicy>();
         services.AddControllersWithViews().AddApplicationPart(typeof(AppBlocksExtensions).Assembly);
         services.AddScoped<AppBlockContent>();
+        // The texts the blocks show, with whatever sources a host registers (its Umbraco dictionary among them) answering first.
+        services.AddScoped<AppBlocksText>();
         services.AddScoped<AppPageAccess>();
         services.AddScoped<FormResourceRegistry>();
         // The C# folder: compiled at run time only when the site brings a compiler, and read by the registries beside registered classes.
