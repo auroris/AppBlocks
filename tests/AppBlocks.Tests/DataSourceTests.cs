@@ -1155,10 +1155,10 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal("2026-10-24", defaults.Record!.Values["dueDate"]);
         Assert.Equal("2026-10-24T05:30:00Z", defaults.Record.Values["tag"]);
         Assert.Contains(":NOW_UTC", Source(Tasks(("rowRestriction", ":NOW_UTCX IS NULL"))).Problem);
-        // A date-time field holds the server's local time, so a UTC default for one is refused; a text field keeps the UTC stamp.
-        var dateTime = Source(Tasks(("mapping", """{ "dueDate": { "kind": "datetime" } }"""), ("insertDefaults", "OWNER_SID = :USER_SID\nDUE_DATE = :NOW_UTC")));
-        Assert.Contains("cannot use :NOW_UTC: a date-time field holds the web server's local time. Use :NOW", dateTime.Problem);
-        Assert.True(Source(Tasks(("mapping", """{ "dueDate": { "kind": "datetime" } }"""), ("insertDefaults", "OWNER_SID = :USER_SID\nDUE_DATE = :NOW"))).Problem is null);
+        // A date-time field takes the same moment from :NOW_UTC as from :NOW; its column's convention decides the wall time written.
+        var utcDefault = await Western(("mapping", """{ "dueDate": { "kind": "datetime" } }"""), ("insertDefaults", "OWNER_SID = :USER_SID\nDUE_DATE = :NOW_UTC"))
+            .InitializeAsync(Context(Owner), default);
+        Assert.Equal(DateTimeOffset.Parse("2026-10-24T05:30:00Z"), DateTimeOffset.Parse((string)utcDefault.Record!.Values["dueDate"]!));
     }
 
     private sealed class ZonedTime(DateTimeOffset now, TimeZoneInfo zone) : TimeProvider
@@ -1263,9 +1263,25 @@ public sealed class DataSourceTests : IDisposable
         Refused("without semicolons", ("source", "SELECT * FROM TASKS; DELETE FROM TASKS"));
         Refused("table name", ("source", "TASKS WHERE 1=1"));
         Refused("Enter the key columns", ("keyColumns", ""));
-        Refused("primary key or a unique key", ("keyColumns", "TITLE"));
-        Refused("primary key or a unique key", ("source", "LOOSE"), ("keyColumns", "ID"), ("concurrencyMode", DataSourceConcurrency.LastSaveWins), ("auditColumns", ""), ("insertDefaults", ""), ("mapping", ""));
-        Refused("is a view", ("source", "OPEN_TASKS"), ("concurrencyMode", DataSourceConcurrency.LastSaveWins), ("auditColumns", ""), ("insertDefaults", ""), ("mapping", ""));
+        // A key the database does not declare, or a view, publishes with a warning: the runtime refuses a write that is not to one row.
+        void Warned(string expected, params (string, object?)[] settings)
+        {
+            var values = Tasks(settings);
+            var warnings = new List<string>();
+            var definition = DataSourceDefinition.Read(Guid.NewGuid(), "Tasks", alias => values.GetValueOrDefault(alias), picked => picked.Split(','), new List<string>())!;
+            Assert.Empty(runtime.Validate(definition, warnings));
+            Assert.True(warnings.Any(w => w.Contains(expected, StringComparison.OrdinalIgnoreCase)), $"Expected '{expected}' in: {string.Join(" | ", warnings)}");
+        }
+        Warned("not a primary key or unique key", ("keyColumns", "TITLE"));
+        Warned("not a primary key or unique key", ("source", "LOOSE"), ("keyColumns", "ID"), ("concurrencyMode", DataSourceConcurrency.LastSaveWins), ("auditColumns", ""), ("insertDefaults", ""), ("mapping", ""));
+        Warned("is a view", ("source", "OPEN_TASKS"), ("concurrencyMode", DataSourceConcurrency.LastSaveWins), ("auditColumns", ""), ("insertDefaults", ""), ("mapping", ""));
+        Refused("come from one table", ("source", "SELECT t.*, p.NAME FROM TASKS t LEFT JOIN PROJECTS p ON p.PROJECT_ID = t.PROJECT_ID"), ("keyColumns", "TASK_ID, NAME"),
+            ("concurrencyMode", DataSourceConcurrency.LastSaveWins), ("auditColumns", ""), ("insertDefaults", ""), ("mapping", ""));
+        Refused("cannot use SET NOEXEC", ("customStatements", "-- update\nSET NOEXEC OFF;\nUPDATE TASKS SET TITLE = :FIELD.title WHERE TASK_ID = :FIELD.taskId"));
+        Refused("cannot use SET PARSEONLY", ("customStatements", "-- delete\nset parseonly off; DELETE FROM TASKS WHERE TASK_ID = :FIELD.taskId"));
+        Refused("names :NOW", ("auditColumns", "updatedBy = UPDATED_BY = :NOW"));
+        Refused("cannot name a value", ("auditColumns", "updatedAt = UPDATED_AT = :USER_KEY"));
+        Refused("date-time mode", ("dateTimeMode", "Zulu"));
         Refused("not a column of the row source", ("keyColumns", "NOPE"));
         Refused("not a bind variable", ("rowRestriction", "OWNER_SID = :USER"));
         Refused("restricts nothing", ("rowRestriction", "OWNER_SID = :PARAM.owner"));
@@ -1289,5 +1305,137 @@ public sealed class DataSourceTests : IDisposable
         Refused("alias", ("alias", "has spaces"));
         Assert.Contains("not a column of the row source", Source(Tasks(("keyColumns", "NOPE"))).Problem);
         Assert.Equal(3, Count()); // Validation compiles statements and reads schemas; it never writes.
+    }
+
+    /// <summary>A runtime on the tasks database with its own clock, options or receipt store.</summary>
+    private DataSourceRuntime Runtime(TimeProvider? clock = null, DataSourceOptions? options = null, IDataSourceReceiptStore? receipts = null)
+        => new(services.GetRequiredService<AppBlocks.Connections.IApplicationConnectionFactory>(),
+            services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DataSourceRuntime>>(), clock ?? new FixedTime(Now), null,
+            options is null ? null : Microsoft.Extensions.Options.Options.Create(options), receipts);
+
+    private static SqlDataSource Ready(DataSourceRuntime runtime, Dictionary<string, object?> values)
+    {
+        var source = new SqlDataSource(Definition(values), runtime, new TestUsers(), []);
+        Assert.True(source.Problem is null, source.Problem);
+        return source;
+    }
+
+    [Fact]
+    public async Task A_UTC_source_reads_and_writes_zone_less_date_times_as_UTC_and_its_clock_writes_UTC()
+    {
+        // A server six hours behind UTC; the source keeps UTC, so nothing it reads or writes depends on the server's zone.
+        var zone = TimeZoneInfo.CreateCustomTimeZone("Test-06", TimeSpan.FromHours(-6), "Test-06", "Test-06");
+        var western = Runtime(new ZonedTime(new DateTimeOffset(2026, 10, 24, 5, 30, 0, TimeSpan.Zero), zone));
+        Execute("UPDATE TASKS SET DUE_DATE = '2026-11-01 12:00:00' WHERE TASK_ID = 1");
+        var mapping = """{ "dueDate": { "kind": "datetime" }, "done": { "kind": "checkbox" }, "createdAt": { "kind": "datetime" }, "updatedAt": { "kind": "datetime" } }""";
+        var source = Ready(western, Tasks(("dateTimeMode", "Utc"), ("mapping", mapping), ("rowRestriction", ":NOW = '2026-10-24 05:30:00' AND :NOW_UTC = '2026-10-24T05:30:00Z'")));
+        Assert.Equal(DataSourceDateTimes.Utc, source.Definition.DateTimes);
+
+        var loaded = await source.LoadAsync("1", Context(Owner), default);
+        Assert.Equal(200, loaded.Status);
+        Assert.Equal("2026-11-01T12:00:00+00:00", loaded.Record!.Values["dueDate"]);
+        var created = await source.CreateAsync(Json(new { title = "Stamp it", dueDate = "2026-11-02T08:00:00-06:00" }), Context(Owner), default);
+        Assert.Equal(200, created.Status);
+        var id = created.Record!.Key;
+        Assert.Equal(new object?[] { "2026-11-02 14:00:00", "2026-10-24 05:30:00", "2026-10-24 05:30:00" },
+            new[] { "DUE_DATE", "CREATED_AT", "UPDATED_AT" }.Select(c => Scalar($"SELECT {c} FROM TASKS WHERE TASK_ID = {id}")));
+        // :NOW_UTC as a date-time default is the moment :NOW is, written as UTC wall time.
+        var stamped = Ready(western, Tasks(("dateTimeMode", "Utc"), ("mapping", mapping), ("insertDefaults", "OWNER_SID = :USER_SID\nDUE_DATE = :NOW_UTC")));
+        var second = await stamped.CreateAsync(Json(new { title = "Stamp it again" }), Context(Owner), default);
+        Assert.Equal("2026-10-24 05:30:00", Scalar($"SELECT DUE_DATE FROM TASKS WHERE TASK_ID = {second.Record!.Key}"));
+        Assert.NotEqual(source.Definition.ComputeFingerprint(), (source.Definition with { DateTimes = DataSourceDateTimes.ServerLocal }).ComputeFingerprint());
+    }
+
+    [Fact]
+    public async Task A_custom_update_writes_nothing_when_nothing_changed()
+    {
+        var source = Working(Tasks(("customStatements", "-- update\nUPDATE TASKS SET TITLE = :FIELD.title, PRIORITY = PRIORITY + 1 WHERE TASK_ID = :FIELD.taskId")));
+        var task = (await source.LoadAsync("1", Context(Owner), default)).Record!;
+        var same = await source.UpdateAsync("1", Json(new { title = "Paint the hangar" }), task.Checksum, Context(Owner), default);
+        Assert.Equal(200, same.Status);
+        Assert.Equal(task.Checksum, same.Record!.Checksum);
+        Assert.Equal(2L, Scalar("SELECT PRIORITY FROM TASKS WHERE TASK_ID = 1"));
+        var changed = await source.UpdateAsync("1", Json(new { title = "Paint it" }), task.Checksum, Context(Owner), default);
+        Assert.Equal(200, changed.Status);
+        Assert.Equal(3L, Scalar("SELECT PRIORITY FROM TASKS WHERE TASK_ID = 1"));
+    }
+
+    [Fact]
+    public async Task Writes_go_through_a_view_or_an_undeclared_key_and_a_key_matching_several_rows_is_refused()
+    {
+        Execute("""
+            CREATE TRIGGER OPEN_TASKS_UPDATE INSTEAD OF UPDATE ON OPEN_TASKS
+            BEGIN UPDATE TASKS SET TITLE = NEW.TITLE WHERE TASK_ID = OLD.TASK_ID; END;
+            """);
+        var view = Working(Tasks(("source", "OPEN_TASKS"), ("allowInsert", "0"), ("allowDelete", "0"), ("concurrencyMode", DataSourceConcurrency.LastSaveWins),
+            ("auditColumns", ""), ("insertDefaults", ""), ("mapping", "")));
+        var updated = await view.UpdateAsync("2", Json(new { title = "Sweep it twice" }), null, Context(Owner), default);
+        Assert.Equal(200, updated.Status);
+        Assert.Equal("Sweep it twice", Scalar("SELECT TITLE FROM TASKS WHERE TASK_ID = 2"));
+
+        var loose = Working(Tasks(("source", "LOOSE"), ("keyColumns", "ID"), ("concurrencyMode", DataSourceConcurrency.LastSaveWins),
+            ("auditColumns", ""), ("insertDefaults", ""), ("mapping", "")));
+        var refused = await loose.UpdateAsync("1", Json(new { label = "c" }), null, Context(Owner), default);
+        Assert.Equal(422, refused.Status);
+        Assert.Contains("more than one row", refused.Errors![""][0]);
+        Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM LOOSE WHERE LABEL = 'c'"));
+        Assert.Equal(422, (await loose.DeleteAsync("1", null, Context(Owner), default)).Status);
+        Assert.Equal(2L, Scalar("SELECT COUNT(*) FROM LOOSE"));
+    }
+
+    [Fact]
+    public async Task Audit_by_columns_record_the_variable_their_line_names()
+    {
+        var source = Working(Tasks(("auditColumns", "createdBy = CREATED_BY = :USER_KEY\ncreatedAt = CREATED_AT\nupdatedBy = UPDATED_BY = :user_email")));
+        var created = await source.CreateAsync(Json(new { title = "Count the cones" }), Context(Owner), default);
+        Assert.Equal(200, created.Status);
+        var key = created.Record!.Key!;
+        Assert.Equal(new object?[] { "1001", "jsmith@example.invalid" }, new[] { "CREATED_BY", "UPDATED_BY" }.Select(c => Scalar($"SELECT {c} FROM TASKS WHERE TASK_ID = {key}")));
+        var updated = await source.UpdateAsync(key, Json(new { title = "Count them again" }), created.Record.Checksum, Context(Other), default);
+        Assert.Equal(200, updated.Status);
+        Assert.Equal("kjones@example.invalid", Scalar($"SELECT UPDATED_BY FROM TASKS WHERE TASK_ID = {key}"));
+        // Without a variable a line records the username, as it always did.
+        Assert.Equal(BindVariableKind.UserName, Definition(Tasks()).AuditColumns.CreatedByValue);
+    }
+
+    [Fact]
+    public async Task A_statement_the_database_holds_past_the_command_timeout_is_reported_as_a_timeout()
+    {
+        Execute("PRAGMA journal_mode=DELETE");
+        var source = Ready(Runtime(options: new DataSourceOptions { CommandTimeoutSeconds = 1 }), Tasks());
+        using var other = new SqliteConnection($"Data Source={file};Pooling=False");
+        other.Open();
+        using (var hold = other.CreateCommand()) { hold.CommandText = "BEGIN EXCLUSIVE"; hold.ExecuteNonQuery(); }
+        var held = await source.LoadAsync("1", Context(Owner), default);
+        Assert.Equal(503, held.Status);
+        Assert.Equal("The database did not answer in time. Try again in a moment.", held.Errors![""][0]);
+    }
+
+    [Fact]
+    public async Task Creates_keep_their_receipts_in_the_registered_store_and_batches_take_the_configured_size()
+    {
+        var store = new CountingStore();
+        var source = Ready(Runtime(options: new DataSourceOptions { MaxChanges = 1 }, receipts: store), Tasks());
+        var context = Context(Owner);
+        var first = await source.CreateAsync(Json(new { title = "Once" }), context, default);
+        var retried = await source.CreateAsync(Json(new { title = "Once" }), context, default);
+        Assert.Equal((200, first.Record!.Key), (retried.Status, retried.Record!.Key));
+        Assert.Equal(1, Count("TITLE = 'Once'"));
+        Assert.Equal((1, 2), (store.Added, store.Found));
+        Assert.Equal(1, source.MaxChanges);
+        var batch = await source.SaveRowsAsync(new DataSourceScope("projectId", "1"),
+            [new(RowOperation.Create, null, null, Json(new { title = "A" })), new(RowOperation.Create, null, null, Json(new { title = "B" }))], Context(Owner), 100, default);
+        Assert.Equal(422, batch.Status);
+        Assert.Contains("at most 1 rows", batch.Errors![""][0]);
+    }
+
+    private sealed class CountingStore : IDataSourceReceiptStore
+    {
+        private readonly DataSourceReceipts memory = new();
+        public int Added { get; private set; }
+        public int Found { get; private set; }
+        public Task<IAsyncDisposable> EnterAsync(IReadOnlyCollection<string> submissions, CancellationToken ct) => memory.EnterAsync(submissions, ct);
+        public ValueTask<DataSourceReceipt?> FindAsync(string submission, CancellationToken ct) { Found++; return memory.FindAsync(submission, ct); }
+        public ValueTask AddAsync(string submission, DataSourceReceipt receipt, CancellationToken ct) { Added++; return memory.AddAsync(submission, receipt, ct); }
     }
 }

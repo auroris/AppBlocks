@@ -62,6 +62,26 @@ public sealed class OracleDialectTests
         Assert.Equal("EXPLAIN PLAN FOR SELECT :id FROM DUAL", dialect.CompileOnly("SELECT :id FROM DUAL"));
     }
 
+    [Fact]
+    public void A_PLSQL_block_publishes_with_a_warning_and_a_statement_compiles_whole_without_its_semicolon()
+    {
+        var connection = new SchemaConnection("19.3.0.0.0");
+        var runtime = new DataSourceRuntime(new ConnectionFactory(connection, DatabaseDialect.Oracle), NullLogger<DataSourceRuntime>.Instance);
+        var definition = new DataSourceDefinition {
+            Key = Guid.NewGuid(), Name = "Orders", Alias = "orders", Connection = "Business", Source = "ORDERS",
+            Access = DataSourceAccess.Public, KeyColumns = ["ID"], AllowInsert = true, AllowUpdate = true,
+            CustomStatements = new(
+                Insert: "BEGIN orders_api.create(:FIELD.id, :FIELD.title); END;",
+                Update: "UPDATE ORDERS SET TITLE = :FIELD.title WHERE ID = :FIELD.id;\n"),
+        };
+        var warnings = new List<string>();
+        Assert.Empty(runtime.Validate(definition, warnings));
+        Assert.Contains("Publishing does not check the custom insert statement: the database cannot compile BEGIN", Assert.Single(warnings));
+        var explained = connection.Statements.Where(s => s.StartsWith("EXPLAIN", StringComparison.Ordinal)).ToArray();
+        // The block is never explained; the update is, whole and without the semicolon the provider would refuse.
+        Assert.Equal(["EXPLAIN PLAN FOR UPDATE ORDERS SET TITLE = :ds0 WHERE ID = :ds1"], explained);
+    }
+
     private sealed class ConnectionFactory(SchemaConnection connection, DatabaseDialect dialect) : IApplicationConnectionFactory
     {
         public DbConnection CreateConnection(string name) => connection;
@@ -98,6 +118,7 @@ public sealed class OracleDialectTests
                 ["TITLE", "VARCHAR2", "N", DBNull.Value, "NO", 100, DBNull.Value, DBNull.Value]);
             if (sql.Contains("ALL_CONSTRAINTS")) return Rows(["CONSTRAINT_NAME", "COLUMN_NAME"], ["ORDERS_PK", "ID"]);
             if (sql.Contains("ALL_SEQUENCES")) return Rows(["SEQUENCE_OWNER", "SEQUENCE_NAME"], ["APP", "ORDERS_SEQ"]);
+            if (sql.StartsWith("EXPLAIN PLAN FOR ", StringComparison.Ordinal)) return Rows(["STATEMENT_ID"]);
             if (sql.Contains("WHERE 1 = 0"))
             {
                 var table = new DataTable("ORDERS");

@@ -522,7 +522,7 @@ public sealed class DataSourceHandlerTests : IDisposable
         var noDeletes = Lines(("allowDelete", "0"));
         var flagged = await orders.SaveWithDetailsAsync(key, Json(new { customer = "Flagged" }), "2", [Batch(noDeletes, Change(RowOperation.Delete, bolt.Key))], Context(Owner), default);
         Assert.Equal((403, 0, 0), (flagged.Status, flagged.Detail, flagged.Refusal!.Index));
-        var many = Enumerable.Range(0, SqlDataSource.MaxChanges + 1).Select(i => Change(RowOperation.Create, values: new { product = "P" + i })).ToArray();
+        var many = Enumerable.Range(0, new DataSourceOptions().MaxChanges + 1).Select(i => Change(RowOperation.Create, values: new { product = "P" + i })).ToArray();
         Assert.Equal(422, (await orders.SaveWithDetailsAsync(key, Json(new { customer = "Many" }), "2", [Batch(lines, many)], Context(Owner), default)).Status);
         Assert.Equal("Tower Two", Scalar($"SELECT CUSTOMER FROM ORDERS WHERE ORDER_ID = {key}"));
     }

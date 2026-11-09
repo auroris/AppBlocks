@@ -23,5 +23,7 @@ public sealed class AppBlocksMigrationPlan() : AppBlocksPackagePlan("AppBlocks",
         // The same step again, for sites that ran the first under the earlier VersionColumn choice: it replaces that choice with
         // Checksum. On every other site it leaves the definition as the first run did.
         To<AddDataSourceConcurrency>("2026-11-04-checksum-concurrency");
+        // The data source's date-time mode and the list of values' inline SQL access.
+        To<AddDateTimeModeAndListAccess>("2026-11-08-date-time-mode-and-list-access");
     }
 }

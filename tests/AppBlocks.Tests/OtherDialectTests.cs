@@ -80,6 +80,73 @@ public sealed class OtherDialectTests
     }
 
     [Fact]
+    public void PostgreSql_binds_text_for_an_unlisted_type_as_untyped_so_the_server_reads_it_as_the_column_type()
+    {
+        var postgres = PostgreSqlDialect.Instance;
+        TableColumn Column(string type) => new("value", type, true, false, false, false, false);
+        foreach (var type in new[] { "jsonb", "json", "xml", "inet", "interval", "integer[]", "mood" })
+        {
+            Assert.Equal(FieldKinds.Text, postgres.KindOf(type));
+            Assert.Equal(new UntypedText("{\"a\": 1}"), postgres.ToDatabase("{\"a\": 1}", FieldKinds.Text, Column(type)));
+        }
+        foreach (var type in new[] { "text", "character varying", "character", "citext" })
+            Assert.Equal("plain", postgres.ToDatabase("plain", FieldKinds.Text, Column(type)));
+
+        var parameters = new SqlParameters(postgres);
+        parameters.Add(postgres.ToDatabase("{\"a\": 1}", FieldKinds.Text, Column("jsonb")));
+        parameters.Add("plain");
+        using var command = parameters.Command(new Npgsql.NpgsqlConnection(), null, "UPDATE t SET doc = @ds0, name = @ds1");
+        var bound = command.Parameters.Cast<Npgsql.NpgsqlParameter>().ToArray();
+        Assert.Equal((NpgsqlTypes.NpgsqlDbType.Unknown, (object)"{\"a\": 1}"), (bound[0].NpgsqlDbType, bound[0].Value!));
+        Assert.Equal("plain", bound[1].Value);
+        // Npgsql also reports Unknown for a type it has yet to infer, so the setting itself is checked on a parameter typed beforehand.
+        var typed = new Npgsql.NpgsqlParameter { NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text };
+        postgres.BindUntyped(typed);
+        Assert.Equal(NpgsqlTypes.NpgsqlDbType.Unknown, typed.NpgsqlDbType);
+        // Other providers have no such type and keep the plain text.
+        Assert.Equal("plain", SqliteDialect.Instance.ToDatabase("plain", FieldKinds.Text, Column("jsonb")));
+    }
+
+    [Fact]
+    public void Each_dialect_recognises_its_providers_timeout_and_nothing_else()
+    {
+        Assert.True(SqlDialect.For(DatabaseDialect.SqlServer)!.IsTimeout(new NumberedException(-2)));
+        Assert.False(SqlDialect.For(DatabaseDialect.SqlServer)!.IsTimeout(new NumberedException(2627)));
+        Assert.True(OracleDialect.Instance.IsTimeout(new NumberedException(1013)));
+        Assert.False(OracleDialect.Instance.IsTimeout(new NumberedException(1)));
+        Assert.True(PostgreSqlDialect.Instance.IsTimeout(new Npgsql.NpgsqlException("Exception while reading from stream", new TimeoutException())));
+        Assert.True(PostgreSqlDialect.Instance.IsTimeout(new StateException("57014")));
+        Assert.False(PostgreSqlDialect.Instance.IsTimeout(new StateException("23505")));
+        Assert.True(SqliteDialect.Instance.IsTimeout(new Microsoft.Data.Sqlite.SqliteException("database is locked", 5)));
+        Assert.False(SqliteDialect.Instance.IsTimeout(new Microsoft.Data.Sqlite.SqliteException("constraint failed", 19)));
+    }
+
+    [Fact]
+    public void Oracle_and_PostgreSql_leave_blocks_and_calls_uncompiled_and_Oracle_drops_a_statements_semicolon()
+    {
+        Assert.False(OracleDialect.Instance.Compiles("BEGIN orders_api.create(:FIELD.customer); END;"));
+        Assert.False(OracleDialect.Instance.Compiles("-- make it\nDECLARE n NUMBER; BEGIN NULL; END;"));
+        Assert.False(OracleDialect.Instance.Compiles("CALL orders_api.create(:FIELD.customer)"));
+        Assert.True(OracleDialect.Instance.Compiles("UPDATE orders SET a = 1"));
+        Assert.Equal("UPDATE orders SET a = 1", OracleDialect.Instance.Statement("UPDATE orders SET a = 1;\n"));
+        Assert.Equal("BEGIN NULL; END;", OracleDialect.Instance.Statement("BEGIN NULL; END;"));
+        Assert.False(PostgreSqlDialect.Instance.Compiles("CALL create_order(@ds0)"));
+        Assert.False(PostgreSqlDialect.Instance.Compiles("DO $$ BEGIN PERFORM 1; END $$"));
+        Assert.True(PostgreSqlDialect.Instance.Compiles("UPDATE orders SET a = 1"));
+        Assert.True(SqliteDialect.Instance.Compiles("BEGIN"));
+    }
+
+    private sealed class NumberedException(int number) : DbException("failed")
+    {
+        public int Number { get; } = number;
+    }
+
+    private sealed class StateException(string state) : DbException("failed")
+    {
+        public override string SqlState => state;
+    }
+
+    [Fact]
     public void Quoted_names_preserve_case_and_escape_embedded_quotes()
     {
         var parsed = TableName.Parse("\"App\".\"Order\"\"s\"")!;
