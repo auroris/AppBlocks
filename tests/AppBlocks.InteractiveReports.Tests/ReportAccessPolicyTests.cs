@@ -27,7 +27,7 @@ public sealed class ReportAccessPolicyTests
         });
         var users = Stub<IUserService>((method, _) => method.Name == "GetAsync" ? Task.FromResult<IUser?>(user) : throw new NotImplementedException());
         var options = new AppBlocksOptions();
-        var policy = new DefaultReportAccessPolicy(new AppBlocks.Authentication.ApplicationAccessPolicy(users), Options.Create(options), null!);
+        var policy = new DefaultReportAccessPolicy(new AppBlocks.Authentication.ApplicationAccessPolicy(users), Options.Create(options), null!, Monitor());
         var id = Guid.NewGuid().ToString();
         var backOfficeUser = new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, id)], Constants.Security.BackOfficeAuthenticationType));
         Assert.Equal(builtIn, await policy.IsAdministratorAsync(backOfficeUser));
@@ -52,7 +52,7 @@ public sealed class ReportAccessPolicyTests
             _ => throw new NotImplementedException(method.Name),
         });
         var users = Stub<IUserService>((method, _) => Task.FromResult<IUser?>(user));
-        var policy = new DefaultReportAccessPolicy(new AppBlocks.Authentication.ApplicationAccessPolicy(users), Options.Create(new AppBlocksOptions()), null!);
+        var policy = new DefaultReportAccessPolicy(new AppBlocks.Authentication.ApplicationAccessPolicy(users), Options.Create(new AppBlocksOptions()), null!, Monitor());
         var principal = new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString())], Constants.Security.BackOfficeAuthenticationType));
         Assert.False(await policy.IsAdministratorAsync(principal));
     }
@@ -82,7 +82,7 @@ public sealed class ReportAccessPolicyTests
     public async Task An_anonymous_visitor_may_read_a_report_block_and_nothing_else(string report, InteractiveReportAction action, bool allowed)
     {
         var name = report == "block" ? AppBlocks.Blocks.AppBlockContent.ReportName(Guid.NewGuid(), Guid.NewGuid()) : report;
-        var policy = new DefaultReportAccessPolicy(null!, Options.Create(new AppBlocksOptions()), null!);
+        var policy = new DefaultReportAccessPolicy(null!, Options.Create(new AppBlocksOptions()), null!, Monitor());
         var request = new InteractiveReportAuthorizationRequest {
             User = new ClaimsPrincipal(new ClaimsIdentity()), Action = action,
             Resource = new InteractiveReportAuthorizationResource { ReportName = name }, RequestServices = null!,
@@ -114,7 +114,7 @@ public sealed class ReportAccessPolicyTests
         });
         var users = Stub<IUserService>((method, _) => method.Name == "GetAsync" ? Task.FromResult<IUser?>(user) : throw new NotImplementedException());
         // A reserved report name keeps the published catalogue out of this test; it only governs reading the report itself.
-        var policy = new DefaultReportAccessPolicy(new AppBlocks.Authentication.ApplicationAccessPolicy(users), Options.Create(new AppBlocksOptions()), null!);
+        var policy = new DefaultReportAccessPolicy(new AppBlocks.Authentication.ApplicationAccessPolicy(users), Options.Create(new AppBlocksOptions()), null!, Monitor());
         var member = new ClaimsIdentity([new(ClaimTypes.NameIdentifier, MemberId)], IdentityConstants.ApplicationScheme);
         var backOffice = new ClaimsIdentity([new(ClaimTypes.NameIdentifier, BackOfficeKey)], Constants.Security.BackOfficeAuthenticationType);
         var principal = new ClaimsPrincipal(signedIn switch {
@@ -131,6 +131,39 @@ public sealed class ReportAccessPolicyTests
             };
             Assert.True(owner == await policy.AuthorizeAsync(request, default), $"{action} by {signedIn} on a view saved by {savedBy}");
         }
+    }
+
+    [Fact]
+    public async Task A_saved_view_belongs_to_the_value_of_the_configured_identity_claim()
+    {
+        var user = Stub<IUser>((method, _) => method.Name switch {
+            "get_IsApproved" => true, "get_IsLockedOut" => false, "get_Groups" => Array.Empty<IReadOnlyUserGroup>(),
+            _ => throw new NotImplementedException(method.Name),
+        });
+        var users = Stub<IUserService>((method, _) => method.Name == "GetAsync" ? Task.FromResult<IUser?>(user) : throw new NotImplementedException());
+        var policy = new DefaultReportAccessPolicy(new AppBlocks.Authentication.ApplicationAccessPolicy(users), Options.Create(new AppBlocksOptions()), null!,
+            Monitor(new InteractiveReportOptions { IdentityClaim = ClaimTypes.Email }));
+        var member = new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, MemberId), new(ClaimTypes.Email, "reader@example.invalid")],
+            IdentityConstants.ApplicationScheme));
+        Assert.Equal("reader@example.invalid", DefaultReportAccessPolicy.OwnerKey(member, ClaimTypes.Email));
+        foreach (var (savedBy, owner) in new[] { ("reader@example.invalid", true), (MemberId, false) })
+        {
+            var saved = new InteractiveReport.Core.SavedReports.SavedReportMetadata(7, "__views", null, "Mine", savedBy, IsGlobal: false, IsDefault: false,
+                DateTime.UtcNow, InteractiveReport.Core.SavedReports.SavedReportOrigin.User);
+            foreach (var action in new[] { InteractiveReportAction.UpdateSavedReport, InteractiveReportAction.DeleteSavedReport })
+                Assert.Equal(owner, await policy.AuthorizeAsync(new InteractiveReportAuthorizationRequest {
+                    User = member, Action = action, RequestServices = null!,
+                    Resource = new InteractiveReportAuthorizationResource { ReportName = "__views", SavedReport = saved },
+                }, default));
+        }
+    }
+
+    private static IOptionsMonitor<InteractiveReportOptions> Monitor(InteractiveReportOptions? options = null) => new FixedMonitor(options ?? new());
+    private sealed class FixedMonitor(InteractiveReportOptions value) : IOptionsMonitor<InteractiveReportOptions>
+    {
+        public InteractiveReportOptions CurrentValue => value;
+        public InteractiveReportOptions Get(string? name) => value;
+        public IDisposable? OnChange(Action<InteractiveReportOptions, string?> listener) => null;
     }
 
     private static T Stub<T>(Func<MethodInfo, object?[]?, object?> invoke) where T : class {

@@ -8,7 +8,7 @@ public sealed class ConfigurationCollectionTests
     public async Task Configurations_have_stable_ids_independent_outputs_and_encrypted_keys()
     {
         using var site = new DocumentSettingsTests.SettingsSite();
-        await site.Store.DeleteAsync(DocumentSettingsStore.LegacyId);
+        await site.Store.DeleteAsync(DocumentSettingsStore.ConfiguredId);
         var pdf = await site.Store.SaveConfigurationAsync(new(null, "Browser PDF", "https://pdf.example/"));
         var printer = await site.Store.SaveConfigurationAsync(new(null, "Reception", "https://print.example/", "printer:reception", "print-secret"));
         var loaded = site.CreateStore();
@@ -43,7 +43,7 @@ public sealed class ConfigurationCollectionTests
     public async Task Saved_secrets_are_not_forwarded_to_a_changed_server_and_printers_require_a_key()
     {
         using var site = new DocumentSettingsTests.SettingsSite();
-        var id = DocumentSettingsStore.LegacyId;
+        var id = DocumentSettingsStore.ConfiguredId;
         await Assert.ThrowsAsync<ArgumentException>(() => site.Store.SaveConfigurationAsync(new(id, "Moved", "https://another.example/")));
         await Assert.ThrowsAsync<ArgumentException>(() => site.Store.SaveConfigurationAsync(new(null, "Printer", "https://print.example/", "printer:office")));
         await Assert.ThrowsAsync<ArgumentException>(() => site.Store.SaveConfigurationAsync(new(id, "Printer", "https://configured.example/", "printer:office", ClearApiKey: true)));
@@ -62,25 +62,5 @@ public sealed class ConfigurationCollectionTests
         using var site = new DocumentSettingsTests.SettingsSite();
         await Assert.ThrowsAsync<ArgumentException>(() => site.Store.SaveConfigurationAsync(new(null, "Invalid", "https://example/", output!, "secret")));
         Assert.Single(site.Store.List().Configurations);
-    }
-
-    [Fact]
-    public async Task Old_single_settings_are_migrated_without_losing_the_protected_secret()
-    {
-        using var site = new DocumentSettingsTests.SettingsSite();
-        await site.Store.SaveAsync(new SaveDocumentSettings("https://legacy.example/", "legacy-key"));
-        var path = Path.Combine(site.Root, "App_Data/AppBlocks/documents.json");
-        var data = JsonSerializer.Deserialize<StoredPressroomConfigurations>(await File.ReadAllTextAsync(path))!;
-        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new StoredDocumentSettings("https://legacy.example/", data.Configurations.Single().ProtectedApiKey, 25)));
-        var migrated = site.CreateStore();
-        var item = Assert.Single(migrated.List().Configurations);
-        Assert.Equal(DocumentSettingsStore.LegacyId, item.Id);
-        Assert.Equal("legacy-key", migrated.Resolve(item.Id).ApiKey);
-        Assert.Equal(25, item.TimeoutSeconds);
-        await migrated.SaveConfigurationAsync(new(null, "New PDF", "https://another.example/"));
-        Assert.Equal(2, migrated.List().Configurations.Count);
-        Assert.Equal("legacy-key", migrated.Resolve(item.Id).ApiKey);
-        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new StoredDocumentSettings(null, null, 65)));
-        Assert.Empty(site.Store.List().Configurations);
     }
 }

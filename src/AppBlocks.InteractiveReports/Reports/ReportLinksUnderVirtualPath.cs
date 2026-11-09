@@ -13,7 +13,7 @@ namespace AppBlocks.InteractiveReports.Reports;
 /// own. Definitions are therefore written as if the site were at the root: the SQL writes
 /// <see cref="SiteRootToken"/> where a URL it builds starts, and the edit pencil's template and
 /// the create button's URL are root-absolute. At options build time the token becomes the
-/// virtual path ("" at the root, "/wing" under one) and root-absolute links get the same prefix.
+/// virtual path ("" at the root, "/intranet" under one) and root-absolute links get the same prefix.
 /// Nothing changes when no virtual path is configured.
 /// </remarks>
 internal sealed class ReportLinksUnderVirtualPath(IHostingEnvironment hosting)

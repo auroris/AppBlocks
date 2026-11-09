@@ -14,9 +14,6 @@ namespace AppBlocks.Documents.PaperReports;
 
 public static class PaperReportExtensions
 {
-    public static IUmbracoBuilder AddPaperReports(this IUmbracoBuilder builder)
-        => builder.AddAppBlocksDocuments();
-
     internal static void RegisterPaperReports(IUmbracoBuilder builder)
     {
         builder.Services.AddScoped<SelfContainedHtml>();
@@ -26,7 +23,7 @@ public static class PaperReportExtensions
         builder.Services.AddHttpClient(SelfContainedHtml.ClientName, client => {
             client.Timeout = TimeSpan.FromSeconds(10);
             client.MaxResponseContentBufferSize = 8 * 1024 * 1024;
-        }).ConfigurePrimaryHttpMessageHandler(SelfContainedHtml.CreateHandler);
+        }).ConfigurePrimaryHttpMessageHandler(services => SelfContainedHtml.CreateHandler(SelfContainedHtml.AssetHosts.From(services.GetRequiredService<IConfiguration>())));
         builder.AddNotificationAsyncHandler<ContentPublishingNotification, PaperReportPublishValidator>();
         // Registered after AppBlocks' schema installer so fresh sites already have the document type.
         builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, PaperReportTemplates>();

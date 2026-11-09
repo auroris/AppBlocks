@@ -11,6 +11,13 @@ namespace AppBlocks.InteractiveReports.Reports;
 
 internal static class ReportPrintEndpoints
 {
+    /// <summary>
+    /// The paper sizes the Print dialog offers, in order, the first chosen to start with: names from <see cref="DocumentPageSize.Names"/>.
+    /// A4, Letter and Legal when the setting names none of them. A print request may still name any of those papers.
+    /// </summary>
+    internal const string PaperSizesSetting = "AppBlocks:InteractiveReports:PaperSizes";
+    private static readonly string[] DefaultPaperSizes = ["A4", "Letter", "Legal"];
+
     internal sealed record PrepareRequest(ReportState? Document, Guid DestinationId, string Scope = "all", string PageSize = "A4", bool Landscape = false);
     internal sealed record SubmitRequest(string? Token);
     private sealed record RenderedReport(ReportResult Result, string Title, string Html);
@@ -44,9 +51,24 @@ internal static class ReportPrintEndpoints
         var destinations = schema.Value!.Features.Contains(ReportFeatures.Download) ? Destinations(http) : [];
         return Results.Json(new {
             destinations = destinations.Select(d => new { d.Id, d.Name, output = d.Output.ToString().ToLowerInvariant(), d.Printer }),
+            paperSizes = PaperSizes(http.RequestServices.GetRequiredService<IConfiguration>()),
             antiforgeryToken = destinations.Count == 0 ? null : http.RequestServices.GetRequiredService<IAntiforgery>().GetAndStoreTokens(http).RequestToken,
         });
     }
+
+    internal static IReadOnlyList<string> PaperSizes(IConfiguration configuration)
+    {
+        var sizes = (configuration.GetSection(PaperSizesSetting).Get<string[]>() ?? []).Select(Paper).OfType<string>().Distinct().ToArray();
+        return sizes.Length > 0 ? sizes : DefaultPaperSizes;
+    }
+
+    /// <summary>A paper name as <see cref="DocumentPageSize.Names"/> spells it, or null for one that is not there.</summary>
+    private static string? Paper(string? name) => DocumentPageSize.Names.FirstOrDefault(paper => paper.Equals(name?.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The CSS page size of a paper. CSS has no Tabloid keyword, so it is written as its dimensions.</summary>
+    private static string CssPageSize(string paper, bool landscape) => paper == "Tabloid"
+        ? landscape ? "17in 11in" : "11in 17in"
+        : paper + (landscape ? " landscape" : " portrait");
 
     internal static async Task<IResult> Prepare(string name, HttpContext http, [FromServices] IInteractiveReportServer server,
         [FromServices] ReportPrintPreviews previews, CancellationToken ct)
@@ -54,17 +76,19 @@ internal static class ReportPrintEndpoints
         PrepareRequest? request;
         try { request = await JsonSerializer.DeserializeAsync<PrepareRequest>(http.Request.Body, IrJson.Options, ct); }
         catch (JsonException) { return Problem("Invalid print settings.", 400); }
-        if (request?.Document is null || request.Scope is not ("all" or "page") || request.PageSize is not ("A4" or "Letter" or "Legal"))
+        if (request?.Document is null || request.Scope is not ("all" or "page") || Paper(request.PageSize) is not { } paper)
             return Problem("Choose a report, row scope, and supported paper size.", 400);
         if (request.Scope == "page" && request.Document.Page is not { Index: > 0, Size: > 0 })
             return Problem("This report is not paged. Choose all matching rows.", 400);
         var destination = Destinations(http).FirstOrDefault(d => d.Id == request.DestinationId);
         if (destination is null) return Problem("This print destination is no longer available.", 409);
-        var (rendered, error) = await Render(name, request.Document, request.Scope, request.PageSize, request.Landscape, http, server, ct);
+        var (rendered, error) = await Render(name, request.Document, request.Scope, paper, request.Landscape, http, server, ct);
         if (error is not null) return error;
+        // The document is submitted by a later request, so the culture it formats in is this one's.
         var document = new DocumentRequest(rendered!.Html, InteractiveReportHttpRequest.SafeFileName(rendered.Title, ".pdf"),
-            new DocumentRenderOptions { PageSize = new(request.PageSize), Landscape = request.Landscape,
-                Margins = new(), JavaScript = false });
+            new DocumentRenderOptions { PageSize = new(paper), Landscape = request.Landscape,
+                Margins = new(), JavaScript = false, Locale = DocumentRenderOptions.LocaleName(System.Globalization.CultureInfo.CurrentCulture),
+                TimeZone = DocumentRenderOptions.ServerTimeZone });
         var token = previews.Add(new(Owner(http, name)!, destination, document, rendered.Result));
         return Results.Json(new { token, html = rendered.Html, rows = rendered.Result.Rows.Count, totalRows = rendered.Result.TotalRows });
     }
@@ -79,8 +103,12 @@ internal static class ReportPrintEndpoints
         var schema = await server.GetSchema(name, InteractiveReportHttpRequest.Context(http), ct);
         if (schema.Failure is not null) return (null, InteractiveReportHttpResult.Failure(schema.Failure, http));
         string html;
-        try { html = HtmlReportPresentation.Render(schema.Value!.Title, query.Value!, scope, pageSize, landscape); }
+        // The report library lays out A4, Letter and Legal; another paper takes its A4 layout with that paper's page size after it.
+        var laidOut = pageSize is "A4" or "Letter" or "Legal";
+        try { html = HtmlReportPresentation.Render(schema.Value!.Title, query.Value!, scope, laidOut ? pageSize : "A4", landscape); }
         catch (HtmlReportSizeLimitException ex) { return (null, Problem(ex.Message, 422)); }
+        if (!laidOut && html.IndexOf("</head>", StringComparison.OrdinalIgnoreCase) is >= 0 and var head)
+            html = html.Insert(head, "<style>@page{size:" + CssPageSize(pageSize, landscape) + "}</style>");
         return (new(query.Value!, schema.Value.Title, html), null);
     }
 

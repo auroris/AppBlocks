@@ -18,7 +18,7 @@ public sealed class DocumentOutputServiceTests
             Assert.Equal("configured-secret", request.Headers.GetValues("X-Api-Key").Single());
             return Json("{\"printers\":[\"office\",\"reception\",\"office\"]}");
         });
-        var result = await Service(site, factory).DiscoverPrintersAsync(new(DocumentSettingsStore.LegacyId, "https://configured.example/"));
+        var result = await Service(site, factory).DiscoverPrintersAsync(new(DocumentSettingsStore.ConfiguredId, "https://configured.example/"));
         Assert.Equal(new[] { "office", "reception" }, result.Printers);
         Assert.Equal(1, factory.Calls);
         Assert.Equal(1, factory.Disposals);
@@ -40,7 +40,7 @@ public sealed class DocumentOutputServiceTests
     public async Task Malformed_printer_responses_are_rejected(string body)
     {
         using var site = new DocumentSettingsTests.SettingsSite();
-        await Assert.ThrowsAsync<JsonException>(() => Service(site, new(_ => Json(body))).DiscoverPrintersAsync(new(DocumentSettingsStore.LegacyId, "https://configured.example/")));
+        await Assert.ThrowsAsync<JsonException>(() => Service(site, new(_ => Json(body))).DiscoverPrintersAsync(new(DocumentSettingsStore.ConfiguredId, "https://configured.example/")));
     }
 
     [Fact]
@@ -127,7 +127,7 @@ public sealed class DocumentOutputServiceTests
     public async Task A_hand_edited_output_is_left_out_of_the_destinations_rather_than_breaking_them()
     {
         using var site = new DocumentSettingsTests.SettingsSite();
-        await site.Store.DeleteAsync(DocumentSettingsStore.LegacyId);
+        await site.Store.DeleteAsync(DocumentSettingsStore.ConfiguredId);
         var pdf = await site.Store.SaveConfigurationAsync(new(null, "Browser PDF", "https://pdf.example/"));
         var path = Path.Combine(site.Root, "App_Data/AppBlocks/documents.json");
         var stored = JsonSerializer.Deserialize<StoredPressroomConfigurations>(await File.ReadAllTextAsync(path))!;
@@ -148,7 +148,7 @@ public sealed class DocumentOutputServiceTests
     public async Task Only_printer_configurations_do_not_turn_template_document_GETs_into_print_jobs()
     {
         using var site = new DocumentSettingsTests.SettingsSite();
-        await site.Store.DeleteAsync(DocumentSettingsStore.LegacyId);
+        await site.Store.DeleteAsync(DocumentSettingsStore.ConfiguredId);
         await site.Store.SaveConfigurationAsync(new(null, "Office", "https://printing.example/", "printer:office", "key"));
         var factory = new Factory(_ => throw new Exception("GET must not print"));
         using var result = await Service(site, factory).RenderDefaultPdfAsync(new() { Html = "<h1>Print in browser</h1>", FileName = "report.pdf" }, default);
@@ -157,7 +157,7 @@ public sealed class DocumentOutputServiceTests
     }
 
     private static DocumentOutputService Service(DocumentSettingsTests.SettingsSite site, Factory factory)
-        => new(site.Configuration, factory, NullLogger<DocumentOutputService>.Instance, site.Store);
+        => new(factory, NullLogger<DocumentOutputService>.Instance, site.Store);
     private static HttpResponseMessage Json(string body, HttpStatusCode status = HttpStatusCode.OK)
         => new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
     private sealed class Factory(Func<HttpRequestMessage, HttpResponseMessage> respond) : IHttpClientFactory

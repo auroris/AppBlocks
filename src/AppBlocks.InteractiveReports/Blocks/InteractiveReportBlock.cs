@@ -52,6 +52,7 @@ public sealed class InteractiveReportBlock(ReportDefinitionCompiler compiler,
 
 
     /// <summary>Print opens /api/paper-reports/{key}, which only a Paper report node answers. A node not yet imported is not judged.</summary>
+    // TODO(merge): replace with AppBlocksValidator.PaperReport(contents, picked, errors), which the core makes public; until then this repeats it.
     private void PaperReport(string picked, List<string> errors)
     {
         if (contents is null || PaperReportLinks.PickedKey(picked) is not { } key || contents.GetById(key) is not { } node) return;

@@ -20,17 +20,16 @@ public sealed class WebPageBlocksTests
         using var scope = provider.CreateScope();
         var validator = scope.ServiceProvider.GetRequiredService<AppBlocksValidator>();
         await validator.LoadAsync();
-        Assert.Empty(validator.ValidateWebsite(null));
-        Assert.Empty(validator.ValidateWebsite(BlockPages.Empty().ToJsonString()));
-        Assert.Empty(validator.ValidateWebsite(BlockPages.Static("Public content").ToJsonString()));
+        Assert.Empty(validator.Validate(null));
+        Assert.Empty(validator.Validate(BlockPages.Empty().ToJsonString()));
+        Assert.Empty(validator.Validate(BlockPages.Static("Public content").ToJsonString()));
         var mixed = ReportBlockSupport.InteractivePage();
-        Assert.Empty(validator.ValidateWebsite(mixed.ToJsonString()));
-        Assert.Contains(validator.Validate(mixed.ToJsonString()), error => error.Contains("Use one form per page"));
+        Assert.Empty(validator.Validate(mixed.ToJsonString()));
 
         // The legacy page's block-count rule is not imposed on general content pages.
         var contentPage = BlockPages.Empty();
         for (var i = 0; i < 501; i++) BlockPages.Layout(contentPage).Add(BlockPages.Add(contentPage, AppBlockSchema.HtmlAlias, ("html", "<p>Content</p>")));
-        Assert.Empty(validator.ValidateWebsite(contentPage.ToJsonString()));
+        Assert.Empty(validator.Validate(contentPage.ToJsonString()));
     }
 
     [Fact]
@@ -42,18 +41,18 @@ public sealed class WebPageBlocksTests
         await validator.LoadAsync();
         var standalone = BlockPages.Empty();
         BlockPages.Layout(standalone).Add(BlockPages.Add(standalone, "appText", ("field", "customer")));
-        Assert.Contains(validator.ValidateWebsite(standalone.ToJsonString()), error => error.Contains("inside a form"));
+        Assert.Contains(validator.Validate(standalone.ToJsonString()), error => error.Contains("inside a form"));
 
         var mixed = ReportBlockSupport.InteractivePage();
         var form = BlockPages.Blocks(mixed, "appForm").First();
         var configuration = BlockPages.Value(form, "formInterface")!["contentData"]![0]!;
         BlockPages.SetValue(configuration, "resource", "missing-resource");
-        Assert.Contains(validator.ValidateWebsite(mixed.ToJsonString()), error => error.Contains("Select a registered C# form class"));
+        Assert.Contains(validator.Validate(mixed.ToJsonString()), error => error.Contains("Select a registered C# form class"));
 
         var nested = BlockPages.OrdersForm();
         var report = BlockPages.Merge(nested, ReportBlockSupport.OrdersReport())[0];
         BlockPages.Layout(nested)[0]!["areas"]![0]!["items"]!.AsArray().Add(report);
-        Assert.Contains(validator.ValidateWebsite(nested.ToJsonString()), error => error.Contains("cannot be nested inside a form"));
+        Assert.Contains(validator.Validate(nested.ToJsonString()), error => error.Contains("cannot be nested inside a form"));
     }
 
     private static ServiceProvider Services()

@@ -11,13 +11,26 @@ namespace AppBlocks.Documents.PaperReports;
 /// Packages a rendered report's stylesheets, images, fonts and scripts into one portable HTML file. Packaging is best
 /// effort: an asset that cannot be read keeps its original reference and is logged, so one missing image never costs
 /// the download. The site's own assets come from disk only. Other http(s) assets are fetched without credentials,
-/// cookies or redirects, and never from loopback or link-local addresses.
+/// cookies or redirects, and never from loopback, link-local or private-network addresses unless
+/// <see cref="AllowedHostsSetting"/> names them.
 /// </summary>
-public sealed partial class SelfContainedHtml(IWebHostEnvironment environment, IHttpClientFactory clients, ILogger<SelfContainedHtml> logger)
+public sealed partial class SelfContainedHtml(IWebHostEnvironment environment, IHttpClientFactory clients, ILogger<SelfContainedHtml> logger,
+    IConfiguration configuration)
 {
     /// <summary>The named client that fetches authored http(s) assets; <see cref="CreateHandler"/> is its handler.</summary>
     public const string ClientName = "PaperReportAssets";
+
+    /// <summary>
+    /// Host names, addresses and CIDR ranges (such as <c>reports.intranet</c> or <c>10.20.0.0/16</c>) that assets may be fetched from
+    /// although their addresses are refused by default, for a template that embeds images from a server on the site's own network.
+    /// </summary>
+    public const string AllowedHostsSetting = "AppBlocks:Documents:AllowedAssetHosts";
+
+    /// <summary>The name of the meta element whose content <c>none</c> keeps the print stylesheet out of a template's documents.</summary>
+    public const string PrintStylesheetMeta = "appblocks-print-stylesheet";
+
     private static readonly FileExtensionContentTypeProvider MimeTypes = new();
+    private readonly AssetHosts allowed = AssetHosts.From(configuration);
 
     public async Task<string> EmbedAsync(string html, Uri documentUri, PathString pathBase, string? printStylesheet, CancellationToken ct, string? pageStyle = null)
     {
@@ -37,7 +50,10 @@ public sealed partial class SelfContainedHtml(IWebHostEnvironment environment, I
         // An asset that cannot be read is remembered as null, so a repeated reference is tried once per document.
         var assets = new Dictionary<Uri, (byte[] Bytes, string MediaType)?>();
         var head = document.DocumentNode.SelectSingleNode("//head");
-        if (head is not null && printStylesheet is not null)
+        // A template that styles itself entirely leaves the print stylesheet out with <meta name="appblocks-print-stylesheet" content="none">.
+        var optedOut = document.DocumentNode.SelectSingleNode("//meta[@name='" + PrintStylesheetMeta + "']")?.GetAttributeValue("content", "")
+            .Trim().Equals("none", StringComparison.OrdinalIgnoreCase) == true;
+        if (head is not null && printStylesheet is not null && !optedOut)
         {
             var link = document.CreateElement("link");
             link.SetAttributeValue("rel", "stylesheet");
@@ -80,9 +96,10 @@ public sealed partial class SelfContainedHtml(IWebHostEnvironment environment, I
                 logger.LogDebug("Paper report asset {Asset} is not an http or https address; its reference is kept.", uri);
                 return null;
             }
-            if (IsRefusedHost(uri))
+            if (IsRefusedHost(uri, allowed))
             {
-                logger.LogWarning("Paper report asset {Asset} is on a loopback or link-local address, which assets are never fetched from; its reference is kept.", uri);
+                logger.LogWarning("Paper report asset {Asset} is on a loopback, link-local or private address, which assets are fetched from only when "
+                    + AllowedHostsSetting + " names it; its reference is kept.", uri);
                 return null;
             }
             try
@@ -178,21 +195,26 @@ public sealed partial class SelfContainedHtml(IWebHostEnvironment environment, I
     }
 
     /// <summary>
-    /// Loopback, link-local and unspecified addresses. No legitimate asset lives there, while the server's own
-    /// services and cloud metadata endpoints (169.254.169.254) do.
+    /// Loopback, link-local, unspecified and private-network addresses (10/8, 172.16/12, 192.168/16, 100.64/10, fc00::/7 and
+    /// fec0::/10), unless <paramref name="allowed"/> names them. A template may write a data value into an asset address, so
+    /// whoever can write that value would otherwise choose what the server fetches from its own network position: its own
+    /// services, the LAN's and cloud metadata endpoints (169.254.169.254) all live on these addresses.
     /// </summary>
-    public static bool IsRefusedAddress(IPAddress address)
+    public static bool IsRefusedAddress(IPAddress address, AssetHosts? allowed = null)
     {
         if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (allowed?.Allows(address) == true) return false;
         if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any)) return true;
-        return address.AddressFamily == AddressFamily.InterNetwork ? address.GetAddressBytes() is [169, 254, ..] : address.IsIPv6LinkLocal;
+        return address.AddressFamily == AddressFamily.InterNetwork
+            ? address.GetAddressBytes() is [169, 254, ..] or [10, ..] or [172, >= 16 and <= 31, ..] or [192, 168, ..] or [100, >= 64 and <= 127, ..]
+            : address.IsIPv6LinkLocal || address.IsIPv6UniqueLocal || address.IsIPv6SiteLocal;
     }
 
     /// <summary>
     /// The asset client's handler: no redirects, cookies or credentials, and no connection to a refused address, which
     /// a host name that resolves to one would otherwise reach. Through a proxy, the proxy decides where requests go.
     /// </summary>
-    public static SocketsHttpHandler CreateHandler() => new()
+    public static SocketsHttpHandler CreateHandler(AssetHosts? allowed = null) => new()
     {
         AllowAutoRedirect = false,
         UseCookies = false,
@@ -201,8 +223,9 @@ public sealed partial class SelfContainedHtml(IWebHostEnvironment environment, I
         {
             var host = context.DnsEndPoint.Host;
             var addresses = await Dns.GetHostAddressesAsync(host, ct);
-            if (string.Equals(host.Trim('[', ']'), context.InitialRequestMessage.RequestUri?.IdnHost.Trim('[', ']'), StringComparison.OrdinalIgnoreCase))
-                addresses = addresses.Where(address => !IsRefusedAddress(address)).ToArray();
+            if (string.Equals(host.Trim('[', ']'), context.InitialRequestMessage.RequestUri?.IdnHost.Trim('[', ']'), StringComparison.OrdinalIgnoreCase)
+                && allowed?.Allows(host) != true)
+                addresses = addresses.Where(address => !IsRefusedAddress(address, allowed)).ToArray();
             if (addresses.Length == 0) throw new HttpRequestException($"{host} has no address that paper report assets may be fetched from.");
             var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
             try
@@ -218,8 +241,35 @@ public sealed partial class SelfContainedHtml(IWebHostEnvironment environment, I
         },
     };
 
-    private static bool IsRefusedHost(Uri uri) => uri.IsLoopback || uri.IdnHost.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)
-        || uri.HostNameType is UriHostNameType.IPv4 or UriHostNameType.IPv6 && IPAddress.TryParse(uri.DnsSafeHost.Trim('[', ']'), out var address) && IsRefusedAddress(address);
+    private static bool IsRefusedHost(Uri uri, AssetHosts allowed) => !allowed.Allows(uri.IdnHost)
+        && (uri.IsLoopback || uri.IdnHost.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)
+            || uri.HostNameType is UriHostNameType.IPv4 or UriHostNameType.IPv6 && IPAddress.TryParse(uri.DnsSafeHost.Trim('[', ']'), out var address)
+                && IsRefusedAddress(address, allowed));
+
+    /// <summary>
+    /// The hosts <see cref="AllowedHostsSetting"/> names: a host name is allowed whatever it resolves to, and an address or CIDR
+    /// range allows the addresses it covers, whichever host name reached them. Entries that are neither are host names.
+    /// </summary>
+    public sealed class AssetHosts
+    {
+        private readonly HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
+        private readonly List<IPNetwork> ranges = [];
+
+        public AssetHosts(IEnumerable<string> entries)
+        {
+            foreach (var entry in entries.Select(entry => entry.Trim()).Where(entry => entry.Length > 0))
+            {
+                if (IPNetwork.TryParse(entry, out var range)) ranges.Add(range);
+                else if (IPAddress.TryParse(entry.Trim('[', ']'), out var address))
+                    ranges.Add(new(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address, address.AddressFamily == AddressFamily.InterNetwork ? 32 : 128));
+                else names.Add(entry.TrimEnd('.'));
+            }
+        }
+
+        public static AssetHosts From(IConfiguration configuration) => new(configuration.GetSection(AllowedHostsSetting).Get<string[]>() ?? []);
+        public bool Allows(string host) => names.Contains(host.Trim('[', ']').TrimEnd('.'));
+        public bool Allows(IPAddress address) => ranges.Any(range => range.Contains(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address));
+    }
 
     private static IEnumerable<(string Url, string Descriptor)> SourceSet(string value)
     {

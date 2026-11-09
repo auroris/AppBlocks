@@ -5,49 +5,25 @@ using Pressroom.Contracts;
 
 namespace AppBlocks.Documents;
 
-public sealed record DocumentSettingsInfo(string? PressroomUrl, bool HasApiKey, double TimeoutSeconds, bool Saved);
-public sealed record SaveDocumentSettings(string? PressroomUrl, string? ApiKey = null,
-    bool ClearApiKey = false, double TimeoutSeconds = 65);
-internal sealed record StoredDocumentSettings(string? PressroomUrl, string? ProtectedApiKey, double TimeoutSeconds);
-internal sealed record PressroomSettings(string? Url, string? ApiKey, double TimeoutSeconds)
-{
-    public static PressroomSettings FromConfiguration(IConfiguration configuration)
-    {
-        string? Value(string key) => configuration["AppBlocks:Documents:Pressroom:" + key] ?? configuration["Pressroom:" + key];
-        return new(Value("Url"), Value("ApiKey"),
-            double.TryParse(Value("TimeoutSeconds"), NumberStyles.Float, CultureInfo.InvariantCulture, out var timeout) ? timeout : 65);
-    }
-}
-
 /// <summary>
-/// Installation settings, outside content and schema definitions. A saved blank URL deliberately disables configured
-/// Pressroom. Secrets are protected with the site's Data Protection keys and never returned by the API.
+/// Installation settings, outside content and schema definitions. Until settings are saved, configuration under
+/// <c>AppBlocks:Documents:Pressroom</c> (<c>Url</c>, <c>ApiKey</c>, <c>TimeoutSeconds</c>) supplies one PDF configuration.
+/// Secrets are protected with the site's Data Protection keys and never returned by the API.
 /// </summary>
 public sealed class DocumentSettingsStore(IConfiguration configuration, IWebHostEnvironment environment,
     IDataProtectionProvider protection)
 {
+    private const string ConfigurationSection = "AppBlocks:Documents:Pressroom:";
     private readonly IDataProtector protector = protection.CreateProtector("AppBlocks.Documents.Settings.v1");
     private readonly SemaphoreSlim gate = new(1, 1);
-    internal static readonly Guid LegacyId = new("3d49f9bd-ec0d-4397-9017-689245984630");
+    /// <summary>The id of the PDF configuration that site configuration supplies, which keeps it once saved.</summary>
+    internal static readonly Guid ConfiguredId = new("3d49f9bd-ec0d-4397-9017-689245984630");
     private string FilePath => Path.Combine(configuration["AppBlocks:DataRoot"]
         ?? environment.ContentRootPath, "App_Data", "AppBlocks", "documents.json");
 
     public PressroomConfigurationList List() => new(ReadConfigurations().Where(c => !string.IsNullOrWhiteSpace(c.Url)).Select(Info).ToArray(), File.Exists(FilePath));
     private static PressroomConfigurationInfo Info(StoredPressroomConfiguration item)
         => new(item.Id, item.Name, item.Url, item.ProtectedApiKey is not null, item.Output, item.TimeoutSeconds);
-
-    // Compatibility access to the original single PDF configuration. New consumers use the collection.
-    public DocumentSettingsInfo Get()
-    {
-        var item = ReadConfigurations().FirstOrDefault(c => c.Output == "pdf");
-        return new(string.IsNullOrWhiteSpace(item?.Url) ? null : item.Url, item?.ProtectedApiKey is not null, item?.TimeoutSeconds ?? 65, File.Exists(FilePath));
-    }
-
-    internal PressroomSettings Resolve()
-    {
-        var item = ReadConfigurations().FirstOrDefault(c => c.Output == "pdf") is { } stored ? Resolve(stored) : null;
-        return new(string.IsNullOrWhiteSpace(item?.Url) ? null : item.Url, item?.ApiKey, item?.TimeoutSeconds ?? 65);
-    }
 
     internal ResolvedPressroomConfiguration? DefaultPdf()
         => ReadConfigurations().FirstOrDefault(c => c.Output == "pdf" && !string.IsNullOrWhiteSpace(c.Url)) is { } item ? Resolve(item) : null;
@@ -136,28 +112,6 @@ public sealed class DocumentSettingsStore(IConfiguration configuration, IWebHost
         if (!ValidTimeout(timeout)) throw new ArgumentException("Enter a positive timeout of at most 2147483 seconds.");
     }
 
-    public async Task SaveAsync(SaveDocumentSettings request, CancellationToken ct = default)
-    {
-        var url = request.PressroomUrl?.Trim();
-        if (string.IsNullOrEmpty(url)) url = null;
-        if (url is not null && !ValidAddress(url))
-            throw new ArgumentException("Enter an absolute HTTP or HTTPS Pressroom URL without credentials, a query or a fragment, or leave it empty to use HTML.");
-        if (!ValidTimeout(request.TimeoutSeconds)) throw new ArgumentException("Enter a positive timeout of at most 2147483 seconds.");
-        await gate.WaitAsync(ct);
-        try
-        {
-            var items = ReadConfigurations();
-            var existing = items.FirstOrDefault(c => c.Id == LegacyId);
-            var key = request.ClearApiKey ? null : string.IsNullOrWhiteSpace(request.ApiKey)
-                ? existing?.ProtectedApiKey is { } secret ? protector.Unprotect(secret) : null : request.ApiKey.Trim();
-            items.RemoveAll(c => c.Id == LegacyId);
-            // Retain the old blank-URL record solely for the legacy accessor. It is not a destination.
-            items.Insert(0, new(LegacyId, "Pressroom PDF", url ?? "", key is null ? null : protector.Protect(key), "pdf", request.TimeoutSeconds));
-            await WriteAsync(items, ct);
-        }
-        finally { gate.Release(); }
-    }
-
     internal static bool ValidAddress(string url) => Uri.TryCreate(url, UriKind.Absolute, out var address)
         && address.Scheme is "http" or "https" && address.UserInfo.Length == 0 && address.Query.Length == 0 && address.Fragment.Length == 0;
     internal static bool ValidTimeout(double seconds) => double.IsFinite(seconds) && seconds is > 0 and <= int.MaxValue / 1000d;
@@ -177,18 +131,15 @@ public sealed class DocumentSettingsStore(IConfiguration configuration, IWebHost
     {
         if (!File.Exists(FilePath))
         {
-            var defaults = PressroomSettings.FromConfiguration(configuration);
-            return string.IsNullOrWhiteSpace(defaults.Url) ? [] : [new(LegacyId, "Pressroom PDF", defaults.Url,
-                string.IsNullOrWhiteSpace(defaults.ApiKey) ? null : protector.Protect(defaults.ApiKey), "pdf", defaults.TimeoutSeconds)];
+            var url = configuration[ConfigurationSection + "Url"];
+            var key = configuration[ConfigurationSection + "ApiKey"];
+            var timeout = double.TryParse(configuration[ConfigurationSection + "TimeoutSeconds"], NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) ? seconds : 65;
+            return string.IsNullOrWhiteSpace(url) ? [] : [new(ConfiguredId, "Pressroom PDF", url,
+                string.IsNullOrWhiteSpace(key) ? null : protector.Protect(key), "pdf", timeout)];
         }
         using var stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var json = JsonDocument.Parse(stream);
-        if (json.RootElement.TryGetProperty("Version", out var version))
-        {
-            if (version.GetInt32() != 2) throw new JsonException("Unsupported document settings version.");
-            return json.RootElement.Deserialize<StoredPressroomConfigurations>()?.Configurations ?? throw new JsonException("Missing Pressroom configurations.");
-        }
-        var legacy = json.RootElement.Deserialize<StoredDocumentSettings>() ?? throw new JsonException("Invalid document settings.");
-        return [new(LegacyId, "Pressroom PDF", legacy.PressroomUrl ?? "", legacy.ProtectedApiKey, "pdf", legacy.TimeoutSeconds)];
+        if (!json.RootElement.TryGetProperty("Version", out var version) || version.GetInt32() != 2) throw new JsonException("Unsupported document settings version.");
+        return json.RootElement.Deserialize<StoredPressroomConfigurations>()?.Configurations ?? throw new JsonException("Missing Pressroom configurations.");
     }
 }

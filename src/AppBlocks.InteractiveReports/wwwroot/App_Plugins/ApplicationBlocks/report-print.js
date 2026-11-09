@@ -45,7 +45,7 @@ export async function openPrintDialog(report) {
     }
     const destination = select("Destination", []);
     const scope = select("Rows", [["all", "All matching rows"], ["page", "Current page"]]);
-    const paper = select("Paper size", [["A4", "A4"], ["Letter", "Letter"], ["Legal", "Legal"]]);
+    const paper = select("Paper size", []);
     const orientation = select("Orientation", [["portrait", "Portrait"], ["landscape", "Landscape"]]);
     const status = element("p", "Loading print destinations…", { role: "status", "aria-live": "polite" });
     const frame = element("iframe", null, { title: "Print document preview", sandbox: "" });
@@ -125,6 +125,8 @@ export async function openPrintDialog(report) {
             report.printHandler = null; status.textContent = "No print destinations are available."; return;
         }
         csrf = options.antiforgeryToken;
+        // The site chooses the papers on offer (AppBlocks:InteractiveReports:PaperSizes); the first is chosen to start with.
+        for (const size of options.paperSizes?.length ? options.paperSizes : ["A4", "Letter", "Legal"]) paper.append(element("option", size, { value: size }));
         for (const item of options.destinations) {
             const option = element("option", `${item.name} — ${item.output === "printer" ? item.printer : "PDF"}`, { value: item.id });
             option.dataset.output = item.output; destination.append(option);

@@ -53,7 +53,7 @@
     },
     {
       "type": "propertyEditorUi",
-      "alias": "AppHost.ReportState",
+      "alias": "AppBlocks.ReportState",
       "name": "Application report starting view",
       "element": "/App_Plugins/ApplicationBlocks/report-state.js",
       "meta": {

@@ -35,7 +35,7 @@ internal static class ReportBlockSupport
             var connections = new ConnectionCatalog(configuration, sp.GetRequiredService<IWebHostEnvironment>(), new EphemeralDataProtectionProvider(),
                 sp.GetService<AppBlocksBuilder>(), sp);
             // A block's own source needs only the connections, the compiler and the runtime; the rest read published content.
-            var catalog = new PublishedReportCatalog(null!, null!, null!, sp.GetRequiredService<IOptionsMonitor<InteractiveReportOptions>>(),
+            var catalog = new PublishedReportCatalog(null!, null!, null!, null!, sp.GetRequiredService<IOptionsMonitor<InteractiveReportOptions>>(),
                 configuration, sp.GetRequiredService<DataSourceRuntime>(), compiler, null!, NullLogger<PublishedReportCatalog>.Instance, connections);
             return new InteractiveReportBlock(compiler, catalog, null!, connections);
         });
