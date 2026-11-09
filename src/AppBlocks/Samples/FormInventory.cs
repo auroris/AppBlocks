@@ -14,6 +14,14 @@ public sealed record FormInventoryResult(IReadOnlyList<DiscoveredForm> Forms, IR
 /// <summary>Reads saved document values, including drafts and variants, without requiring publication.</summary>
 public sealed class FormInventory(IContentService content, FormResourceRegistry resources, IContentTypeService? types = null)
 {
+    /// <summary><see cref="Read"/> with published data sources loaded first, so a form on one shows its fields.</summary>
+    public async Task<FormInventoryResult> ReadAsync(Guid? pageKey = null)
+    {
+        await resources.LoadAsync();
+        return Read(pageKey);
+    }
+
+    /// <summary>The saved forms. A form on a published data source shows its fields only once the registry is loaded, as <see cref="ReadAsync"/> does.</summary>
     public FormInventoryResult Read(Guid? pageKey = null)
     {
         var forms = new List<DiscoveredForm>(); var problems = new List<string>();
@@ -63,7 +71,8 @@ public sealed class FormInventory(IContentService content, FormResourceRegistry 
                 if (first is not null) resourceAlias = Text(first, "resource");
             }
             IReadOnlyList<FormField> contract;
-            try { contract = resources?.RegisteredResources.GetValueOrDefault(resourceAlias)?.Fields ?? []; }
+            // Find reads the providers only once they are loaded, and throws otherwise, which leaves a data source's form without its contract.
+            try { contract = resourceAlias.Length > 0 ? resources?.Find(resourceAlias)?.Fields ?? [] : []; }
             catch (Exception error) when (error is not OperationCanceledException) { contract = []; }
             var fieldKeys = FindChildren(layouts, formKey);
             var fields = new List<FormField>();

@@ -67,7 +67,7 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
         var parameters = FormEndpoints.Parameters(request.Request.Query);
         // The form the block sits in, if any: its record is the owner by default and supplies :FIELD values.
         var formBlock = flat.FirstOrDefault(b => b.Content.ContentType.Alias == "appForm" && AppBlockContent.Flatten(b.Areas.SelectMany(a => a)).Any(c => c.ContentKey == blockKey));
-        var form = formBlock is null ? null : await FormDefinition.ResolveAsync(page, formBlock.ContentKey, resources, catalog, culture);
+        var form = formBlock is null ? null : await FormDefinition.ResolveAsync(page, formBlock.ContentKey, resources, catalog, culture, request.RequestServices.GetServices<IAppBlockPlugin>());
 
         IFormResource resource; string? key;
         if (string.IsNullOrWhiteSpace(ownerResource))
@@ -111,8 +111,11 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
         {
             if (form is null || Single(request.Request.Query[form.KeyParameter]) is not { } recordKey || FormResourceAccess.Refusal(form.Resource, user) is not null) return null;
             var record = await form.Resource.LoadAsync(recordKey, new FormExecutionContext(user, pageKey, form.Block.ContentKey, form.Revision, Parameters: parameters), ct);
-            if (record.Record is null || !record.Record.Values.TryGetValue(text[7..], out var field)) return null;
-            return Text(field);
+            // Publishing accepts the alias in any letter case, as editors' names are matched everywhere else, so the record is read the same way.
+            if (record.Record is null) return null;
+            var alias = text[7..];
+            if (record.Record.Values.TryGetValue(alias, out var exact)) return Text(exact);
+            return record.Record.Values.FirstOrDefault(value => value.Key.Equals(alias, StringComparison.OrdinalIgnoreCase)) is { Key: not null } field ? Text(field.Value) : null;
         }
         return text;
     }

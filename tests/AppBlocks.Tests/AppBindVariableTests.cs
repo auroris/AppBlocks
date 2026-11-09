@@ -85,8 +85,8 @@ public sealed class AppBindVariableTests
         Assert.Equal("2026-10-23T23:30:00-06:00", variables.Resolve(":NOW", "datetime"));
         Assert.Equal("2026-10-24", variables.Resolve(":NOW_UTC", "date"));
         Assert.Equal("2026-10-24T05:30:00Z", variables.Resolve(":NOW_UTC", "text"));
-        // A date-time field holds the server's local time; publishing refuses :NOW_UTC for one, and nothing comes of it here.
-        Assert.Null(variables.Resolve(":NOW_UTC", "datetime"));
+        // A date-time carries its offset, so :NOW_UTC gives a date-time field the UTC moment with +00:00.
+        Assert.Equal("2026-10-24T05:30:00+00:00", variables.Resolve(":NOW_UTC", "datetime"));
         Assert.Null(variables.Resolve(":NOW", "number"));
         // What is not a variable a default can name stays the text it is.
         foreach (var text in new[] { ":USER_GROUPS", ":FIELD.topic", ":ARG.topic", ":NOT_A_VARIABLE", ":PARAM.", "plain text" })

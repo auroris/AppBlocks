@@ -25,10 +25,9 @@ public sealed record DataSourceSaveResult(FormResult Master, IReadOnlyList<DataS
 }
 
 /// <summary>
-/// A master record and the rows of its detail blocks, saved in one transaction on one connection, as an Oracle APEX page saves a
-/// form and its interactive grids. The master is written first, so a new master's key becomes the link value of its new rows; its
-/// backing class sees every detail batch and may apply, change or refuse changes; the engine applies the rest with the checks a
-/// tabular save makes, and one commit keeps all of it or none.
+/// A master record and the rows of its detail blocks, saved in one transaction on one connection. The master is written first, so
+/// a new master's key becomes the link value of its new rows; its backing class sees every detail batch and may apply, change or
+/// refuse changes; the engine applies the rest with the checks a tabular save makes, and one commit keeps all of it or none.
 /// </summary>
 public sealed partial class SqlDataSource
 {
@@ -73,20 +72,20 @@ public sealed partial class SqlDataSource
             master = creating ? Json(plan, values!).OrderBy(p => p.Key, StringComparer.Ordinal).ToArray() : null,
             details = batches.Select(b => b.Hash).ToArray(),
         }))));
-        using var gate = await runtime.Receipts.EnterAsync(batches.Select(b => b.Receipt).Concat(receipt is null ? [] : [receipt]), ct);
-        if (receipt is not null && runtime.Receipts.Find(receipt) is { } earlier)
+        await using var gate = await runtime.Receipts.EnterAsync(batches.Select(b => b.Receipt).Concat(receipt is null ? [] : [receipt]).ToArray(), ct);
+        if (receipt is not null && await runtime.Receipts.FindAsync(receipt, ct) is { } earlier)
             return earlier.Hash == hash ? await AnswerAsync(await LoadAsync(earlier.Key, context with { SubmissionKey = null }, ct), batches, ct)
                 : new(FormResult.Invalid("", "This submission was already used with different values. Reload the form."));
         for (var i = 0; i < batches.Count; i++)
         {
-            if (runtime.Receipts.Find(batches[i].Receipt) is not { } applied) continue;
+            if (await runtime.Receipts.FindAsync(batches[i].Receipt, ct) is not { } applied) continue;
             // This batch was saved by an earlier attempt that lost its answer; it is not applied twice.
             if (applied.Hash == batches[i].Hash) { batches[i].Done = true; continue; }
             var reused = new DataSourceRowsResult(422, Errors: new Dictionary<string, string[]> { [""] = ["This submission was already used with different rows. Reload the page."] });
             return new(new(422, Errors: reused.Errors), Detail: i, Refusal: reused);
         }
 
-        var now = runtime.Now();
+        var now = runtime.Now(definition);
         var app = await AppAsync(context, ct);
         var shared = batches.Select(b => b.Detail).ToArray();
         foreach (var detail in shared) detail.MasterKey = key;
@@ -112,8 +111,8 @@ public sealed partial class SqlDataSource
         }, ct);
         if (failed is { } failure) return new(master, Detail: failure.Index, Refusal: failure.Refusal);
         if (master.Status != 200) return new(master);
-        if (receipt is not null) runtime.Receipts.Add(receipt, master.Record!.Key!, hash);
-        foreach (var batch in batches.Where(b => !b.Done)) runtime.Receipts.Add(batch.Receipt, "rows", batch.Hash);
+        if (receipt is not null) await runtime.Receipts.AddAsync(receipt, new(master.Record!.Key!, hash), ct);
+        foreach (var batch in batches.Where(b => !b.Done)) await runtime.Receipts.AddAsync(batch.Receipt, new("rows", batch.Hash), ct);
         return await AnswerAsync(master, batches, ct);
     }
 
@@ -154,7 +153,7 @@ public sealed partial class SqlDataSource
         PreparedBatch Refused(DataSourceRowsResult refusal) => new(this, null!, null!, batch, "", "", null) { Refusal = refusal };
         if (Ready is not { } plan) return Refused(DataSourceRowsResult.From(Unavailable()));
         if (await DataSourceQueries.ResolveReaderAsync(users, batch.Context, ct) is not { } user || !plan.Writable || !CanWrite(user)) return Refused(new(403));
-        if (plan.Columns.All(c => !c.Field.Equals(batch.LinkField, StringComparison.OrdinalIgnoreCase)))
+        if (plan.Field(batch.LinkField) is null)
             return Refused(DataSourceRowsResult.From(FormResult.Invalid("", $"'{batch.LinkField}' is not a field of the data source.")));
         if (batch.Changes.Count > MaxChanges) return Refused(new(422, Errors: new Dictionary<string, string[]> { [""] = [$"Save at most {MaxChanges} rows at a time."] }));
         if (!Guid.TryParse(batch.Context.SubmissionKey, out var submission))
@@ -171,6 +170,8 @@ public sealed partial class SqlDataSource
     internal async Task<DataSourceRowsResult?> ApplyBatchAsync(PreparedBatch batch, string masterKey, DateTimeOffset now, DbConnection connection, DbTransaction transaction, CancellationToken ct)
     {
         var plan = batch.Plan;
+        // The master's clock reading, as this source's date-times hold it.
+        now = runtime.As(definition, now);
         if (Link(plan, new DataSourceScope(batch.LinkField, masterKey), out var link, out var value) is { } problem) return DataSourceRowsResult.From(problem);
         // The master's class may have applied changes itself, changed others or added more; what is left gets the same checks.
         var changes = batch.Detail.Changes.ToArray();

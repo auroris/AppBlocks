@@ -123,6 +123,22 @@ public sealed class ReportAdministrationSiteTests
         Assert.False((await reportAdmin.GetAsync(Reports + "/__saved-reports/schema")).IsSuccessStatusCode);
     }
 
+    // Refused at the second request until the core fix in AppPageAuthorizationHandler (AppBlocks/Blocks/AppPageAccess.cs) merges: it
+    // compared only the primary identity, so the backoffice-only principal of /umbraco/reports failed once a Member cookie was there too.
+    [Fact]
+    public async Task An_administrator_signed_in_as_a_member_too_opens_a_report_block_through_the_backoffice_route()
+    {
+        await using var site = await PublicSite.StartAsync();
+        using var admin = await site.Administrator();
+        var block = PublicSite.ReportName(PublicSite.ReportPage, PublicSite.PublicReport);
+        await Json(admin, Reports + "/" + block + "/schema");
+        // The same browser signs in to the site as a Member: the backoffice route still takes the administrator alone.
+        await site.SignInAsync(admin, "member", Guid.NewGuid().ToString(), "Administrator's member account");
+        await Json(admin, Reports + "/" + block + "/schema");
+        using var query = await admin.PostAsJsonAsync(Reports + "/" + block + "/query", new { page = new { index = 1, size = 10 } });
+        Assert.True(query.IsSuccessStatusCode, await query.Content.ReadAsStringAsync());
+    }
+
     private static JsonElement Row(JsonElement listing, long id) => listing.EnumerateArray().Single(row => row.GetProperty("id").GetString() == id.ToString());
     private static string DeleteUrl(JsonElement row) => $"{Management}/reports/{row.GetProperty("id").GetString()}?modifiedUtc={Uri.EscapeDataString(row.GetProperty("modifiedUtc").GetString()!)}";
 

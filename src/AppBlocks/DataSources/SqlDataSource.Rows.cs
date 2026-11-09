@@ -39,8 +39,8 @@ public sealed record DataSourceRowsResult(int Status, IReadOnlyList<FormRecord>?
 /// </summary>
 public sealed partial class SqlDataSource
 {
-    /// <summary>The most changes one batch takes.</summary>
-    public const int MaxChanges = 200;
+    /// <summary>The most changes one batch takes (<see cref="DataSourceOptions.MaxChanges"/>).</summary>
+    public int MaxChanges => runtime.Options.MaxChanges;
 
     /// <summary>Whether the caller may write this data source at all: a writable table, and membership of the write groups.</summary>
     public async Task<bool> MayWriteAsync(ClaimsPrincipal member, CancellationToken ct)
@@ -56,7 +56,7 @@ public sealed partial class SqlDataSource
         if (Ready is not { } plan) return DataSourceRowsResult.From(Unavailable());
         if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !CanRead(user)) return new(403);
         if (Link(plan, scope, out var link, out var value) is { } problem) return DataSourceRowsResult.From(problem);
-        var binder = new Binder(plan, user, context, runtime.Now(), null, app);
+        var binder = new Binder(plan, user, context, runtime.Now(definition), null, app);
         return await RunAsync(plan, write: false, async (connection, _) => {
             if (!await AllowedAsync(DataSourceAction.Query, user, context, null, null, null, connection, null, ct)) return new DataSourceRowsResult(403);
             var rows = await ReadScopeAsync(plan, connection, null, link, value, binder, maximumRows, ct);
@@ -82,10 +82,10 @@ public sealed partial class SqlDataSource
     {
         if (Ready is not { } plan) return DataSourceRowsResult.From(Unavailable());
         if (await DataSourceQueries.ResolveReaderAsync(users, context, ct) is not { } user || !CanRead(user)) return new(403);
-        if (plan.Columns.FirstOrDefault(c => c.Field.Equals(linkField, StringComparison.OrdinalIgnoreCase)) is not { } link)
+        if (plan.Field(linkField) is not { } link)
             return DataSourceRowsResult.From(FormResult.Invalid("", $"'{linkField}' is not a field of the data source."));
         if (!await AllowedAsync(DataSourceAction.Query, user, context, null, null, null, null, null, ct)) return new(403);
-        return new(200, [], NewRow(plan, user, new Binder(plan, user, context, runtime.Now(), null, await AppAsync(context, ct)), link, null));
+        return new(200, [], NewRow(plan, user, new Binder(plan, user, context, runtime.Now(definition), null, await AppAsync(context, ct)), link, null));
     }
 
     /// <summary>
@@ -105,11 +105,11 @@ public sealed partial class SqlDataSource
         if (Unaccepted(changes) is { } unaccepted) return unaccepted;
         // One receipt for the whole batch, so a retried request neither writes twice nor fails on checksums its first attempt already changed.
         var (receipt, hash) = BatchReceipt(user, context, submission, changes);
-        using var gate = await runtime.Receipts.EnterAsync(receipt, ct);
-        if (runtime.Receipts.Find(receipt) is { } earlier)
+        await using var gate = await runtime.Receipts.EnterAsync([receipt], ct);
+        if (await runtime.Receipts.FindAsync(receipt, ct) is { } earlier)
             return earlier.Hash == hash ? await ListRowsAsync(scope, context with { SubmissionKey = null }, maximumRows, ct)
                 : new(422, Errors: new Dictionary<string, string[]> { [""] = ["This submission was already used with different rows. Reload the page."] });
-        var now = runtime.Now();
+        var now = runtime.Now(definition);
         var app = await AppAsync(context, ct);
         var outcome = await RunAsync(plan, write: true, async (connection, transaction) => {
             // Returning without a commit rolls every earlier change of the batch back.
@@ -118,7 +118,7 @@ public sealed partial class SqlDataSource
             return new DataSourceRowsResult(200);
         }, result => DataSourceRowsResult.From(result), ct);
         if (outcome.Status != 200) return outcome;
-        runtime.Receipts.Add(receipt, "rows", hash);
+        await runtime.Receipts.AddAsync(receipt, new("rows", hash), ct);
         return await ListRowsAsync(scope, context with { SubmissionKey = null }, maximumRows, app, ct);
     }
 
@@ -157,11 +157,7 @@ public sealed partial class SqlDataSource
             try { result = await ApplyAsync(plan, user, context, link, value, changes[i], now, connection, transaction, app, ct); }
             catch (DataSourceFieldException error) { result = FormResult.Invalid(error.Field, error.Message); }
             catch (DataSourceException error) { result = FormResult.Invalid("", error.Message); }
-            catch (DbException error)
-            {
-                runtime.Logger.LogWarning(error, "Data source {Alias}: the database refused a change of a batch.", definition.Alias);
-                result = FormResult.Invalid("", "The database refused this change. Check the values and try again.");
-            }
+            catch (DbException error) { result = Failed(plan, error, write: true); }
             if (result.Status is not (200 or 204)) return DataSourceRowsResult.From(result, index(i));
         }
         return null;
@@ -195,12 +191,12 @@ public sealed partial class SqlDataSource
     {
         link = null!;
         value = null;
-        if (plan.Columns.FirstOrDefault(c => c.Field.Equals(scope.Field, StringComparison.OrdinalIgnoreCase)) is not { } column)
+        if (plan.Field(scope.Field) is not { } column)
             return FormResult.Invalid("", $"'{scope.Field}' is not a field of the data source.");
         link = column;
-        value = FieldValues.FromValue(scope.Value, column.Kind, out var valid);
+        value = FieldValues.FromValue(scope.Value, column.Kind, out var valid, plan.Definition.DateTimes);
         if (!valid || value is null || value is string { Length: 0 }) return FormResult.Missing();
-        try { plan.Dialect.ToDatabase(value, column.Kind, column.Target); }
+        try { plan.Dialect.ToDatabase(value, column.Kind, column.Target, plan.Definition.DateTimes); }
         catch (DataSourceException) { return FormResult.Missing(); }
         return null;
     }
@@ -218,7 +214,7 @@ public sealed partial class SqlDataSource
     private static async Task<List<Row>> ReadScopeAsync(DataSourcePlan plan, DbConnection connection, DbTransaction? transaction, PlanColumn link, object? value,
         Binder binder, int maximumRows, CancellationToken ct)
     {
-        var parameters = new SqlParameters(plan.Dialect);
+        var parameters = plan.Parameters();
         var from = plan.From(parameters, binder.Value);
         var match = new[] { (link.Column, parameters.Add(ToDatabase(plan, link, value))) };
         var restriction = plan.Restriction?.Render(parameters, binder.Value);
@@ -231,7 +227,7 @@ public sealed partial class SqlDataSource
             var values = new Dictionary<PlanColumn, object?>();
             for (var i = 0; i < plan.Columns.Count; i++)
             {
-                var cell = FieldValues.FromDatabase(reader.GetValue(i), plan.Columns[i].Kind);
+                var cell = FieldValues.FromDatabase(reader.GetValue(i), plan.Columns[i].Kind, plan.Definition.DateTimes);
                 if (cell is string { Length: > FieldKinds.MaxTextLength }) throw new DataSourceException($"The value of {plan.Columns[i].Label} is larger than a form can hold.");
                 values[plan.Columns[i]] = cell;
             }

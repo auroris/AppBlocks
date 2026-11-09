@@ -38,6 +38,7 @@ public sealed class ContentBlocksTests
     // The same moment in UTC: 14:05 at -06:00 is 20:05Z.
     [InlineData(":NOW_UTC", "date", "2026-10-23")]
     [InlineData(":NOW_UTC", "time", "20:05")]
+    [InlineData(":NOW_UTC", "datetime", "2026-10-23T20:05:09+00:00")]
     [InlineData(":now_utc", "text", "2026-10-23T20:05:09Z")]
     [InlineData("NEW", "text", "NEW")]
     [InlineData("true", "checkbox", "true")]
@@ -58,8 +59,6 @@ public sealed class ContentBlocksTests
     [InlineData(":NOW", "number")]
     [InlineData(":NOW", "checkbox")]
     [InlineData(":NOW_UTC", "number")]
-    // A date-time field holds the server's local time, so publishing refuses :NOW_UTC for one.
-    [InlineData(":NOW_UTC", "datetime")]
     public void A_default_without_a_value_leaves_the_field_to_the_resource(string? value, string kind)
         => Assert.Null(Variables().Resolve(value, kind));
 
@@ -119,6 +118,58 @@ public sealed class ContentBlocksTests
         Assert.Equal(2, body.Split("<script nonce=\"n0nce\">").Length - 1);
         Assert.Contains("'<script><\\/script>'", body);
         Assert.DoesNotContain("nonce", Html(assets.Head(null)) + Html(assets.Body(null)));
+    }
+
+    [Fact]
+    public void The_layout_tells_scripts_the_API_root_and_the_sites_texts_when_it_writes_the_assets()
+    {
+        var assets = new AppPageAssets();
+        var texts = new Dictionary<string, string> { ["saved"] = "Enregistré </script>" };
+        using var services = new ServiceCollection()
+            .AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?> { [AppBlocksRoutes.Setting] = "/services" }).Build())
+            .AddSingleton(assets).AddSingleton(new AppBlocksText([new FixedTexts(texts)])).BuildServiceProvider();
+        var context = new DefaultHttpContext { RequestServices = services };
+        context.Request.PathBase = "/intranet";
+        string Write(string tag)
+        {
+            var output = new Microsoft.AspNetCore.Razor.TagHelpers.TagHelperOutput(tag, [], (_, _) => Task.FromResult<Microsoft.AspNetCore.Razor.TagHelpers.TagHelperContent>(new Microsoft.AspNetCore.Razor.TagHelpers.DefaultTagHelperContent()));
+            new AppPageAssetsTagHelperComponent(new HttpContextAccessor { HttpContext = context })
+                .Process(new Microsoft.AspNetCore.Razor.TagHelpers.TagHelperContext(tag, [], new Dictionary<object, object>(), "id"), output);
+            return output.PostContent.GetContent();
+        }
+        // Nothing registered means nothing written, the meta tag included.
+        Assert.Empty(Write("head"));
+        assets.AddStylesheet("/intranet/App_Plugins/ApplicationBlocks/runtime.css");
+        Assert.StartsWith("<meta content=\"/intranet/services\" name=\"appblocks-api-root\" />", Write("head"));
+        var body = Write("body");
+        Assert.StartsWith("<script data-appblocks-strings=\"\" type=\"application/json\">", body);
+        Assert.Contains("\"saved\":\"Enregistr\\u00E9 \\u003C/script\\u003E\"", body);
+        Assert.DoesNotContain("data-appblocks-strings", Html(assets.Body(null, new Dictionary<string, string>())));
+    }
+
+    [Fact]
+    public void The_Umbraco_dictionary_answers_texts_from_the_AppBlocks_items_children_with_or_without_the_prefix()
+    {
+        var asked = new List<string>();
+        var dictionary = TestStubs.Stub<Umbraco.Cms.Core.Dictionary.ICultureDictionary>((method, args) => {
+            Assert.Equal("GetChildren", method.Name); asked.Add((string)args![0]!);
+            return new Dictionary<string, string> { ["AppBlocks.save"] = "Enregistrer", ["cancel"] = "Annuler", ["AppBlocks.delete"] = "", ["AppBlocks."] = "Nothing" };
+        });
+        var source = new UmbracoDictionaryTextSource(TestStubs.Stub<Umbraco.Cms.Core.Dictionary.ICultureDictionaryFactory>((method, _) => dictionary));
+        var text = new AppBlocksText([source]);
+        Assert.Equal("Enregistrer", text["save", "Save"]);
+        Assert.Equal("Annuler", text["cancel", "Cancel"]);
+        // An item without a translation for the culture keeps the English.
+        Assert.Equal("Delete", text["delete", "Delete"]);
+        Assert.Equal(new Dictionary<string, string> { ["save"] = "Enregistrer", ["cancel"] = "Annuler" }, text.Overrides());
+        Assert.Equal(["AppBlocks"], asked);
+    }
+
+    private sealed class FixedTexts(IReadOnlyDictionary<string, string> texts) : IAppBlocksTextSource
+    {
+        public string? Get(string id) => texts.GetValueOrDefault(id);
+        public IReadOnlyDictionary<string, string> All() => texts;
     }
 
     [Fact]

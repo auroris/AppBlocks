@@ -32,6 +32,8 @@ public sealed class ApplicationDatabaseTests
         var schema = ApplicationSchema.FromDirectory(root).Then((_, dialect) => steps.Add(dialect));
         var file = Path.Combine(root, "items.db");
         Assert.Equal(Path.GetFullPath(root), schema.Id);
+        var name = Path.GetFileName(root);
+        Assert.Equal(name, schema.Name);
 
         using (var first = Open(file)) ApplicationDatabase.Ensure(first, schema);
         using (var second = Open(file)) await ApplicationDatabase.EnsureAsync(second, schema);
@@ -39,13 +41,13 @@ public sealed class ApplicationDatabaseTests
         Assert.Equal("seeded", Scalar(file, "SELECT NOTE FROM ITEMS WHERE ID = 1"));
         Assert.Equal(1L, Scalar(file, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'ITEMS_ADDED'"));
         Assert.Equal("added; First; with a semicolon", Scalar(file, "SELECT ENTRY FROM ITEM_LOG"));
-        Assert.Equal("001-tables.sql|002-seed.sql", Scalar(file, "SELECT group_concat(SCRIPT, '|') FROM (SELECT SCRIPT FROM APP_SCHEMA ORDER BY SCRIPT)"));
+        Assert.Equal($"{name}/001-tables.sql|{name}/002-seed.sql", Scalar(file, "SELECT group_concat(SCRIPT, '|') FROM (SELECT SCRIPT FROM APP_SCHEMA ORDER BY SCRIPT)"));
         Assert.Equal(2L, Scalar(file, "SELECT COUNT(*) FROM APP_SCHEMA WHERE length(HASH) = 64 AND APPLIED_AT IS NOT NULL"));
 
-        // A new process runs every script again: the column the ALTER adds is there, which counts as applied.
+        // A new process runs every script again: the column the ALTER adds is there, which counts as applied. A copy elsewhere under the same name is the same schema.
         var copy = Folder(("sqlite/001-tables.sql", File.ReadAllText(Path.Combine(root, "sqlite", "001-tables.sql"))),
             ("sqlite/002-seed.sql", File.ReadAllText(Path.Combine(root, "sqlite", "002-seed.sql"))));
-        using (var again = Open(file)) await ApplicationDatabase.EnsureAsync(again, ApplicationSchema.FromDirectory(copy));
+        using (var again = Open(file)) await ApplicationDatabase.EnsureAsync(again, ApplicationSchema.FromDirectory(copy, name));
         Assert.Equal(1L, Scalar(file, "SELECT COUNT(*) FROM ITEM_LOG"));
         Assert.Equal(2L, Scalar(file, "SELECT COUNT(*) FROM APP_SCHEMA"));
     }
@@ -66,7 +68,7 @@ public sealed class ApplicationDatabaseTests
             Assert.IsType<SqliteException>(error.InnerException);
         }
         Assert.Equal(0, steps);
-        Assert.Equal("001-good.sql", Scalar(file, "SELECT group_concat(SCRIPT) FROM APP_SCHEMA"));
+        Assert.Equal(Path.GetFileName(root) + "/001-good.sql", Scalar(file, "SELECT group_concat(SCRIPT) FROM APP_SCHEMA"));
         Assert.Equal(0L, Scalar(file, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'HALF'"));
 
         File.WriteAllText(Path.Combine(root, "sqlite", "002-broken.sql"), "CREATE TABLE IF NOT EXISTS HALF (ID INTEGER PRIMARY KEY);\nCREATE TABLE IF NOT EXISTS NOPE (ID INTEGER);");
@@ -89,7 +91,7 @@ public sealed class ApplicationDatabaseTests
             ("sqlite/migrations/001-seed.sql", "INSERT INTO ITEMS (ID, NAME) VALUES (1, 'First');\nINSERT INTO ITEMS (ID, NAME) VALUES (2, 'Second');"),
             ("sqlite/migrations/readme.txt", "Not a script."));
         var order = new List<string>();
-        ApplicationSchema Schema(string folder) => ApplicationSchema.FromDirectory(folder)
+        ApplicationSchema Schema(string folder) => ApplicationSchema.FromDirectory(folder, "orders")
             .Then((_, _) => order.Add("every start"))
             .Once("count-items", (connection, transaction, dialect) => {
                 using var command = connection.CreateCommand();
@@ -102,7 +104,7 @@ public sealed class ApplicationDatabaseTests
         using (var first = Open(file)) await ApplicationDatabase.EnsureAsync(first, Schema(root));
         Assert.Equal(["every start", "once sqlite"], order);
         Assert.Equal("First!|Second!|From C#", Scalar(file, "SELECT group_concat(NAME, '|') FROM (SELECT NAME FROM ITEMS ORDER BY ID)"));
-        Assert.Equal("001-tables.sql|migrations/001-seed.sql|migrations/002-rename.sql|once/count-items",
+        Assert.Equal("orders/001-tables.sql|orders/migrations/001-seed.sql|orders/migrations/002-rename.sql|orders/once/count-items",
             Scalar(file, "SELECT group_concat(SCRIPT, '|') FROM (SELECT SCRIPT FROM APP_SCHEMA ORDER BY SCRIPT)"));
 
         // A new process, or a copy of the schema elsewhere, finds the rows and runs only the ensure scripts and the every-start step.
@@ -123,18 +125,79 @@ public sealed class ApplicationDatabaseTests
     {
         var root = Folder(("sqlite/migrations/001-table.sql", "CREATE TABLE NOTES (ID INTEGER PRIMARY KEY);"));
         var file = Path.Combine(root, "changed.db");
-        using (var connection = Open(file)) ApplicationDatabase.Ensure(connection, ApplicationSchema.FromDirectory(root));
+        using (var connection = Open(file)) ApplicationDatabase.Ensure(connection, ApplicationSchema.FromDirectory(root, "notes"));
         var changed = Folder(("sqlite/migrations/001-table.sql", "CREATE TABLE NOTES (ID INTEGER PRIMARY KEY, BODY TEXT);"),
             ("sqlite/migrations/002-after.sql", "CREATE TABLE AFTER_IT (ID INTEGER PRIMARY KEY);"));
         using (var connection = Open(file))
         {
-            var error = Assert.Throws<ApplicationSchemaException>(() => ApplicationDatabase.Ensure(connection, ApplicationSchema.FromDirectory(changed)));
+            var error = Assert.Throws<ApplicationSchemaException>(() => ApplicationDatabase.Ensure(connection, ApplicationSchema.FromDirectory(changed, "notes")));
             Assert.Contains("sqlite/migrations/001-table.sql", error.Message);
             Assert.Contains("has changed since it ran", error.Message);
         }
         // Nothing after it ran, and the original row stands.
         Assert.Equal(0L, Scalar(file, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'AFTER_IT'"));
         Assert.Equal(1L, Scalar(file, "SELECT COUNT(*) FROM APP_SCHEMA"));
+    }
+
+    [Fact]
+    public void Two_schemas_in_one_database_keep_their_own_rows()
+    {
+        // Both have a 001-init.sql of their own, ensure and run-once, and a step of the same name.
+        ApplicationSchema Schema(string name, string table) => ApplicationSchema.FromDirectory(Folder(
+                ($"sqlite/001-init.sql", $"CREATE TABLE IF NOT EXISTS {table} (ID INTEGER PRIMARY KEY);"),
+                ($"sqlite/migrations/001-init.sql", $"INSERT INTO {table} (ID) VALUES (1);")), name)
+            .Once("seed", (connection, transaction, _) => {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = $"INSERT INTO {table} (ID) VALUES (2)";
+                command.ExecuteNonQuery();
+            });
+        var file = Path.Combine(Folder(), "shared.db");
+        using (var connection = Open(file)) ApplicationDatabase.Ensure(connection, Schema("orders", "ORDERS"));
+        using (var connection = Open(file)) ApplicationDatabase.Ensure(connection, Schema("parts", "PARTS"));
+        Assert.Equal(2L, Scalar(file, "SELECT COUNT(*) FROM ORDERS"));
+        Assert.Equal(2L, Scalar(file, "SELECT COUNT(*) FROM PARTS"));
+        Assert.Equal("orders/001-init.sql|orders/migrations/001-init.sql|orders/once/seed|parts/001-init.sql|parts/migrations/001-init.sql|parts/once/seed",
+            Scalar(file, "SELECT group_concat(SCRIPT, '|') FROM (SELECT SCRIPT FROM APP_SCHEMA ORDER BY SCRIPT)"));
+
+        // A schema may keep its rows in a table of its own.
+        var own = ApplicationSchema.FromDirectory(Folder(("sqlite/migrations/001-notes.sql", "CREATE TABLE NOTES (ID INTEGER PRIMARY KEY);")), "notes").RecordIn("NOTES_VERSION");
+        Assert.Equal("NOTES_VERSION", own.Table);
+        using (var connection = Open(file)) ApplicationDatabase.Ensure(connection, own);
+        Assert.Equal("notes/migrations/001-notes.sql", Scalar(file, "SELECT SCRIPT FROM NOTES_VERSION"));
+        Assert.Equal(6L, Scalar(file, "SELECT COUNT(*) FROM APP_SCHEMA"));
+        Assert.Throws<ArgumentException>(() => own.RecordIn("NOTES; DROP TABLE ORDERS"));
+        Assert.Throws<ArgumentException>(() => ApplicationSchema.FromDirectory(Folder(), "with\nnewline"));
+    }
+
+    [Fact]
+    public void Rows_written_before_they_carried_the_schema_name_are_taken_over_and_nothing_runs_again()
+    {
+        var root = Folder(("sqlite/001-tables.sql", "CREATE TABLE IF NOT EXISTS ITEMS (ID INTEGER PRIMARY KEY);"),
+            ("sqlite/migrations/001-seed.sql", "INSERT INTO ITEMS (ID) VALUES (1);"));
+        var file = Path.Combine(Folder(), "legacy.db");
+        var steps = 0;
+        ApplicationSchema Schema() => ApplicationSchema.FromDirectory(root, "items").Once("count", (_, _, _) => steps++);
+        // The database as the earlier ledger left it: the scripts and the step ran, under keys without the schema's name.
+        using (var connection = Open(file))
+        using (var command = connection.CreateCommand())
+        {
+            var seed = ApplicationDatabase.MigrationHash(File.ReadAllBytes(Path.Combine(root, "sqlite", "migrations", "001-seed.sql")));
+            var step = ApplicationDatabase.MigrationHash(System.Text.Encoding.UTF8.GetBytes("count"));
+            command.CommandText = $"""
+                CREATE TABLE APP_SCHEMA (SCRIPT TEXT NOT NULL PRIMARY KEY, HASH TEXT NOT NULL, APPLIED_AT TEXT NOT NULL);
+                CREATE TABLE ITEMS (ID INTEGER PRIMARY KEY); INSERT INTO ITEMS (ID) VALUES (1);
+                INSERT INTO APP_SCHEMA VALUES ('001-tables.sql', 'X', '2026-01-01'), ('migrations/001-seed.sql', '{seed}', '2026-01-01'),
+                    ('once/count', '{step}', '2026-01-01'), ('migrations/999-other.sql', 'ABC', '2026-01-01');
+                """;
+            command.ExecuteNonQuery();
+        }
+        using (var connection = Open(file)) ApplicationDatabase.Ensure(connection, Schema());
+        Assert.Equal(1L, Scalar(file, "SELECT COUNT(*) FROM ITEMS"));
+        Assert.Equal(0, steps);
+        // Another schema's earlier row is left for it to take.
+        Assert.Equal("items/001-tables.sql|items/migrations/001-seed.sql|items/once/count|migrations/999-other.sql",
+            Scalar(file, "SELECT group_concat(SCRIPT, '|') FROM (SELECT SCRIPT FROM APP_SCHEMA ORDER BY SCRIPT)"));
     }
 
     [Fact]
@@ -147,7 +210,7 @@ public sealed class ApplicationDatabaseTests
         Assert.Equal(0L, Scalar(file, "SELECT COUNT(*) FROM APP_SCHEMA"));
         Assert.Equal(0L, Scalar(file, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'HALF'"));
         File.WriteAllText(Path.Combine(root, "sqlite", "migrations", "001-broken.sql"), "CREATE TABLE HALF (ID INTEGER PRIMARY KEY);\nCREATE TABLE NOPE (ID INTEGER);");
-        using (var connection = Open(file)) ApplicationDatabase.Ensure(connection, ApplicationSchema.FromDirectory(root));
+        using (var connection = Open(file)) ApplicationDatabase.Ensure(connection, ApplicationSchema.FromDirectory(root, "notes"));
         Assert.Equal(2L, Scalar(file, "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('HALF', 'NOPE')"));
 
         // A step that throws leaves no row either.
@@ -157,7 +220,7 @@ public sealed class ApplicationDatabaseTests
             Assert.Contains("flaky", Assert.Throws<ApplicationSchemaException>(() => ApplicationDatabase.Ensure(connection, flaky)).Message);
         using (var connection = Open(file)) ApplicationDatabase.Ensure(connection, flaky);
         Assert.Equal(2, attempts);
-        Assert.Equal(1L, Scalar(file, "SELECT COUNT(*) FROM APP_SCHEMA WHERE SCRIPT = 'once/flaky'"));
+        Assert.Equal(1L, Scalar(file, "SELECT COUNT(*) FROM APP_SCHEMA WHERE SCRIPT LIKE '%/once/flaky'"));
     }
 
     [Fact]
@@ -203,7 +266,7 @@ public sealed class ApplicationDatabaseTests
         Assert.True(created.Status == 200, JsonSerializer.Serialize(created.Errors));
         var loaded = await source.LoadAsync(created.Record!.Key!, context, default);
         Assert.Equal("Kept in the application database", loaded.Record!.Values["body"]);
-        Assert.Equal("001-notes.sql", Scalar(file, "SELECT SCRIPT FROM APP_SCHEMA"));
+        Assert.EndsWith("/001-notes.sql", (string)Scalar(file, "SELECT SCRIPT FROM APP_SCHEMA")!);
     }
 
     [LocalDbFact]
@@ -232,7 +295,7 @@ public sealed class ApplicationDatabaseTests
             IF COL_LENGTH('dbo.ITEMS', 'NOTE') IS NULL ALTER TABLE dbo.ITEMS ADD NOTE nvarchar(100) NULL;
             """), ("sqlserver/migrations/001-seed.sql", "INSERT INTO dbo.ITEMS (NAME) VALUES (N'Seeded once');\nGO\nUPDATE dbo.ITEMS SET NOTE = N'once';"));
         var steps = 0;
-        var schema = ApplicationSchema.FromDirectory(root).Then((_, dialect) => { Assert.Equal("sqlserver", dialect); steps++; });
+        var schema = ApplicationSchema.FromDirectory(root, "items").Then((_, dialect) => { Assert.Equal("sqlserver", dialect); steps++; });
         // Two connection strings to one database are two memo entries, so the second ensure runs every batch again.
         foreach (var name in new[] { "first", "second" })
         {
@@ -243,10 +306,10 @@ public sealed class ApplicationDatabaseTests
         Assert.Equal(2, steps);
         Assert.Equal(1, ScalarSqlServer(connectionString, "SELECT COUNT(*) FROM sys.views WHERE name = 'ITEM_NAMES'"));
         Assert.Equal(1, ScalarSqlServer(connectionString, "SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('dbo.ITEMS') AND name = 'NOTE'"));
-        Assert.Equal(64L, Convert.ToInt64(ScalarSqlServer(connectionString, "SELECT LEN(HASH) FROM APP_SCHEMA WHERE SCRIPT = '001-tables.sql'")));
+        Assert.Equal(64L, Convert.ToInt64(ScalarSqlServer(connectionString, "SELECT LEN(HASH) FROM APP_SCHEMA WHERE SCRIPT = 'items/001-tables.sql'")));
         // The run-once script ran for the first connection string only: the second found its row.
         Assert.Equal(1, ScalarSqlServer(connectionString, "SELECT COUNT(*) FROM dbo.ITEMS WHERE NAME = N'Seeded once' AND NOTE = N'once'"));
-        Assert.Equal(1, ScalarSqlServer(connectionString, "SELECT COUNT(*) FROM APP_SCHEMA WHERE SCRIPT = 'migrations/001-seed.sql'"));
+        Assert.Equal(1, ScalarSqlServer(connectionString, "SELECT COUNT(*) FROM APP_SCHEMA WHERE SCRIPT = 'items/migrations/001-seed.sql'"));
     }
 
     private static ServiceProvider Services(string dataRoot, ApplicationSchema schema)

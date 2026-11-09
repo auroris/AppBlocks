@@ -18,7 +18,7 @@ public sealed class PackageTests
         using var stream = new ManifestEmbeddedFileProvider(assembly).GetFileInfo("Schema/ContentTypes/paperreport.config").CreateReadStream();
         var xml = XElement.Load(stream);
         Assert.Equal("paperReport", xml.Attribute("Alias")?.Value);
-        Assert.Equal("996f23f8-7dfc-3686-50ed-a9b95c849ef5", xml.Attribute("Key")?.Value);
+        Assert.Equal("d37dd9c4-23b9-4299-ae83-5bf6a943a842", xml.Attribute("Key")?.Value);
         Assert.Empty(xml.Element("Info")!.Element("AllowedTemplates")!.Elements());
         Assert.Equal("True", xml.Element("Info")!.Element("AllowAtRoot")!.Value);
     }

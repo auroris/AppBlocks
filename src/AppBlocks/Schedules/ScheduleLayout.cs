@@ -40,8 +40,8 @@ public sealed record ScheduleLegendEntry(string Kind, int Index);
 /// <summary>
 /// The table a schedule renders, computed once from the two query results and the window: the columns and their
 /// header groups, the rows under their groups with the bars placed in lanes, the vertical rows as bands of markers
-/// across the top, and the legend of kinds. It is the activity schedule's layout in C#: bars are clamped to the
-/// window, an open-ended bar runs to its edge, and the bars of one row are packed with <see cref="ScheduleLanes"/>.
+/// across the top, and the legend of kinds. Bars are clamped to the window, an open-ended bar runs to its edge, and
+/// the bars of one row are packed with <see cref="ScheduleLanes"/>.
 /// Nothing here reads a database or renders HTML.
 /// </summary>
 public sealed class ScheduleLayout
@@ -80,15 +80,17 @@ public sealed class ScheduleLayout
     /// <param name="linkTemplate">Where a bar without a <c>link</c> value leads; <c>{key}</c> and the other columns of the bar in braces are replaced, URL-encoded.</param>
     /// <param name="pathBase">Put before a link that starts with <c>/</c>, so templates are written from the site's root.</param>
     /// <param name="hideEmptyRows">Leave out rows, and vertical rows, with no bar in the window.</param>
+    /// <param name="weekend">The days marked as the weekend; Saturday and Sunday when null, as <see cref="ScheduleOptions.Weekend"/> is by default.</param>
     public static ScheduleLayout Build(ScheduleWindow window, DataSourceQueryResult rows, DataSourceQueryResult bars, string? linkTemplate = null, string pathBase = "",
-        bool hideEmptyRows = false)
+        bool hideEmptyRows = false, IReadOnlyCollection<DayOfWeek>? weekend = null)
     {
         var columns = new ScheduleColumn[window.Columns];
         var today = window.TodayColumn;
+        weekend ??= ScheduleOptions.Default.Weekend;
         for (var i = 0; i < columns.Length; i++)
         {
             var start = window.ColumnStart(i);
-            columns[i] = new(i, start, start.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday, i == today);
+            columns[i] = new(i, start, weekend.Contains(start.DayOfWeek), i == today);
         }
         var headerGroups = new List<ScheduleHeaderGroup>();
         foreach (var column in columns)
@@ -146,8 +148,8 @@ public sealed class ScheduleLayout
             }
             var key = ScheduleColumns.Text(bar, barKey);
             var label = ScheduleColumns.Text(bar, barLabel);
-            var link = ScheduleColumns.Text(bar, barLink);
-            if (link.Length == 0) link = Link(linkTemplate, bar) ?? "";
+            // A value the link rule refuses, such as a javascript: address, counts as no value, so the template applies.
+            var link = ScheduleColumns.Link(ScheduleColumns.Text(bar, barLink)) ?? Link(linkTemplate, bar) ?? "";
             if (link.StartsWith('/') && !link.StartsWith("//", StringComparison.Ordinal)) link = pathBase + link;
             var description = ScheduleColumns.Text(bar, barDescription);
             var first = Math.Max(0, start);
@@ -251,6 +253,24 @@ internal static partial class ScheduleColumns
 
     [GeneratedRegex("^(#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|[a-zA-Z]{3,30})$")]
     private static partial Regex SafeColor();
+
+    /// <summary>
+    /// A <c>link</c> value the page can put in an <c>href</c>, trimmed, or null. A path from the site's root (<c>/path</c>)
+    /// passes, and so does an address whose scheme is <c>http:</c>, <c>https:</c>, <c>mailto:</c> or <c>tel:</c> in any letter
+    /// case. Everything else is null: every other scheme, <c>javascript:</c> and <c>data:</c> among them, so a value from a
+    /// database row never runs script in a reader's browser; <c>//host</c> and <c>/\host</c>, which a browser reads as
+    /// another host; a value holding a control character such as a tab or a line break, which a browser strips, so that
+    /// <c>/&lt;tab&gt;/host</c> would become <c>//host</c>; and <c>./</c>, <c>../</c>, <c>?</c>, <c>#</c> and bare paths, which
+    /// mean something different on every page a schedule sits on. The runtime's schedule script applies the same rule.
+    /// </summary>
+    public static string? Link(string? value)
+    {
+        var text = value?.Trim();
+        if (string.IsNullOrEmpty(text) || text.Any(char.IsControl)) return null;
+        if (text[0] == '/') return text.Length > 1 && text[1] is '/' or '\\' ? null : text;
+        var colon = text.IndexOf(':');
+        return colon > 0 && text[..colon].ToLowerInvariant() is "http" or "https" or "mailto" or "tel" ? text : null;
+    }
 
     /// <summary>A date or a date and time, from the provider's own value or from ISO text as SQLite stores it; null for anything else.</summary>
     public static DateTime? Moment(IReadOnlyDictionary<string, object?> row, string? column) => column is null ? null : Moment(row.GetValueOrDefault(column));

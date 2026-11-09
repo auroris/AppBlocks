@@ -10,18 +10,22 @@ using AppBlocks.DataSources;
 
 namespace AppBlocks.InteractiveReports.DataSources;
 
-public sealed record PublishedReport(Guid Key, string Alias, ReportDefinition Definition, DataSourceDefinition? DataSource);
+/// <param name="MemberGroups">The Member groups that may open the report, as the picker stores them (ids or keys, separated by commas), or
+/// null when any signed-in account may.</param>
+public sealed record PublishedReport(Guid Key, string Alias, ReportDefinition Definition, DataSourceDefinition? DataSource, string? MemberGroups = null);
 
 /// <summary>
 /// Published definitions take precedence over the configured seed. Assembled once in each request scope from
 /// nodes read and compiled once per published version of the node and of the data source it reads.
 /// </summary>
 public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDocumentNavigationQueryService navigation,
-    DataSourceCatalog sources, IOptionsMonitor<InteractiveReportOptions> configured, IConfiguration configuration,
+    DataSourceCatalog sources, PublishedDataCatalog data, IOptionsMonitor<InteractiveReportOptions> configured, IConfiguration configuration,
     DataSourceRuntime runtime, ReportDefinitionCompiler compiler, PublishedDefinitionWarnings warnings,
     ILogger<PublishedReportCatalog> logger, AppBlocks.Connections.ConnectionCatalog? managed = null)
 {
     public const string ReportAlias = "reportDefinition";
+    /// <summary>The Access choice of a report definition that admits only the Member groups it picks.</summary>
+    public const string SpecificGroups = "Specific groups";
     private const string RowRestrictionMarker = "{{RowRestriction}}";
     private Dictionary<string, PublishedReport>? nodes;
     private Dictionary<string, ReportDefinition>? reports;
@@ -35,11 +39,6 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
     public IReadOnlyDictionary<string, PublishedReport> ReportNodes => nodes ?? throw new InvalidOperationException("Call LoadAsync before reading reports.");
     public bool IsUnavailableReport(string alias) { _ = Reports; return unavailableReports.Contains(alias); }
     public Guid? ReportOwner(string alias) { _ = Reports; return reportOwners.TryGetValue(alias.Trim(), out var key) ? key : null; }
-    internal static Guid? PickedKey(string value) => Guid.TryParse(value.Replace("umb://document/", "", StringComparison.OrdinalIgnoreCase), out var key) ? key : null;
-
-    public DataSourceDefinition? ResolveSource(string selection) => sources.DataSources.FirstOrDefault(source =>
-        source.Alias == selection || source.Definition.Key == PickedKey(selection))?.Definition;
-
     public DataSourceDefinition? SourceForReport(string name) => ReportNodes.GetValueOrDefault(name)?.DataSource;
 
     public DataSourceDefinition? ResolveBlockSource(Guid key, string selection, ICollection<string> errors) =>
@@ -100,16 +99,16 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
         DataSourceDefinition? source = null;
         if (Text(value, "dataSource") is { Length: > 0 } selection)
         {
-            source = blockSource ?? ResolveSource(selection);
+            source = blockSource ?? data.ResolveSource(selection);
             if (source is null) errors.Add("Select a published SQL data source.");
             else if (PlanOf(source).Entry.Plan is not { } plan) errors.Add("The selected data source cannot read its database schema.");
             else
             {
                 report.Connection = source.Connection;
-                var parameters = new SqlParameters(plan.Dialect);
+                var parameters = plan.Parameters();
                 report.Sql = plan.Dialect.Select(plan.From(parameters, _ => null), plan.Columns.Select(c => c.Column), [],
                     "{{RowRestriction}}" + (plan.Restriction is null ? "" : " AND (" + plan.Restriction.Render(parameters, _ => null) + ")"));
-                report.ContextParams = parameters.Bindings.ToDictionary(p => p.Name, _ => new ContextParamSpec { Claim = "apphost-preview" });
+                report.ContextParams = parameters.Bindings.ToDictionary(p => p.Name, _ => new ContextParamSpec { Claim = "appblocks-preview" });
             }
         }
         else
@@ -119,14 +118,21 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
             // Only a callback in code decides {{RowRestriction}}; without one, Interactive Reports refuses the report when it runs.
             else if (report.Sql.Contains(RowRestrictionMarker, StringComparison.Ordinal) && !HasRowRestrictionCallback(alias))
                 errors.Add("Inline SQL can use {{RowRestriction}} only where a row-access callback in code decides it, and none decides this report. Select a data source instead, whose row restriction and read groups apply to every request.");
-            if (alias == RecentPagesReport.Name) report.Sql = RecentPagesReport.PrepareSql(report.Sql, configuration);
+            report.Sql = RecentPagesReport.PrepareNodeSql(alias, report.Sql, configuration);
+        }
+        // Access: Signed-in accounts, the default, or Specific groups, which needs a group to admit anyone.
+        string? memberGroups = null;
+        if (Text(value, "access") == SpecificGroups)
+        {
+            memberGroups = Text(value, "accessGroups");
+            if (memberGroups.Length == 0) errors.Add("Select at least one Member group for Specific groups access.");
         }
         if (errors.Count != start) return null;
         var virtualPath = configuration["Umbraco:CMS:Hosting:ApplicationVirtualPath"]?.Trim('/') ?? "";
         ReportLinksUnderVirtualPath.Apply(report, virtualPath.Length == 0 ? "" : "/" + virtualPath);
         try { AppBlocks.InteractiveReports.Connections.ManagedReportCompiler.CompileManaged(compiler, alias, report, managed); }
         catch (Exception error) when (error is InvalidOperationException or ArgumentException) { errors.Add(error.Message); }
-        return errors.Count == start ? new(key, alias, report, source) : null;
+        return errors.Count == start ? new(key, alias, report, source, memberGroups) : null;
 
         void ReadSize(string property, Action<int> set)
         {
@@ -136,10 +142,10 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
     }
 
     /// <summary>
-    /// Whether a callback in code decides a report's {{RowRestriction}}: the Welcome report's own, or the one a site
+    /// Whether a callback in code decides a report's {{RowRestriction}}: one of the package's own, or the one a site
     /// registered for a configured report that uses the marker, which also decides a node overriding that alias.
     /// </summary>
-    private bool HasRowRestrictionCallback(string alias) => alias == RecentPagesReport.Name
+    private bool HasRowRestrictionCallback(string alias) => RecentPagesReport.DecidesRowRestriction(alias)
         || configured.CurrentValue.Reports.Any(seed => seed.Key == alias && seed.Value.Sql?.Contains(RowRestrictionMarker, StringComparison.Ordinal) == true);
 
     /// <summary>
@@ -188,7 +194,7 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
                     Func<string, object?> value = property => node.GetProperty(property)?.GetValue();
                     var alias = Text(value, "alias");
                     if (!reportOwners.TryAdd(alias, node.Key)) { warnings.Hidden(node, alias); continue; }
-                    var selected = Text(value, "dataSource") is { Length: > 0 } selection ? ResolveSource(selection) : null;
+                    var selected = Text(value, "dataSource") is { Length: > 0 } selection ? data.ResolveSource(selection) : null;
                     var report = runtime.Definition(node.Key, node.UpdateDate, () => Logged(node, errors => ReadReport(node.Key, node.Name, value, errors)), SourceVersion(selected));
                     // An unavailable override cannot expose the configured seed's potentially broader dataset.
                     if (report is null) { reports.Remove(alias); unavailableReports.Add(alias); }

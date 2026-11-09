@@ -21,24 +21,28 @@ public sealed record TabularBlock(string? Heading, string? Help, string DataSour
     public const string HeadingAlias = "heading", HelpAlias = "helpText", DataSourceAlias = "dataSource", LinkFieldAlias = "linkField", FieldsAlias = "fields",
         OwnerResourceAlias = "ownerResource", OwnerKeyAlias = "ownerKey", HideAddAlias = "hideAdd", HideDeleteAlias = "hideDelete", ReadOnlyAlias = "readOnly",
         MaxRowsAlias = "maxRows", EmptyMessageAlias = "emptyMessage", AddLabelAlias = "addLabel", SaveLabelAlias = "saveLabel";
-    public const int DefaultMaxRows = 200, MaxRowsLimit = 1000;
+    public const int DefaultMaxRows = 200;
+    /// <summary>The default of <see cref="TabularOptions.MaxRows"/>, which callers without the options pass on.</summary>
+    public const int MaxRowsLimit = 1000;
     public const string DefaultAddLabel = "Add row", DefaultSaveLabel = "Save rows";
 
     /// <summary>The rows belong to the record of the form the block sits in.</summary>
     public bool OwnedByForm => string.IsNullOrWhiteSpace(OwnerResource);
 
-    public static TabularBlock Read(IPublishedElement block) => Read(alias => alias switch {
+    /// <param name="maxRowsLimit">The site's <see cref="TabularOptions.MaxRows"/>, which the block's row limit is cut to.</param>
+    public static TabularBlock Read(IPublishedElement block, int maxRowsLimit = MaxRowsLimit) => Read(alias => alias switch {
         MaxRowsAlias => block.Value<int?>(alias)?.ToString(CultureInfo.InvariantCulture),
         HideAddAlias or HideDeleteAlias or ReadOnlyAlias => block.Value<bool>(alias) ? "true" : "false",
         _ => block.Value<string>(alias),
-    });
+    }, maxRowsLimit);
 
     /// <summary>Reads the settings from their text values, as publishing sees them.</summary>
-    public static TabularBlock Read(Func<string, string?> text)
+    public static TabularBlock Read(Func<string, string?> text, int maxRowsLimit = MaxRowsLimit)
     {
         string? Clean(string alias) => text(alias) is { } value && !string.IsNullOrWhiteSpace(value) ? value.Trim() : null;
         bool Flag(string alias) => Clean(alias) is { } value && (value.Equals("true", StringComparison.OrdinalIgnoreCase) || value == "1");
-        var rows = int.TryParse(Clean(MaxRowsAlias), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) && parsed > 0 ? Math.Min(parsed, MaxRowsLimit) : DefaultMaxRows;
+        var limit = Math.Max(1, maxRowsLimit);
+        var rows = int.TryParse(Clean(MaxRowsAlias), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) && parsed > 0 ? Math.Min(parsed, limit) : Math.Min(DefaultMaxRows, limit);
         return new(Clean(HeadingAlias), Clean(HelpAlias), Clean(DataSourceAlias) ?? "", Clean(LinkFieldAlias) ?? "", ParseFields(Clean(FieldsAlias)),
             Clean(OwnerResourceAlias), Clean(OwnerKeyAlias), Flag(HideAddAlias), Flag(HideDeleteAlias), Flag(ReadOnlyAlias), rows,
             Clean(EmptyMessageAlias), Clean(AddLabelAlias) ?? DefaultAddLabel, Clean(SaveLabelAlias) ?? DefaultSaveLabel);

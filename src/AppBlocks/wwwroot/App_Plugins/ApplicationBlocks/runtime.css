@@ -6,8 +6,18 @@
     they sit on; type and spacing inherit the page's font and come from rem, so the blocks follow the site's
     base size. The ah-* hooks (ah-region, ah-layout, ah-grid) belong to the site's theme and are styled here
     only inside .appblocks-native, where no theme exists.
+
+    The defaults sit in :where(:root), which weighs nothing, because this stylesheet joins the head after the
+    layout's own: any rule of the site that names a token wins, wherever its stylesheet loads.
+
+    The form's frame has tokens of its own that are not declared here, so each falls back to the general token
+    on the form itself, where a site's override of that token applies: --app-form-max-width (72rem),
+    --app-form-padding (1.75rem, 1.15rem on narrow screens), --app-form-background (--app-surface),
+    --app-form-border (1px solid --app-border), --app-form-radius (--app-radius, --app-radius-sm on narrow
+    screens) and --app-form-shadow (--app-shadow). A flat form is
+    .application-blocks { --app-form-padding: 0; --app-form-border: 0; --app-form-shadow: none; }
 */
-:root {
+:where(:root) {
     --app-accent: #2a5d8f;
     --app-accent-strong: #1f4a74;
     --app-accent-soft: #e9f0f8;
@@ -35,7 +45,12 @@
 /* ---------- Shared pieces ---------- */
 
 .application-blocks { color: var(--app-text); }
-.application-blocks *, .application-blocks *::before, .application-blocks *::after { box-sizing: border-box; }
+/* Border boxes for the blocks' own markup, the elements with an app- or ah- class and the cells and controls the
+   runtime draws inside them without one, but not for a page's content inside a block, such as rich text, which keeps
+   the site's box model. */
+:where(.application-blocks) :where([class^="app-"], [class*=" app-"], [class^="ah-"], [class*=" ah-"], .app-tabular-table :is(th, td, td > *), .app-attachment-actions > *),
+:where(.application-blocks) :where([class^="app-"], [class*=" app-"], [class^="ah-"], [class*=" ah-"])::before,
+:where(.application-blocks) :where([class^="app-"], [class*=" app-"], [class^="ah-"], [class*=" ah-"])::after { box-sizing: border-box; }
 
 /* Text controls, everywhere a block draws one. */
 .app-form-field input:not([type=checkbox]), .app-form-field select, .app-form-field textarea,
@@ -124,8 +139,9 @@
 /* ---------- Forms ---------- */
 
 .app-form {
-    max-width: 72rem; margin: 0; padding: 1.75rem; color: var(--app-text);
-    background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--app-radius); box-shadow: var(--app-shadow);
+    max-width: var(--app-form-max-width, 72rem); margin: 0; padding: var(--app-form-padding, 1.75rem); color: var(--app-text);
+    background: var(--app-form-background, var(--app-surface)); border: var(--app-form-border, 1px solid var(--app-border));
+    border-radius: var(--app-form-radius, var(--app-radius)); box-shadow: var(--app-form-shadow, var(--app-shadow));
 }
 .app-form > h2 { margin: 0 0 1.25rem; font-size: 1.4rem; line-height: 1.25; letter-spacing: -.01em; }
 .app-form-body { border: 0; margin: 0; padding: 0; min-width: 0; }
@@ -281,7 +297,7 @@
 .app-schedule-jump summary::-webkit-details-marker { display: none; }
 .app-schedule-jump summary::after { content: "\25BE"; margin-left: .4rem; color: var(--app-muted); }
 .app-schedule-jump summary:hover { background: var(--app-surface-2); color: var(--app-accent); }
-.app-schedule-jump summary:focus-visible { outline: 2px solid var(--app-focus); outline-offset: 2px; }
+.app-schedule-jump summary:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--app-accent), var(--app-focus); }
 .app-schedule-jump__panel {
     position: absolute; z-index: 20; top: calc(100% + .35rem); right: 0; display: flex; gap: 1rem; padding: .6rem .85rem; border: 1px solid var(--app-border);
     border-radius: var(--app-radius-sm); background: var(--app-surface); color: var(--app-text); box-shadow: var(--app-shadow-lg); white-space: nowrap;
@@ -314,7 +330,7 @@
 .app-schedule-table th.app-schedule-row-label { background: var(--ah-row, var(--app-surface)); color: var(--ah-row-text, inherit); }
 .app-schedule-label--button { appearance: none; border: 0; margin: 0; background: none; color: inherit; font: inherit; line-height: inherit; text-align: left; cursor: pointer; }
 .app-schedule-label--button:hover { text-decoration: underline; }
-.app-schedule-label--button:focus-visible { outline: 2px solid var(--app-focus); outline-offset: -2px; }
+.app-schedule-label--button:focus-visible { outline: none; box-shadow: inset var(--app-focus); }
 .app-schedule-group-title th { background: var(--app-surface-3); line-height: 1.6rem; font-size: .8125rem; letter-spacing: .02em; color: var(--app-muted); }
 .app-schedule-cell { position: relative; height: calc(var(--ah-lanes, 1) * 1.75rem); vertical-align: top; background: var(--app-surface); }
 .app-schedule-col--weekend { background: var(--app-surface-2); }
@@ -392,7 +408,7 @@
     background: none; color: var(--app-muted); font: inherit; font-size: 1.25rem; line-height: 1; cursor: pointer; appearance: none;
 }
 .app-schedule-popover__close:hover { background: var(--app-surface-2); color: var(--app-text); }
-.app-schedule-popover__close:focus-visible { outline: 2px solid var(--app-focus); outline-offset: 1px; }
+.app-schedule-popover__close:focus-visible { outline: none; box-shadow: var(--app-focus); }
 .app-schedule-empty { margin: .75rem 0 0; color: var(--app-muted); font-style: italic; }
 
 /* ---------- Anti-spam, reports ---------- */
@@ -432,7 +448,7 @@
 /* ---------- Small screens, print, motion ---------- */
 
 @media (max-width: 640px) {
-    .app-form { padding: 1.15rem; border-radius: var(--app-radius-sm); }
+    .app-form { padding: var(--app-form-padding, 1.15rem); border-radius: var(--app-form-radius, var(--app-radius-sm)); }
     .app-form[data-label-position=left] .app-form-field:not(:has(> input[type=checkbox])) { display: flex; }
     .app-form[data-label-position=left] .app-form-field:not(:has(> input[type=checkbox])) > label { padding-top: 0; }
     .app-form[data-label-position=left] .app-form-field:has(> input[type=checkbox]) { padding-left: 0; }

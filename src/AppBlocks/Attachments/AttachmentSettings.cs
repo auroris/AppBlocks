@@ -29,6 +29,12 @@ public sealed class AttachmentSettings
     /// <summary>How many days a removed file stays before an administrator's purge deletes its rows. The purge takes another value when asked.</summary>
     public int RetentionDays { get; set; } = 30;
 
+    /// <summary>
+    /// How many hours a file uploaded before its form's record was saved waits for that save. The next upload, list or
+    /// adoption of pending files deletes those older than this. 24 unless configured.
+    /// </summary>
+    public int PendingLifetimeHours { get; set; } = 24;
+
     public string ConnectionName => string.IsNullOrWhiteSpace(Connection) ? DefaultConnection : Connection.Trim();
 }
 

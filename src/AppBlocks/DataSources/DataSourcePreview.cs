@@ -6,7 +6,7 @@ namespace AppBlocks.DataSources;
 
 public sealed record DataSourcePreviewColumn(string Field, string Column, string Kind, bool ReadOnly, bool Required);
 /// <param name="ApplicationNames">The <c>:APP.</c> names the bind variable providers declare, for the editor to give sample values; null when they are not known.</param>
-/// <param name="Warnings">What publishing would warn about, such as an <c>:APP.</c> name no provider declares.</param>
+/// <param name="Warnings">What publishing would warn about, such as an <c>:APP.</c> name no provider declares or writes through a view.</param>
 public sealed record DataSourcePreviewResult(IReadOnlyList<DataSourcePreviewColumn> Columns,
     IReadOnlyDictionary<string, object?>? Row, IReadOnlyList<string> Errors, IReadOnlyList<string>? ApplicationNames = null, IReadOnlyList<string>? Warnings = null);
 
@@ -16,14 +16,16 @@ public sealed class DataSourcePreview(DataSourceRuntime runtime, BindVariablePro
     public async Task<DataSourcePreviewResult> TestAsync(DataSourceDefinition definition, DataSourceUser editor,
         IReadOnlyDictionary<string, JsonElement> samples, CancellationToken ct)
     {
-        var result = await RunAsync(definition, editor, samples, ct);
+        var warnings = new List<string>();
+        var result = await RunAsync(definition, editor, samples, warnings, ct);
         var declared = providers?.DeclaredNames?.Order(StringComparer.OrdinalIgnoreCase).ToArray();
         var warning = providers?.UndeclaredWarning(definition.ApplicationNames());
-        return result with { ApplicationNames = declared, Warnings = warning is null ? [] : [warning] };
+        if (warning is not null) warnings.Insert(0, warning);
+        return result with { ApplicationNames = declared, Warnings = warnings };
     }
 
     private async Task<DataSourcePreviewResult> RunAsync(DataSourceDefinition definition, DataSourceUser editor,
-        IReadOnlyDictionary<string, JsonElement> samples, CancellationToken ct)
+        IReadOnlyDictionary<string, JsonElement> samples, ICollection<string> warnings, CancellationToken ct)
     {
         var errors = new List<string>();
         var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
@@ -45,11 +47,11 @@ public sealed class DataSourcePreview(DataSourceRuntime runtime, BindVariablePro
             };
         }
         if (errors.Count > 0) return new([], null, errors);
-        var plan = runtime.Inspect(definition, errors);
+        var plan = runtime.Inspect(definition, errors, warnings);
         if (plan is null || errors.Count > 0) return new([], null, errors.Count > 0 ? errors : ["The data source could not be prepared."]);
         var columns = plan.Columns.Select(c => new DataSourcePreviewColumn(c.Field, c.Column, c.Kind, c.ReadOnly, c.Required)).ToArray();
         // Without a sample, the editor's own facts and the current time, as a request would bind them; parameters and application values bind NULL.
-        var current = new BindVariableValues(editor, null, runtime.Now(), null);
+        var current = new BindVariableValues(editor, null, runtime.Now(definition), null);
         object? Value(BindVariable variable)
         {
             if (values.TryGetValue(variable.ToString(), out var sample))
@@ -71,7 +73,7 @@ public sealed class DataSourcePreview(DataSourceRuntime runtime, BindVariablePro
         }
         try
         {
-            var parameters = new SqlParameters(plan.Dialect);
+            var parameters = plan.Parameters();
             var from = plan.From(parameters, Value);
             var restriction = plan.Restriction?.Render(parameters, Value);
             await using var connection = await runtime.OpenAsync(definition.Connection, ct);

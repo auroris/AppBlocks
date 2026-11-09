@@ -4,8 +4,10 @@ namespace AppBlocks.AntiSpam;
 
 /// <summary>
 /// A service that follows the shape Turnstile, reCAPTCHA and hCaptcha share: the secret and the token posted as a form to one
-/// fixed address, and a JSON answer with <c>success</c> and <c>error-codes</c>. The address belongs to the class, so content can
-/// never choose where the secret goes, and the client follows no redirects for the same reason.
+/// fixed address, and a JSON answer with <c>success</c>, <c>error-codes</c> and <c>hostname</c>. The address belongs to the class, so
+/// content can never choose where the secret goes, and the client follows no redirects for the same reason. A successful answer whose
+/// <c>hostname</c> differs from <see cref="AntiSpamVerification.Hostname"/> fails, as the services advise for a key that is not limited
+/// to the site's domains.
 /// </summary>
 public abstract class SiteVerifyService(IHttpClientFactory clients) : IAntiSpamService
 {
@@ -46,11 +48,17 @@ public abstract class SiteVerifyService(IHttpClientFactory clients) : IAntiSpamS
             using var reply = JsonDocument.Parse(text);
             if (reply.RootElement.ValueKind != JsonValueKind.Object || !reply.RootElement.TryGetProperty("success", out var success) || success.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
                 return Unreadable();
-            return success.GetBoolean() ? Judge(reply.RootElement, request) : Refused(Codes(text));
+            if (!success.GetBoolean()) return Refused(Codes(text));
+            return SolvedElsewhere(reply.RootElement, request) ? AntiSpamAnswer.Failed : Judge(reply.RootElement, request);
         }
         catch (HttpRequestException) { return AntiSpamAnswer.Unavailable($"{Name} could not be reached."); }
         catch (JsonException) { return Unreadable(); }
     }
+
+    /// <summary>Whether the answer names a host other than the one the form was sent to. An answer with no host name, as for an app rather than a page, has nothing to compare.</summary>
+    private static bool SolvedElsewhere(JsonElement reply, AntiSpamVerification request)
+        => request.Hostname is { Length: > 0 } expected && reply.TryGetProperty("hostname", out var hostname) && hostname.ValueKind == JsonValueKind.String
+            && hostname.GetString() is { Length: > 0 } solved && !solved.TrimEnd('.').Equals(expected.TrimEnd('.'), StringComparison.OrdinalIgnoreCase);
 
     private AntiSpamAnswer Refused(string[] codes) => codes.All(TokenCodes.Contains) ? AntiSpamAnswer.Failed : AntiSpamAnswer.Unavailable(Explain(codes));
 

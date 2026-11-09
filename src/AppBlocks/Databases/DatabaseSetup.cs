@@ -58,8 +58,14 @@ public static class DatabaseSetupGuide
     /// <summary>The placeholder in SQL when the database has not said which schema the account creates tables in.</summary>
     public const string UnknownSchema = "<default schema>";
 
-    /// <summary>Where the setup screen lives, under the site's path base. Its tab opens from the query string.</summary>
-    public const string ScreenPath = "/umbraco/section/settings/workspace/appblocks/view/setup";
+    /// <summary>
+    /// Where the setup screen lives, under the site's path base, below Umbraco's backoffice path (<see cref="Umbraco.Cms.Core.Constants.System.DefaultUmbracoPath"/>,
+    /// which Umbraco 18 does not let a site change). Its tab opens from the query string.
+    /// </summary>
+    public static readonly string ScreenPath = ScreenPathUnder(Umbraco.Cms.Core.Constants.System.DefaultUmbracoPath);
+
+    /// <summary>The setup screen below the backoffice path <paramref name="backOfficePath"/>, written as <c>~/umbraco</c> or <c>/umbraco</c>.</summary>
+    public static string ScreenPathUnder(string backOfficePath) => "/" + backOfficePath.TrimStart('~').Trim('/') + "/section/settings/workspace/appblocks/view/setup";
 
     /// <summary>The feature's state and summary from what the inspection found.</summary>
     public static (string State, string Summary) Standing(DatabaseInspection inspection, IEnumerable<string> required, bool autoCreate = true)

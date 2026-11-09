@@ -1,38 +1,38 @@
 # Worked example: a multi-tenant activity schedule
 
-One application, several units, each with its own schedule and its own editors, every unit's pages living inside its own part of the site. This guide puts the pieces of AppBlocks together for it: the page tree, the tables, three data source nodes, a Schedule block, a form page, and the C# that holds every rule. It is the [business rules guide](business-rules.md) applied end to end, so that guide explains each rule; this one shows where it goes.
+One application, several clubs of a sailing association, each with its own schedule and its own editors, every club's pages living inside its own part of the site. This guide puts the pieces of AppBlocks together for it: the page tree, the tables, three data source nodes, a Schedule block, two form pages, and the C# that holds every rule. It is the [business rules guide](business-rules.md) applied end to end, so that guide explains each rule; this one shows where it goes.
 
 The shape of the rules is short:
 
-- **The page tree decides the tenant.** A unit's home page carries a Tenant id. Every page below it, the schedule and its administration pages, belongs to that tenant, and nothing in a URL parameter or a form field says otherwise.
+- **The page tree decides the tenant.** A club's home page carries a Tenant id. Every page below it, the schedule and its administration pages, belongs to that tenant, and nothing in a URL parameter or a form field says otherwise.
 - **One C# class decides who may edit.** A backoffice User allowed to edit the calling page may change its tenant's schedule. Anyone else needs to be a Member of that tenant's editors group. Anyone signed in may read.
-- **SQL stays tenant-blind.** The data sources filter and restrict on `:APP.tenant`, a value the application computes, so one set of nodes serves every tenant and a new unit is a page copy.
+- **SQL stays tenant-blind.** The data sources filter and restrict on `:APP.tenant`, a value the application computes, so one set of nodes serves every tenant and a new club is a page copy.
 
 ## The pages
 
 ```text
 Home                                    (/en/)
-├── 4 Wing                              (/en/4wing/)            tenantId = 4WING
+├── Harbour Club                        (/en/harbour/)            tenantId = HARBOUR
 │   ├── Activity schedule               Schedule block
-│   ├── Categories                      Interactive Report on wing.categories, form page Category
-│   ├── Category                        Forms container, form on wing.categories, key parameter id
-│   └── Activity                        Forms container, form on wing.activity, key parameter id
-└── Units
-    └── 10 FTTS                         (/en/units/10ftts/)     tenantId = 10FTTS
+│   ├── Categories                      Interactive Report on events.categories, form page Category
+│   ├── Category                        Forms container, form on events.categories, key parameter id
+│   └── Activity                        Forms container, form on events.activity, key parameter id
+└── Clubs
+    └── Northgate                       (/en/clubs/northgate/)    tenantId = NORTHGATE
         ├── Activity schedule
         ├── Categories
         ├── Category
         └── Activity
 ```
 
-The unit home pages use a document type with a text property aliased `tenantId`. That property is the whole definition of a tenant: the C# below walks up from the calling page to the nearest page that has one. Depth, naming and language do not matter, which is why 4 Wing can sit at the root and 10 FTTS under Units.
+The club home pages use a document type with a text property aliased `tenantId`. That property is the whole definition of a tenant: the C# below walks up from the calling page to the nearest page that has one. Depth, naming and language do not matter, which is why Harbour Club can sit at the root and Northgate under Clubs.
 
-No page needs Public Access for the rules to work. The Schedule block, the categories report and the category form read through the data source engine, which shows a sign-in notice to anyone it does not know, and the activity form's class refuses anyone it does not know. Protecting the subtree with Public Access as well keeps the pages out of the menu for visitors, but Umbraco then refuses a backoffice User who has no Member session, editors included, unless the host registers an `IProtectedPageAdmission` that admits them.
+No page needs Public Access for the rules to work. The Schedule block, the categories report and the category form read through the data source engine, which shows a sign-in notice to anyone it does not know, and the activity form's class refuses anyone it does not know. Protecting the subtree with Public Access as well keeps the pages out of the menu for visitors, but Umbraco then refuses a backoffice User who has no Member session, editors included, unless the site registers an `IProtectedPageAdmission` that admits them.
 
 ## The tables
 
 ```sql
-CREATE TABLE WING_CATEGORY (
+CREATE TABLE EVENT_CATEGORY (
     ID               INTEGER PRIMARY KEY,
     TENANT_ID        TEXT NOT NULL,
     NAME             TEXT NOT NULL,
@@ -43,7 +43,7 @@ CREATE TABLE WING_CATEGORY (
     DESCRIPTION      TEXT
 );
 
-CREATE TABLE WING_ACTIVITY (
+CREATE TABLE EVENT_ACTIVITY (
     ID          TEXT NOT NULL PRIMARY KEY,
     TENANT_ID   TEXT NOT NULL,
     NAME        TEXT NOT NULL,
@@ -51,10 +51,9 @@ CREATE TABLE WING_ACTIVITY (
     END_DATE    TEXT NOT NULL,
     CATEGORY    TEXT NOT NULL,
     DESCRIPTION TEXT,
-    CONTACT     TEXT,
-    UNITS       TEXT,
+    LOCATION    TEXT,
     LINK        TEXT,
-    HIDDEN      INTEGER NOT NULL DEFAULT 0,
+    DRAFT       INTEGER NOT NULL DEFAULT 0,
     CREATED_BY  TEXT NOT NULL,
     CREATED_AT  TEXT NOT NULL,
     MODIFIED_BY TEXT NOT NULL,
@@ -66,59 +65,64 @@ Both tables carry the tenant. Categories take a database-generated key, since th
 
 ## The data source nodes
 
-Three nodes under **Data sources**, each on the `AppBlocksDb` connection. Their aliases start with `wing.` so the policy below recognises them. Every one has the same row restriction, `TENANT_ID = :APP.tenant`, which keeps every read and every write inside the tenant of the page, whatever the SQL or a submitted row says.
+Three nodes under **Data sources**, each on the `AppBlocksDb` connection. Their aliases start with `events.` so the policy below recognises them. Every one has the same row restriction, `TENANT_ID = :APP.tenant`, which keeps every read and every write inside the tenant of the page, whatever the SQL or a submitted row says.
 
-**`wing.categories`**, the table a unit's editors maintain through the Categories report, whose form page is Category and key column `ID`, with its create button and open link left at Form page decides, and the Category form, whose resource is this node:
+**`events.categories`**, the table a club's editors maintain through the Categories report, whose form page is Category and key column `ID`, with its create button and open link left at Form page decides. The Category form's Form Interface selects this node, which its picker lists among the data sources, so the engine reads and writes the categories with no C#:
 
 | Setting | Value |
 | --- | --- |
-| Source | `WING_CATEGORY` |
+| Source | `EVENT_CATEGORY` |
 | Key columns | `ID` |
 | Row restriction | `TENANT_ID = :APP.tenant` |
 | Insert defaults | `TENANT_ID = :APP.tenant` |
+| Allow insert, Allow update, Allow delete | On |
 | Read groups, Write groups | Empty. The policy decides, so backoffice Users are not shut out |
 
 The insert default is what keeps a new category in the right tenant without the category form carrying a tenant field at all, and the row restriction is what refuses a row that tries to leave it.
 
-**`wing.schedule.rows`**, the Schedule block's rows, with the columns the block needs and the optional ones it can use:
+**`events.schedule.rows`**, the Schedule block's rows, with the columns the block needs and the optional ones it can use:
 
 ```sql
 SELECT ID AS "key", NAME AS "label", NULL AS "group", ORIENTATION AS "orientation",
        BACKGROUND_COLOR AS "color", TEXT_COLOR AS "textColor", DESCRIPTION AS "description"
-FROM WING_CATEGORY
+FROM EVENT_CATEGORY
 WHERE TENANT_ID = :APP.tenant
 ```
 
 Rows keep the order the query returns them, and a SELECT source takes no `ORDER BY`. When the order matters, point the block at a published report definition over this source with its sort set to `ORDERING`; the block accepts either.
 
-**`wing.schedule.bars`**, the activities of the window shown:
+**`events.schedule.bars`**, the activities of the window shown:
 
 ```sql
 SELECT ID AS "key", CATEGORY AS "row", START_DATE AS "start", END_DATE AS "end", NAME AS "label", NULL AS "kind", LINK AS "link",
        DESCRIPTION AS "description"
-FROM WING_ACTIVITY
-WHERE TENANT_ID = :APP.tenant AND HIDDEN = 0 AND END_DATE >= :PARAM.from AND START_DATE <= :PARAM.to
+FROM EVENT_ACTIVITY
+WHERE TENANT_ID = :APP.tenant AND DRAFT = 0 AND END_DATE >= :PARAM.from AND START_DATE <= :PARAM.to
 ```
 
-The bars' row is the category's name, so the rows query must offer the name as its key. Using `ID` for both works too if the activity stores the category's id. Contact and units are kept out of the bars and shown on the activity form, which the link template opens.
+The bars' row is the category's name, so the rows query must offer the name as its key. Using `ID` for both works too if the activity stores the category's id. The location is kept out of the bars and shown on the activity form, which the link template opens. `LINK` is what an editor typed, so the block uses it only when it is a path from the site's root or an `http`, `https`, `mailto` or `tel` address; anything else falls back to the link template, as the [Schedule block guide](schedule.md#columns-of-the-sources) describes.
+
+The activities themselves have no node: `events.activity` is the alias of the activity form's C# class below, which reads and writes them.
 
 ## The Schedule block
 
-On each unit's Activity schedule page, a Schedule block with these settings. The [Schedule block guide](schedule.md) has the rest.
+On each club's Activity schedule page, a Schedule block with these settings. The [Schedule block guide](schedule.md) has the rest.
 
 | Setting | Value |
 | --- | --- |
-| Rows source | `wing.schedule.rows` |
-| Bars source | `wing.schedule.bars` |
-| Days before today, after today | 7 and 60, or whatever the unit prefers |
+| Rows source | `events.schedule.rows` |
+| Bars source | `events.schedule.bars` |
+| Days before today, after today | 7 and 60, or whatever the club prefers |
 | Link template | `../activity/?id={key}` |
 | Hide empty rows | On, so a category with nothing in the window stays out of the way |
 
-A category whose `ORIENTATION` is 1, statutory holidays say, becomes a band across the top, its activities written top to bottom and shading their days through every row. Colours come from the category's columns and a bar with a description opens it, with the link, when clicked. The link is relative, so the same block on every copy of the page opens that unit's own Activity page.
+A category whose `ORIENTATION` is 1, regatta days say, becomes a band across the top, its activities written top to bottom and shading their days through every row. Colours come from the category's columns and a bar with a description opens it, with the link, when clicked. The link template is relative, so the same block on every copy of the page opens that club's own Activity page.
 
-## The form page
+## The form pages
 
-The Activity page holds a Forms container with one form. Its Form interface selects the resource `wing.activity` and the key parameter `id`, so `../activity/?id=…` from the schedule opens an existing activity and the bare page starts a new one. The field blocks bind to the class's fields: `name`, `startDate`, `endDate`, `category`, `description`, `contact`, `units`, `link` and `hidden`. Nothing on the page says which tenant it is; the class learns that from the page.
+The Category page holds a Forms container with one form whose Form Interface selects the data source `events.categories` and the key parameter `id`. The categories report's Open link and Create button lead there, and the engine applies the node's row restriction, insert default and the policy below to every load and save.
+
+The Activity page holds a Forms container with one form. Its Form Interface selects the C# class `events.activity` and the key parameter `id`, so `../activity/?id=…` from the schedule opens an existing activity and the bare page starts a new one. The field blocks bind to the class's fields: `name`, `startDate`, `endDate`, `category`, `description`, `location`, `link` and `draft`. Nothing on the page says which tenant it is; the class learns that from the page.
 
 ## The C#
 
@@ -140,13 +144,13 @@ using Umbraco.Cms.Core.PublishedCache;
 using Umbraco.Cms.Core.Services.Navigation;
 using Umbraco.Extensions;
 
-namespace Wing.ActivitySchedule;
+namespace Example.ActivitySchedule;
 
 /// <summary>
 /// The one place that knows what a tenant is: the nearest page at or above the calling page whose type carries a
-/// Tenant id property, such as a unit's home page. Everything else asks this class.
+/// Tenant id property, such as a club's home page. Everything else asks this class.
 /// </summary>
-public sealed class WingTenants(IPublishedContentCache pages, IDocumentNavigationQueryService navigation)
+public sealed class ClubTenants(IPublishedContentCache pages, IDocumentNavigationQueryService navigation)
 {
     public const string Property = "tenantId";
 
@@ -169,25 +173,27 @@ public sealed class WingTenants(IPublishedContentCache pages, IDocumentNavigatio
 }
 
 /// <summary>Hands the tenant to editor SQL as <c>:APP.tenant</c>, so one data source serves every tenant's pages.</summary>
-public sealed class WingTenantProvider(WingTenants tenants) : IBindVariableProvider
+public sealed class ClubTenantProvider(ClubTenants tenants) : IBindVariableProvider
 {
     public ValueTask<IReadOnlyDictionary<string, object?>?> ResolveAsync(FormExecutionContext context, CancellationToken ct)
         => ValueTask.FromResult<IReadOnlyDictionary<string, object?>?>(new Dictionary<string, object?> { ["tenant"] = tenants.Find(context.PageKey) });
+
+    public IReadOnlyCollection<string> Names => ["tenant"];
 }
 
 /// <summary>
-/// The rule for the data source nodes whose alias starts with <c>wing.</c>, the categories and the schedule's rows and
+/// The rule for the data source nodes whose alias starts with <c>events.</c>, the categories and the schedule's rows and
 /// bars: outside a tenant nothing is read or written, anyone signed in may read, and only the tenant's editors may write.
 /// The nodes' row restriction, <c>TENANT_ID = :APP.tenant</c>, keeps every read and write inside the tenant.
 /// </summary>
-public sealed class WingDataSourcePolicy(WingTenants tenants) : IDataSourcePolicy
+public sealed class EventsDataSourcePolicy(ClubTenants tenants) : IDataSourcePolicy
 {
     public ValueTask<bool> IsAllowedAsync(DataSourceRequest request, CancellationToken ct)
     {
-        if (!request.DataSource.StartsWith("wing.", StringComparison.Ordinal)) return ValueTask.FromResult(true);
+        if (!request.DataSource.StartsWith("events.", StringComparison.Ordinal)) return ValueTask.FromResult(true);
         if (tenants.Find(request.Context.PageKey) is not { } tenant) return ValueTask.FromResult(false);
         if (request.Action is DataSourceAction.Query or DataSourceAction.Load or DataSourceAction.Initialize) return ValueTask.FromResult(!request.User.IsAnonymous);
-        return ValueTask.FromResult(WingTenants.CanEdit(request.User, tenant));
+        return ValueTask.FromResult(ClubTenants.CanEdit(request.User, tenant));
     }
 }
 
@@ -199,19 +205,18 @@ public sealed class ActivityInput
     [Required] public DateOnly? EndDate { get; set; }
     [Required, MaxLength(60)] public string Category { get; set; } = "";
     [MaxLength(2048)] public string? Description { get; set; }
-    [MaxLength(1024)] public string? Contact { get; set; }
-    [MaxLength(512)] public string? Units { get; set; }
+    [MaxLength(512)] public string? Location { get; set; }
     [MaxLength(512)] public string? Link { get; set; }
-    public bool Hidden { get; set; }
+    public bool Draft { get; set; }
 }
 
 /// <summary>
 /// The activity form's class. The tenant comes from the page, the account from the resolver, and every operation
 /// checks both before it touches the database. The form never learns the tenant from a field.
 /// </summary>
-public sealed class ActivityResource(IApplicationConnectionFactory connections, IDataSourceUserResolver users, WingTenants tenants) : FormResource<ActivityInput, ActivityInput>
+public sealed class ActivityResource(IApplicationConnectionFactory connections, IDataSourceUserResolver users, ClubTenants tenants) : FormResource<ActivityInput, ActivityInput>
 {
-    public override string Alias => "wing.activity";
+    public override string Alias => "events.activity";
 
     public override IReadOnlyList<FormField> Fields { get; } = [
         new("name", "Activity", "text", Required: true, MaxLength: 120),
@@ -219,13 +224,12 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
         new("endDate", "Ends", "date", Required: true),
         new("category", "Category", "text", Required: true, MaxLength: 60),
         new("description", "Description", "text", MaxLength: 2048),
-        new("contact", "Contact", "text", MaxLength: 1024),
-        new("units", "Units", "text", MaxLength: 512),
+        new("location", "Location", "text", MaxLength: 512),
         new("link", "Link", "text", MaxLength: 512),
-        new("hidden", "Hidden from the schedule", "checkbox"),
+        new("draft", "Draft, kept off the schedule", "checkbox"),
     ];
 
-    private static readonly string[] Columns = ["NAME", "START_DATE", "END_DATE", "CATEGORY", "DESCRIPTION", "CONTACT", "UNITS", "LINK", "HIDDEN"];
+    private static readonly string[] Columns = ["NAME", "START_DATE", "END_DATE", "CATEGORY", "DESCRIPTION", "LOCATION", "LINK", "DRAFT"];
 
     /// <summary>The account and the tenant, or the refusal to return: no account, no tenant, or for a change, no permission.</summary>
     private async Task<(DataSourceUser Account, string Tenant, FormResult? Refusal)> AdmitAsync(FormExecutionContext context, bool change, CancellationToken ct)
@@ -233,7 +237,7 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
         var account = await users.ResolveAsync(context, ct);
         if (account is null) return (null!, "", FormResult.Denied());
         if (tenants.Find(context.PageKey) is not { } tenant) return (account, "", FormResult.Denied());
-        if (change && !WingTenants.CanEdit(account, tenant)) return (account, tenant, FormResult.Denied());
+        if (change && !ClubTenants.CanEdit(account, tenant)) return (account, tenant, FormResult.Denied());
         return (account, tenant, null);
     }
 
@@ -242,7 +246,7 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
         var (_, _, refusal) = await AdmitAsync(context, change: true, ct);
         if (refusal is not null) return refusal;
         var values = Fields.ToDictionary(f => f.Key, _ => (object?)null);
-        values["hidden"] = false;
+        values["draft"] = false;
         return FormResult.Ok(new FormRecord(null, null, values, new(Create: true)));
     }
 
@@ -252,7 +256,7 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
         var (account, tenant, refusal) = await AdmitAsync(context, change: false, ct);
         if (refusal is not null) return refusal;
         await using var connection = await OpenAsync(ct);
-        return await ReadAsync(connection, null, key, tenant, WingTenants.CanEdit(account, tenant), ct) ?? FormResult.Missing();
+        return await ReadAsync(connection, null, key, tenant, ClubTenants.CanEdit(account, tenant), ct) ?? FormResult.Missing();
     }
 
     protected override async Task<FormResult> CreateAsync(ActivityInput input, FormExecutionContext context, CancellationToken ct)
@@ -264,8 +268,8 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
         var key = Guid.NewGuid().ToString("D");
         var now = Stamp(DateTime.UtcNow);
         await ExecuteAsync(connection, null, """
-            INSERT INTO WING_ACTIVITY (ID, TENANT_ID, NAME, START_DATE, END_DATE, CATEGORY, DESCRIPTION, CONTACT, UNITS, LINK, HIDDEN, CREATED_BY, CREATED_AT, MODIFIED_BY, MODIFIED_AT)
-            VALUES (@id, @tenant, @name, @start, @end, @category, @description, @contact, @units, @link, @hidden, @by, @at, @by, @at)
+            INSERT INTO EVENT_ACTIVITY (ID, TENANT_ID, NAME, START_DATE, END_DATE, CATEGORY, DESCRIPTION, LOCATION, LINK, DRAFT, CREATED_BY, CREATED_AT, MODIFIED_BY, MODIFIED_AT)
+            VALUES (@id, @tenant, @name, @start, @end, @category, @description, @location, @link, @draft, @by, @at, @by, @at)
             """, Values(input, key, tenant, account, now), ct);
         return (await ReadAsync(connection, null, key, tenant, true, ct))!;
     }
@@ -279,8 +283,8 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
         await using var transaction = await connection.BeginTransactionAsync(ct);
         if (await StaleAsync(connection, transaction, key, tenant, checksum, ct) is { } stale) return stale;
         await ExecuteAsync(connection, transaction, """
-            UPDATE WING_ACTIVITY SET NAME = @name, START_DATE = @start, END_DATE = @end, CATEGORY = @category, DESCRIPTION = @description,
-                CONTACT = @contact, UNITS = @units, LINK = @link, HIDDEN = @hidden, MODIFIED_BY = @by, MODIFIED_AT = @at
+            UPDATE EVENT_ACTIVITY SET NAME = @name, START_DATE = @start, END_DATE = @end, CATEGORY = @category, DESCRIPTION = @description,
+                LOCATION = @location, LINK = @link, DRAFT = @draft, MODIFIED_BY = @by, MODIFIED_AT = @at
             WHERE ID = @id AND TENANT_ID = @tenant
             """, Values(input, key, tenant, account, Stamp(DateTime.UtcNow)), ct);
         await transaction.CommitAsync(ct);
@@ -294,9 +298,10 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
         await using var connection = await OpenAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         if (await StaleAsync(connection, transaction, key, tenant, checksum, ct) is { } stale) return stale;
-        await ExecuteAsync(connection, transaction, "DELETE FROM WING_ACTIVITY WHERE ID = @id AND TENANT_ID = @tenant", new() { ["id"] = key, ["tenant"] = tenant }, ct);
+        await ExecuteAsync(connection, transaction, "DELETE FROM EVENT_ACTIVITY WHERE ID = @id AND TENANT_ID = @tenant", new() { ["id"] = key, ["tenant"] = tenant }, ct);
         await transaction.CommitAsync(ct);
-        return new FormResult(200);
+        // Done, with no record to show: the runtime takes the visitor to the form's return page.
+        return new FormResult(204);
     }
 
     /// <summary>
@@ -306,7 +311,7 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
     private static async Task<FormResult?> StaleAsync(DbConnection connection, DbTransaction transaction, string key, string tenant, string? checksum, CancellationToken ct)
     {
         // An update that changes nothing still takes the row's write lock, so no other save can change it before this one commits.
-        var locked = await ExecuteAsync(connection, transaction, "UPDATE WING_ACTIVITY SET MODIFIED_AT = MODIFIED_AT WHERE ID = @id AND TENANT_ID = @tenant",
+        var locked = await ExecuteAsync(connection, transaction, "UPDATE EVENT_ACTIVITY SET MODIFIED_AT = MODIFIED_AT WHERE ID = @id AND TENANT_ID = @tenant",
             new() { ["id"] = key, ["tenant"] = tenant }, ct);
         if (locked == 0 || await ReadAsync(connection, transaction, key, tenant, true, ct) is not { Record: { } current }) return FormResult.Missing();
         return current.Checksum == checksum ? null : FormResult.Conflict();
@@ -317,10 +322,10 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
     {
         if (input.EndDate < input.StartDate) return FormResult.Invalid("endDate", "The activity cannot end before it starts.");
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM WING_CATEGORY WHERE TENANT_ID = @tenant AND NAME = @category";
+        command.CommandText = "SELECT COUNT(*) FROM EVENT_CATEGORY WHERE TENANT_ID = @tenant AND NAME = @category";
         Bind(command, new() { ["tenant"] = tenant, ["category"] = input.Category.Trim() });
         if (Convert.ToInt64(await command.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture) == 0)
-            return FormResult.Invalid("category", "Choose one of this unit's categories.");
+            return FormResult.Invalid("category", "Choose one of this club's categories.");
         return null;
     }
 
@@ -336,15 +341,15 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"SELECT {string.Join(", ", Columns)} FROM WING_ACTIVITY WHERE ID = @id AND TENANT_ID = @tenant";
+        command.CommandText = $"SELECT {string.Join(", ", Columns)} FROM EVENT_ACTIVITY WHERE ID = @id AND TENANT_ID = @tenant";
         Bind(command, new() { ["id"] = key, ["tenant"] = tenant });
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return null;
         var values = new Dictionary<string, object?> {
             ["name"] = reader.GetString(0), ["startDate"] = reader.GetString(1), ["endDate"] = reader.GetString(2), ["category"] = reader.GetString(3),
-            ["description"] = reader.IsDBNull(4) ? null : reader.GetString(4), ["contact"] = reader.IsDBNull(5) ? null : reader.GetString(5),
-            ["units"] = reader.IsDBNull(6) ? null : reader.GetString(6), ["link"] = reader.IsDBNull(7) ? null : reader.GetString(7),
-            ["hidden"] = Convert.ToInt64(reader.GetValue(8), CultureInfo.InvariantCulture) != 0,
+            ["description"] = reader.IsDBNull(4) ? null : reader.GetString(4), ["location"] = reader.IsDBNull(5) ? null : reader.GetString(5),
+            ["link"] = reader.IsDBNull(6) ? null : reader.GetString(6),
+            ["draft"] = Convert.ToInt64(reader.GetValue(7), CultureInfo.InvariantCulture) != 0,
         };
         return FormResult.Ok(new FormRecord(key, Checksum(values), values, new(Update: canEdit, Delete: canEdit)));
     }
@@ -355,8 +360,8 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
 
     private static Dictionary<string, object?> Values(ActivityInput input, string key, string tenant, DataSourceUser account, string now) => new() {
         ["id"] = key, ["tenant"] = tenant, ["name"] = input.Name.Trim(), ["start"] = Date(input.StartDate), ["end"] = Date(input.EndDate),
-        ["category"] = input.Category.Trim(), ["description"] = input.Description, ["contact"] = input.Contact, ["units"] = input.Units,
-        ["link"] = input.Link, ["hidden"] = input.Hidden ? 1 : 0, ["by"] = account.Key, ["at"] = now,
+        ["category"] = input.Category.Trim(), ["description"] = input.Description, ["location"] = input.Location,
+        ["link"] = input.Link, ["draft"] = input.Draft ? 1 : 0, ["by"] = account.Key, ["at"] = now,
     };
 
     private static async Task<int> ExecuteAsync(DbConnection connection, DbTransaction? transaction, string sql, Dictionary<string, object?> values, CancellationToken ct)
@@ -384,13 +389,13 @@ public sealed class ActivityResource(IApplicationConnectionFactory connections, 
 }
 
 /// <summary>Registers the pieces. Umbraco finds a composer on its own; nothing else is configured.</summary>
-public sealed class WingComposer : IComposer
+public sealed class EventsComposer : IComposer
 {
     public void Compose(IUmbracoBuilder builder)
     {
-        builder.Services.AddScoped<WingTenants>();
-        builder.Services.AddScoped<IBindVariableProvider, WingTenantProvider>();
-        builder.Services.AddScoped<IDataSourcePolicy, WingDataSourcePolicy>();
+        builder.Services.AddScoped<ClubTenants>();
+        builder.Services.AddScoped<IBindVariableProvider, ClubTenantProvider>();
+        builder.Services.AddScoped<IDataSourcePolicy, EventsDataSourcePolicy>();
         builder.Services.AddScoped<IFormResource, ActivityResource>();
     }
 }
@@ -399,21 +404,22 @@ public sealed class WingComposer : IComposer
 A few things in that code are deliberate.
 
 - **`AdmitAsync` runs first in every operation**, and `Load` admits with `change: false` so a signed-in reader can open an activity while the returned capabilities say whether this person may change it. The capabilities only shape the buttons; `Update` and `Delete` admit with `change: true` and check again.
-- **The tenant is in every predicate.** `WHERE ID = @id AND TENANT_ID = @tenant` means a key from another unit's schedule is a missing record, not a leak, even if someone types it into the address.
-- **`Update` and `Delete` lock the activity before they compare checksums.** `StaleAsync` runs an update that changes nothing, which takes the row's write lock in SQLite, SQL Server and PostgreSQL, then reads the row in the same transaction. Another save of the same activity waits until this one commits. A checksum that differs from the one the caller read is a conflict, as Oracle APEX's row-values check reports it.
-- **`CanEditPage` is Umbraco's Update permission on the calling page**, resolved for `context.PageKey`. A backoffice User who may edit a unit's pages may edit its schedule; one who may not is treated like any Member and needs the group. That is the one rule the whole application shares, so it lives in `WingTenants.CanEdit` and the policy and the form class both call it.
-- **The provider answers for every data source**, not only the three above, and binds `NULL` outside a tenant. Nothing else reads `:APP.tenant`, so that is harmless, and the policy refuses the `wing.` sources outside a tenant anyway.
+- **The tenant is in every predicate.** `WHERE ID = @id AND TENANT_ID = @tenant` means a key from another club's schedule is a missing record, not a leak, even if someone types it into the address.
+- **`Update` and `Delete` lock the activity before they compare checksums.** `StaleAsync` runs an update that changes nothing, which takes the row's write lock in SQLite, SQL Server and PostgreSQL, then reads the row in the same transaction. Another save of the same activity waits until this one commits. A checksum that differs from the one the caller read means someone else saved the activity meanwhile, and the answer is a conflict.
+- **`Delete` answers `new FormResult(204)`**, success with no record, which the runtime reads as "done": it takes the visitor to the form's return page.
+- **`CanEditPage` is Umbraco's Update permission on the calling page**, resolved for `context.PageKey`. A backoffice User who may edit a club's pages may edit its schedule; one who may not is treated like any Member and needs the group. That is the one rule the whole application shares, so it lives in `ClubTenants.CanEdit` and the policy and the form class both call it.
+- **The provider answers for every data source**, not only the ones above, and binds `NULL` outside a tenant. Nothing else reads `:APP.tenant`, so that is harmless, and the policy refuses the `events.` sources outside a tenant anyway. It declares `tenant` in `Names`, so publishing warns about a misspelt `:APP.` name.
 - **Parameter names use `@`**, which SQLite, SQL Server and PostgreSQL accept. Oracle wants `:`; adjust `Bind` if the application database is Oracle.
 
 ## Who decides what
 
 | Question | Decided by |
 | --- | --- |
-| Which tenant is this page? | `WingTenants.Find`, from the nearest page above with a Tenant id |
-| May this person read the schedule or the categories? | The data source engine's sign-in check, then `WingDataSourcePolicy` |
-| May this person change a category? | `WingDataSourcePolicy`, through `WingTenants.CanEdit` |
-| May this person open, create, change or delete an activity? | `ActivityResource`, through `WingTenants.CanEdit` on every operation |
-| Which rows can a query or a write touch? | The nodes' row restriction `TENANT_ID = :APP.tenant`, bound from `WingTenantProvider` |
+| Which tenant is this page? | `ClubTenants.Find`, from the nearest page above with a Tenant id |
+| May this person read the schedule or the categories? | The data source engine's sign-in check, then `EventsDataSourcePolicy` |
+| May this person change a category? | `EventsDataSourcePolicy`, through `ClubTenants.CanEdit` |
+| May this person open, create, change or delete an activity? | `ActivityResource`, through `ClubTenants.CanEdit` on every operation |
+| Which rows can a query or a write touch? | The nodes' row restriction `TENANT_ID = :APP.tenant`, bound from `ClubTenantProvider` |
 | Which tenant does a new category get? | The node's insert default `TENANT_ID = :APP.tenant` |
 | Which tenant does a new activity get? | `ActivityResource`, from the page, never from the form |
 | Is the activity's category real, and are its dates in order? | `ActivityResource.ValidateAsync` |
@@ -421,11 +427,11 @@ A few things in that code are deliberate.
 
 Nothing on this list is decided by a URL parameter, a hidden field or a block setting.
 
-## Adding a unit
+## Adding a club
 
-1. Copy a unit's subtree in the backoffice, with its descendants, to where the new unit's pages belong.
+1. Copy a club's subtree in the backoffice, with its descendants, to where the new club's pages belong.
 2. Set the new home page's Tenant id.
-3. Create the Member Group `<tenant> schedule editors` and put the unit's editors in it, or give the backoffice Users who run that unit edit permission on the subtree.
+3. Create the Member Group `<tenant> schedule editors` and put the club's editors in it, or give the backoffice Users who run that club edit permission on the subtree.
 4. Publish.
 
 The data source nodes, the C# and the block settings are untouched. The Schedule block on the copied page points at the same two sources and reads the new tenant's rows; the activity form's link is relative, so it opens the copy's own Activity page.

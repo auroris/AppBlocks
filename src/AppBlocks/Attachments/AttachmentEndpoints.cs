@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net.Mime;
 using System.Security.Claims;
+using System.Text.Json;
 using AppBlocks.Authentication;
 using AppBlocks.Databases;
 using Microsoft.AspNetCore.Antiforgery;
@@ -11,32 +12,55 @@ using Microsoft.Net.Http.Headers;
 
 namespace AppBlocks.Attachments;
 
+/// <summary>The body of an adoption: the key of the record the form saved.</summary>
+public sealed record AttachmentAdoption(string? Key);
+
 /// <summary>
-/// <c>/api/attachments/{page}/{block}</c>: the files of the record an Attachments block shows. Every call resolves the
-/// block through <see cref="AttachmentAccess"/> first, so page access and the owning record's own load decide, and a
-/// file id is only ever looked up among that owner's links. Writes carry the antiforgery token the list hands out,
-/// are refused on a read-only block, and are logged like form operations.
+/// <c>/api/attachments/{page}/{block}</c>, or the same under the configured <see cref="AppBlocksRoutes.Root"/>: the files of
+/// the record an Attachments block shows. Every call resolves the block through <see cref="AttachmentAccess"/> first, so page
+/// access and the owning record's own load decide, and a file id is only ever looked up among that owner's links. Writes
+/// carry the antiforgery token the list hands out, are refused on a read-only block, and are logged like form operations.
+/// <c>/new/{submissionKey}</c> holds the files someone uploads in a form whose record is not saved yet, under the key the
+/// runtime generates for that submission: list, upload, download and remove, then <c>/adopt</c> once the form has saved,
+/// which gives them to the record.
 /// </summary>
 public static class AttachmentEndpoints
 {
-    public const string Route = "/api/attachments";
+    /// <summary>Where the endpoints answer: <c>attachments</c> under <see cref="AppBlocksRoutes.Root"/>, by default <c>/api/attachments</c>.</summary>
+    public static string Route(IConfiguration? configuration) => AppBlocksRoutes.Under(configuration, "attachments");
 
     /// <summary>Room for the multipart framing and the text fields around a file of the allowed size.</summary>
     private const long MultipartOverhead = 64 * 1024;
 
     public static void MapAttachments(this IEndpointRouteBuilder endpoints)
     {
-        var group = endpoints.MapGroup(Route + "/{pageKey:guid}/{blockKey:guid}");
-        group.MapGet("", List);
-        group.MapPost("", Upload);
-        group.MapGet("/{id:long}", Download);
-        group.MapPut("/{id:long}", Replace);
-        group.MapDelete("/{id:long}", Remove);
+        var group = endpoints.MapGroup(Route(endpoints.ServiceProvider.GetService<IConfiguration>()) + "/{pageKey:guid}/{blockKey:guid}");
+        group.MapGet("", (Guid pageKey, Guid blockKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+            => List(access.ResolveAsync(pageKey, blockKey, ct), http, store, ct));
+        group.MapPost("", (Guid pageKey, Guid blockKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+            => Write(access.ResolveAsync(pageKey, blockKey, ct), null, http, store, ct));
+        group.MapGet("/{id:long}", (Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+            => Download(access.ResolveAsync(pageKey, blockKey, ct), id, http, store, ct));
+        group.MapPut("/{id:long}", (Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+            => Write(access.ResolveAsync(pageKey, blockKey, ct), id, http, store, ct));
+        group.MapDelete("/{id:long}", (Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+            => Remove(access.ResolveAsync(pageKey, blockKey, ct), id, http, store, ct));
+
+        var pending = group.MapGroup("/new/{submissionKey:guid}");
+        pending.MapGet("", (Guid pageKey, Guid blockKey, Guid submissionKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+            => List(Pending(access.ResolveNewAsync(pageKey, blockKey, submissionKey, ct), store, ct), http, store, ct));
+        pending.MapPost("", (Guid pageKey, Guid blockKey, Guid submissionKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+            => Write(Pending(access.ResolveNewAsync(pageKey, blockKey, submissionKey, ct), store, ct), null, http, store, ct));
+        pending.MapGet("/{id:long}", (Guid pageKey, Guid blockKey, Guid submissionKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+            => Download(Pending(access.ResolveNewAsync(pageKey, blockKey, submissionKey, ct), store, ct), id, http, store, ct));
+        pending.MapDelete("/{id:long}", (Guid pageKey, Guid blockKey, Guid submissionKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+            => Remove(Pending(access.ResolveNewAsync(pageKey, blockKey, submissionKey, ct), store, ct), id, http, store, ct));
+        pending.MapPost("/adopt", Adopt);
     }
 
-    private static async Task<IResult> List(Guid pageKey, Guid blockKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+    private static async Task<IResult> List(Task<AttachmentScope> resolving, HttpContext http, AttachmentStore store, CancellationToken ct)
     {
-        var scope = await access.ResolveAsync(pageKey, blockKey, ct);
+        var scope = await resolving;
         if (scope.Status != 200) return Refusal(scope);
         http.Response.Headers.CacheControl = "no-store";
         IReadOnlyList<AttachmentItem> items;
@@ -45,14 +69,14 @@ public static class AttachmentEndpoints
         {
             // Not a failure of this page: the block says so in words for the person, and the form around it never hears of it.
             return Results.Json(new {
-                owner = new { alias = scope.Owner!.Alias, key = scope.Owner.Key },
+                owner = Owner(scope),
                 canWrite = false, purposes = scope.Block!.Purposes, maxFileSize = scope.Block.Limits.MaxFileSize, accept = scope.Block.Limits.Accept,
                 items = Array.Empty<object>(),
                 storage = new { message = Plain(error), setupUrl = await SetupUrlAsync(http) },
             });
         }
         return Results.Json(new {
-            owner = new { alias = scope.Owner!.Alias, key = scope.Owner.Key },
+            owner = Owner(scope),
             canWrite = scope.CanWrite,
             purposes = scope.Block!.Purposes,
             maxFileSize = scope.Block.Limits.MaxFileSize,
@@ -62,9 +86,12 @@ public static class AttachmentEndpoints
         });
     }
 
-    private static async Task<IResult> Download(Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+    /// <summary>The owner the list names: the record's resource and key, or for pending files the resource and no key.</summary>
+    private static object Owner(AttachmentScope scope) => new { alias = scope.Owner!.ResourceAlias, key = scope.SubmissionKey is null ? scope.Owner.Key : null };
+
+    private static async Task<IResult> Download(Task<AttachmentScope> resolving, long id, HttpContext http, AttachmentStore store, CancellationToken ct)
     {
-        var scope = await access.ResolveAsync(pageKey, blockKey, ct);
+        var scope = await resolving;
         if (scope.Status != 200) return Refusal(scope);
         var file = await Run(() => store.ReadAsync(scope.Owner!, id, ct));
         if (file.Problem is not null) return file.Problem;
@@ -76,20 +103,14 @@ public static class AttachmentEndpoints
         return Results.Bytes(file.Value.Bytes, file.Value.ContentType);
     }
 
-    private static Task<IResult> Upload(Guid pageKey, Guid blockKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
-        => Write(pageKey, blockKey, null, http, access, store, ct);
-
-    private static Task<IResult> Replace(Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
-        => Write(pageKey, blockKey, id, http, access, store, ct);
-
     /// <summary>
     /// An upload (no id) or a replacement: a multipart body with a <c>file</c> part and the text parts <c>purpose</c>,
     /// <c>label</c> and <c>notes</c>. The size limit is applied before the body is read: a declared length over it is
     /// refused at once, and the request body is capped so an undeclared one is cut off at the limit.
     /// </summary>
-    private static async Task<IResult> Write(Guid pageKey, Guid blockKey, long? id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+    private static async Task<IResult> Write(Task<AttachmentScope> resolving, long? id, HttpContext http, AttachmentStore store, CancellationToken ct)
     {
-        var scope = await access.ResolveAsync(pageKey, blockKey, ct);
+        var scope = await resolving;
         if (scope.Status != 200) return Refusal(scope);
         if (!scope.CanWrite) return Audited(http, id is null ? "upload" : "replace", scope, id, Results.Problem("You may read these files but not change them.", statusCode: 403), 403);
         try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
@@ -134,9 +155,9 @@ public static class AttachmentEndpoints
         return Audited(http, id is null ? "upload" : "replace", scope, result.Value.Id, Results.Json(Item(result.Value, scope.User!), statusCode: id is null ? 201 : 200), id is null ? 201 : 200);
     }
 
-    private static async Task<IResult> Remove(Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+    private static async Task<IResult> Remove(Task<AttachmentScope> resolving, long id, HttpContext http, AttachmentStore store, CancellationToken ct)
     {
-        var scope = await access.ResolveAsync(pageKey, blockKey, ct);
+        var scope = await resolving;
         if (scope.Status != 200) return Refusal(scope);
         if (!scope.CanWrite) return Audited(http, "remove", scope, id, Results.Problem("You may read these files but not change them.", statusCode: 403), 403);
         try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
@@ -146,6 +167,51 @@ public static class AttachmentEndpoints
         http.Response.Headers.CacheControl = "no-store";
         return removed.Value ? Audited(http, "remove", scope, id, Results.NoContent(), 204)
             : Audited(http, "remove", scope, id, Results.Problem("This file does not belong to the record.", statusCode: 404), 404);
+    }
+
+    /// <summary>
+    /// Gives the caller's pending files of one submission to the record its form has just saved, then answers with that
+    /// record's list. The caller must be able to write the record's files, as for an upload to it; the files they reach are
+    /// only their own, since the pending owner carries their account. When none are theirs but someone else has files pending
+    /// under the same submission key, the adoption is refused rather than answered as if there were nothing to adopt.
+    /// </summary>
+    private static async Task<IResult> Adopt(Guid pageKey, Guid blockKey, Guid submissionKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+    {
+        // ReadFromJsonAsync throws for any other content type, which would otherwise be a 500.
+        if (!http.Request.HasJsonContentType()) return Results.Problem("Send the record's key as JSON.", statusCode: 415);
+        AttachmentAdoption? adoption;
+        try { adoption = await http.Request.ReadFromJsonAsync<AttachmentAdoption>(ct); }
+        catch (Exception error) when (error is JsonException or BadHttpRequestException) { return Results.BadRequest(); }
+        if (adoption?.Key?.Trim() is not { Length: > 0 and <= 200 } key) return Results.Problem("Name the record the files now belong to.", statusCode: 422);
+        var scope = await Pending(access.ResolveSavedAsync(http, pageKey, blockKey, key, ct), store, ct);
+        if (scope.Status != 200) return Refusal(scope);
+        if (!scope.CanWrite) return Audited(http, "adopt", scope, null, Results.Problem("You may read these files but not change them.", statusCode: 403), 403);
+        try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
+        catch (AntiforgeryValidationException) { return Results.BadRequest(); }
+        var pending = AttachmentOwner.Pending(scope.Owner!.Alias, submissionKey, scope.User!);
+        var adopted = await Run(() => store.AdoptAsync(pending, scope.Owner, AttachmentAccess.Actor(scope.User!), ct));
+        if (adopted.Problem is not null) return adopted.Problem;
+        if (adopted.Value == 0)
+        {
+            var others = await Run(() => store.PendingForOthersAsync(pending, submissionKey, ct));
+            if (others.Problem is not null) return others.Problem;
+            if (others.Value) return Audited(http, "adopt", scope, null, Results.Problem("These files were uploaded by someone else.", statusCode: 403), 403);
+        }
+        Audited(http, "adopt", scope, null, Results.Empty, 200);
+        return await List(Task.FromResult(scope), http, store, ct);
+    }
+
+    /// <summary>
+    /// A pending scope, after the pending files past <see cref="AttachmentSettings.PendingLifetimeHours"/> are deleted: every
+    /// pending operation does that first, so no background service is needed.
+    /// </summary>
+    private static async Task<AttachmentScope> Pending(Task<AttachmentScope> resolving, AttachmentStore store, CancellationToken ct)
+    {
+        var scope = await resolving;
+        if (scope.Status == 200)
+            try { await store.ExpirePendingAsync(ct); }
+            catch (AttachmentStoreException) { } // The operation itself then meets the store's problem and reports it.
+        return scope;
     }
 
     /// <summary>What someone with no account is told in place of an account name: that it was someone signed in, not who.</summary>

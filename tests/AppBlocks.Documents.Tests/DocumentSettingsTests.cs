@@ -12,24 +12,34 @@ namespace AppBlocks.Documents.Tests;
 public sealed class DocumentSettingsTests
 {
     [Fact]
-    public async Task Saved_settings_survive_a_new_store_and_blank_url_disables_configured_pressroom()
+    public async Task The_configured_pressroom_is_a_pdf_configuration_until_settings_are_saved()
     {
         using var site = new SettingsSite();
-        Assert.Equal("https://configured.example/", site.Store.Get().PressroomUrl);
-        await site.Store.SaveAsync(new("https://saved.example/pdf", "test-secret", TimeoutSeconds: 12));
+        var configured = Assert.Single(site.Store.List().Configurations);
+        Assert.Equal((DocumentSettingsStore.ConfiguredId, "https://configured.example/", "pdf", true), (configured.Id, configured.Url, configured.Output, configured.HasApiKey));
+        Assert.Equal("configured-secret", site.Store.Resolve(configured.Id).ApiKey);
+        Assert.False(site.Store.List().Saved);
+        await site.Store.SaveConfigurationAsync(new(configured.Id, "Saved PDF", "https://saved.example/pdf", ApiKey: "test-secret", TimeoutSeconds: 12));
         var reloaded = site.CreateStore();
-        Assert.Equal("https://saved.example/pdf", reloaded.Get().PressroomUrl);
-        Assert.Equal("test-secret", reloaded.Resolve().ApiKey);
-        Assert.Equal(12, reloaded.Resolve().TimeoutSeconds);
+        var saved = Assert.Single(reloaded.List().Configurations);
+        Assert.Equal((configured.Id, "https://saved.example/pdf", 12d), (saved.Id, saved.Url, saved.TimeoutSeconds));
+        Assert.Equal("test-secret", reloaded.Resolve(saved.Id).ApiKey);
         var json = await File.ReadAllTextAsync(Path.Combine(site.Root, "App_Data", "AppBlocks", "documents.json"));
         Assert.DoesNotContain("test-secret", json);
-        Assert.DoesNotContain("test-secret", JsonSerializer.Serialize(reloaded.Get()));
-        await reloaded.SaveAsync(new(null));
-        Assert.Null(site.Store.Resolve().Url);
-        Assert.Equal("test-secret", site.Store.Resolve().ApiKey);
-        await reloaded.SaveAsync(new(null, ClearApiKey: true));
-        Assert.False(site.Store.Get().HasApiKey);
-        Assert.Null(site.Store.Resolve().ApiKey);
+        Assert.DoesNotContain("test-secret", JsonSerializer.Serialize(reloaded.List()));
+        // The unprefixed Pressroom:* keys of earlier versions supply nothing.
+        using var unprefixed = new SettingsSite(new() { ["Pressroom:Url"] = "https://configured.example/" });
+        Assert.Empty(unprefixed.Store.List().Configurations);
+    }
+
+    [Fact]
+    public async Task A_settings_file_of_an_earlier_version_is_refused()
+    {
+        using var site = new SettingsSite();
+        var path = Path.Combine(site.Root, "App_Data", "AppBlocks", "documents.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, """{ "PressroomUrl": "https://legacy.example/", "TimeoutSeconds": 25 }""");
+        Assert.Throws<JsonException>(() => site.Store.List());
     }
 
     [Theory]
@@ -41,9 +51,9 @@ public sealed class DocumentSettingsTests
     public async Task Invalid_addresses_do_not_replace_working_settings(string address)
     {
         using var site = new SettingsSite();
-        await Assert.ThrowsAsync<ArgumentException>(() => site.Store.SaveAsync(new(address)));
-        Assert.Equal("https://configured.example/", site.Store.Get().PressroomUrl);
-        Assert.False(site.Store.Get().Saved);
+        await Assert.ThrowsAsync<ArgumentException>(() => site.Store.SaveConfigurationAsync(new(DocumentSettingsStore.ConfiguredId, "PDF", address)));
+        Assert.Equal("https://configured.example/", Assert.Single(site.Store.List().Configurations).Url);
+        Assert.False(site.Store.List().Saved);
     }
 
     [Theory]
@@ -54,8 +64,8 @@ public sealed class DocumentSettingsTests
     public async Task Invalid_timeouts_are_rejected(double timeout)
     {
         using var site = new SettingsSite();
-        await Assert.ThrowsAsync<ArgumentException>(() => site.Store.SaveAsync(new(null, TimeoutSeconds: timeout)));
-        Assert.False(site.Store.Get().Saved);
+        await Assert.ThrowsAsync<ArgumentException>(() => site.Store.SaveConfigurationAsync(new(null, "PDF", "https://pdf.example/", TimeoutSeconds: timeout)));
+        Assert.False(site.Store.List().Saved);
     }
 
     [Fact]
@@ -71,11 +81,15 @@ public sealed class DocumentSettingsTests
     {
         public string Root { get; } = Directory.CreateTempSubdirectory("documents-settings-").FullName;
         private readonly IDataProtectionProvider protection = new EphemeralDataProtectionProvider();
-        internal IConfiguration Configuration { get; } = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
-            ["Pressroom:Url"] = "https://configured.example/", ["Pressroom:ApiKey"] = "configured-secret",
-        }).Build();
+        internal IConfiguration Configuration { get; }
         public DocumentSettingsStore Store { get; }
-        public SettingsSite() => Store = CreateStore();
+        public SettingsSite(Dictionary<string, string?>? configuration = null)
+        {
+            Configuration = new ConfigurationBuilder().AddInMemoryCollection(configuration ?? new Dictionary<string, string?> {
+                ["AppBlocks:Documents:Pressroom:Url"] = "https://configured.example/", ["AppBlocks:Documents:Pressroom:ApiKey"] = "configured-secret",
+            }).Build();
+            Store = CreateStore();
+        }
         public DocumentSettingsStore CreateStore() => new(Configuration, new TestEnvironment { ContentRootPath = Root }, protection);
         public void Dispose() => Directory.Delete(Root, recursive: true);
     }

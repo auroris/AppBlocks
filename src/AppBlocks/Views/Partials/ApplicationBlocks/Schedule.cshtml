@@ -1,10 +1,14 @@
 @using System.Globalization
 @using Microsoft.AspNetCore.Mvc.Rendering
 @using Microsoft.AspNetCore.WebUtilities
+@using Microsoft.Extensions.Options
 @using AppBlocks.Blocks
+@using AppBlocks.Forms
 @using AppBlocks.Schedules
 @model AppBlockView
 @inject ScheduleQueries Queries
+@inject IOptions<ScheduleOptions> Limits
+@inject AppBlocksText Text
 @*
     Resources against time: the rows of one source down the side, the bars of another across a window of days or
     hours. The server lays the whole table out (Schedules/ScheduleLayout.cs): one cell per row and column, the bars
@@ -19,10 +23,11 @@
 @{
     var item = Model.Block;
     var settings = ScheduleSettings.Read(item.Content);
+    var limits = Limits.Value;
     var id = "schedule-" + item.ContentKey.ToString("N");
     var culture = CultureInfo.CurrentUICulture;
-    var parameters = Context.Request.Query.Where(p => p.Value.Count == 1).ToDictionary(p => p.Key, p => p.Value.ToString(), StringComparer.OrdinalIgnoreCase);
-    var window = ScheduleWindow.Resolve(settings, parameters, DateTime.Now);
+    var parameters = FormEndpoints.Parameters(Context.Request.Query);
+    var window = ScheduleWindow.Resolve(settings, parameters, DateTime.Now, limits);
     var days = window.Scale == ScheduleScale.Days;
     var level = Math.Clamp(Model.HeadingLevel, 2, 6);
     var heading = new TagBuilder("h" + level);
@@ -30,7 +35,14 @@
     heading.Attributes["id"] = id + "-title";
     heading.InnerHtml.Append(settings.Heading ?? "");
     var popovers = 0;
+    // A site's text with {0}-style places; one whose places do not match falls back to the English, so a typo never breaks the page.
+    string Format(string textId, string english, params object[] values)
+    {
+        try { return string.Format(culture, Text[textId, english], values); }
+        catch (FormatException) { return string.Format(culture, english, values); }
+    }
     string Date(DateOnly date) => date.ToString("d MMMM yyyy", culture);
+    string Range(ScheduleWindow shown) => Format("scheduleWindow", "{0} to {1}", Date(shown.From), Date(shown.To));
     string Moment(DateTime moment) => days && moment.TimeOfDay == TimeSpan.Zero ? moment.ToString("d MMM yyyy", culture) : moment.ToString("d MMM yyyy HH:mm", culture);
     string Weekday(DateTime date) { var name = date.ToString("ddd", culture).TrimEnd('.'); return name.Length > 2 ? name[..2] : name; }
     // The same page with another window: every other parameter stays, so a form's record or a filter is kept.
@@ -45,7 +57,8 @@
         }
         return QueryHelpers.AddQueryString(Context.Request.PathBase + Context.Request.Path, query);
     }
-    string When(ScheduleBar bar) => $"{Moment(bar.StartsAt)}{(bar.EndsAt is { } end ? " to " + Moment(end) : bar.OpenEnded ? " onward" : "")}";
+    string When(ScheduleBar bar) => bar.EndsAt is { } end ? Format("scheduleBarRange", "{0} to {1}", Moment(bar.StartsAt), Moment(end))
+        : bar.OpenEnded ? Format("scheduleBarOnward", "{0} onward", Moment(bar.StartsAt)) : Moment(bar.StartsAt);
     string Details(ScheduleRow row, ScheduleBar bar) => $": {row.Label}, {When(bar)}{(bar.Kind is null ? "" : ", " + bar.Kind)}";
     string KindClass(int index) => index > 0 ? " app-schedule-kind-" + ((index - 1) % 8 + 1) : "";
     // A bar's own colours win over its kind's, so a bar with a colour carries no kind class; the legend keeps the kind's.
@@ -72,8 +85,8 @@
                 <p class="app-schedule-popover__title" id="@popover-title">@bar.Label</p>
                 <p class="app-schedule-popover__when">@row.Label, @When(bar)@(bar.Kind is null ? "" : ", " + bar.Kind)</p>
                 <p class="app-schedule-popover__text">@bar.Description</p>
-                @if (bar.Link is not null) { <p class="app-schedule-popover__link"><a href="@bar.Link">Open link</a></p> }
-                <button type="button" class="app-schedule-popover__close" popovertarget="@popover" popovertargetaction="hide" aria-label="Close">&times;</button>
+                @if (bar.Link is not null) { <p class="app-schedule-popover__link"><a href="@bar.Link">@Text["scheduleOpenLink", "Open link"]</a></p> }
+                <button type="button" class="app-schedule-popover__close" popovertarget="@popover" popovertargetaction="hide" aria-label="@Text["scheduleClose", "Close"]">&times;</button>
             </div>
         }
         else if (bar.Link is not null)
@@ -96,7 +109,7 @@
                 <div id="@popover" popover class="app-schedule-popover" aria-labelledby="@popover-title">
                     <p class="app-schedule-popover__title" id="@popover-title">@row.Label</p>
                     <p class="app-schedule-popover__text">@row.Description</p>
-                    <button type="button" class="app-schedule-popover__close" popovertarget="@popover" popovertargetaction="hide" aria-label="Close">&times;</button>
+                    <button type="button" class="app-schedule-popover__close" popovertarget="@popover" popovertargetaction="hide" aria-label="@Text["scheduleClose", "Close"]">&times;</button>
                 </div>
             </th>
         }
@@ -122,25 +135,25 @@
 }
 @if (!Model.Admitted || Model.Anonymous && !await Queries.AllowsAnonymousReadAsync(settings))
 {
-    <p class="app-block-signin" role="status">Sign in to see the schedule.</p>
+    <p class="app-block-signin" role="status">@Text["scheduleSignIn", "Sign in to see the schedule."]</p>
 }
 else
 {
     var data = await Queries.LoadAsync(settings, window, Context.User, Model.Page.Key, item.ContentKey, parameters, Context.RequestAborted);
-    var layout = data.Problem is null ? ScheduleLayout.Build(window, data.Rows!, data.Bars!, settings.LinkTemplate, Context.Request.PathBase, settings.HideEmptyRows) : null;
+    var layout = data.Problem is null ? ScheduleLayout.Build(window, data.Rows!, data.Bars!, settings.LinkTemplate, Context.Request.PathBase, settings.HideEmptyRows, limits.Weekend) : null;
     <section class="app-schedule ah-schedule" id="@id" data-app-schedule data-scale="@(days ? "days" : "hours")" aria-labelledby="@(settings.Heading is null ? null : id + "-title")">
         @if (settings.Heading is not null) { @heading }
         @if (settings.Help is not null) { <p class="ah-schedule__help">@settings.Help</p> }
         <div class="app-schedule-toolbar ah-schedule__toolbar">
-            <p class="app-schedule-window">@Date(window.From) to @Date(window.To)</p>
+            <p class="app-schedule-window">@Range(window)</p>
             <div class="app-schedule-controls">
                 <details class="app-schedule-jump">
-                    <summary>Jump to</summary>
+                    <summary>@Text["scheduleJumpTo", "Jump to"]</summary>
                     <div class="app-schedule-jump__panel">
                         <div class="app-schedule-jump__list">
-                            <p class="app-schedule-jump__heading" id="@id-months">Months</p>
+                            <p class="app-schedule-jump__heading" id="@id-months">@Text["scheduleMonths", "Months"]</p>
                             <ul aria-labelledby="@id-months">
-                                @foreach (var month in window.Months(12))
+                                @foreach (var month in window.Months(12, limits))
                                 {
                                     <li><a href="@Address(month)" aria-current="@(month.SameDates(window) ? "true" : null)">@month.From.ToString("MMMM yyyy", culture)</a></li>
                                 }
@@ -150,21 +163,21 @@ else
                         {
                             @* A quarter of hour columns would be cut to a month, so hours offer months only. *@
                             <div class="app-schedule-jump__list">
-                                <p class="app-schedule-jump__heading" id="@id-quarters">Quarters</p>
+                                <p class="app-schedule-jump__heading" id="@id-quarters">@Text["scheduleQuarters", "Quarters"]</p>
                                 <ul aria-labelledby="@id-quarters">
-                                    @foreach (var quarter in window.Quarters(6))
+                                    @foreach (var quarter in window.Quarters(6, limits))
                                     {
-                                        <li><a href="@Address(quarter)" aria-current="@(quarter.SameDates(window) ? "true" : null)">@quarter.QuarterName</a></li>
+                                        <li><a href="@Address(quarter)" aria-current="@(quarter.SameDates(window) ? "true" : null)">@Format("scheduleQuarter", "Q{0} {1}", quarter.Quarter, quarter.From.Year)</a></li>
                                     }
                                 </ul>
                             </div>
                         }
                     </div>
                 </details>
-                <nav class="app-schedule-nav" aria-label="Schedule window">
-                    <a href="@Address(window.Shift(-1))" rel="prev">Earlier</a>
-                    <a href="@Address(null)">Today</a>
-                    <a href="@Address(window.Shift(1))" rel="next">Later</a>
+                <nav class="app-schedule-nav" aria-label="@Text["scheduleNavigation", "Schedule window"]">
+                    <a href="@Address(window.Shift(-1))" rel="prev">@Text["scheduleEarlier", "Earlier"]</a>
+                    <a href="@Address(null)">@Text["scheduleToday", "Today"]</a>
+                    <a href="@Address(window.Shift(1))" rel="next">@Text["scheduleLater", "Later"]</a>
                 </nav>
             </div>
         </div>
@@ -174,13 +187,13 @@ else
         }
         else if (layout.IsEmpty)
         {
-            <p class="app-schedule-empty">@(layout.HiddenRowCount > 0 ? $"No rows have bars between {Date(window.From)} and {Date(window.To)}." : "The schedule has no rows to show.")</p>
+            <p class="app-schedule-empty">@(layout.HiddenRowCount > 0 ? Format("scheduleNoRowsWithBars", "No rows have bars between {0} and {1}.", Date(window.From), Date(window.To)) : Text["scheduleNoRows", "The schedule has no rows to show."])</p>
         }
         else
         {
             <div class="app-schedule-scroll ah-schedule__scroll">
                 <table class="app-schedule-table app-schedule-table--@(days ? "days" : "hours")" data-today-column="@layout.TodayColumn">
-                    <caption class="app-schedule-caption">@(settings.Heading ?? "Schedule"), @Date(window.From) to @Date(window.To)</caption>
+                    <caption class="app-schedule-caption">@(settings.Heading ?? Text["scheduleCaption", "Schedule"]), @Range(window)</caption>
                     <thead>
                         <tr>
                             <th scope="col" rowspan="2" class="app-schedule-corner"><span class="app-schedule-label"></span></th>
@@ -225,15 +238,15 @@ else
             </div>
             @if (layout.BarCount == 0)
             {
-                <p class="app-schedule-empty">No bars between @Date(window.From) and @Date(window.To).</p>
+                <p class="app-schedule-empty">@Format("scheduleNoBars", "No bars between {0} and {1}.", Date(window.From), Date(window.To))</p>
             }
             @if (layout.HiddenRowCount > 0)
             {
-                <p class="app-schedule-empty">@(layout.HiddenRowCount == 1 ? "One row without bars in this window is not shown." : $"{layout.HiddenRowCount} rows without bars in this window are not shown.")</p>
+                <p class="app-schedule-empty">@(layout.HiddenRowCount == 1 ? Text["scheduleOneRowHidden", "One row without bars in this window is not shown."] : Format("scheduleRowsHidden", "{0} rows without bars in this window are not shown.", layout.HiddenRowCount))</p>
             }
             @if (layout.Legend.Count > 0)
             {
-                <ul class="app-schedule-legend ah-schedule__legend" aria-label="Legend">
+                <ul class="app-schedule-legend ah-schedule__legend" aria-label="@Text["scheduleLegend", "Legend"]">
                     @foreach (var entry in layout.Legend)
                     {
                         <li><span class="app-schedule-swatch@(KindClass(entry.Index))" aria-hidden="true"></span>@entry.Kind</li>

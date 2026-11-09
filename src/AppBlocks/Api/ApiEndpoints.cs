@@ -33,7 +33,7 @@ public sealed class ApiEndpointRunner(DataSourceQueries queries, ILogger<ApiEndp
             // A single item reads two rows at most and keeps the first, so a second row is no error.
             var single = endpoint.Shape == ApiEndpointShape.Single;
             var result = await queries.QueryAsync(endpoint.Source, context, single ? 2 : endpoint.MaximumRows, endpoint.Order, firstRows: single, ct);
-            var items = result.Rows.Select(row => Item(result.Columns, row)).ToArray();
+            var items = result.Rows.Select(row => Item(result.Columns, row, endpoint.Source.DateTimes)).ToArray();
             if (!single) return new(200, new { items });
             return items.Length > 0 ? new(200, items[0]) : Problem(404);
         }
@@ -46,7 +46,7 @@ public sealed class ApiEndpointRunner(DataSourceQueries queries, ILogger<ApiEndp
     }
 
     /// <summary>One row by field alias, in the JSON types the forms use, with numbers as JSON numbers.</summary>
-    private static Dictionary<string, object?> Item(IReadOnlyList<DataSourceQueryColumn> columns, IReadOnlyDictionary<string, object?> row)
+    private static Dictionary<string, object?> Item(IReadOnlyList<DataSourceQueryColumn> columns, IReadOnlyDictionary<string, object?> row, DataSourceDateTimes dateTimes)
     {
         var item = new Dictionary<string, object?>(columns.Count, StringComparer.Ordinal);
         foreach (var column in columns)
@@ -54,7 +54,7 @@ public sealed class ApiEndpointRunner(DataSourceQueries queries, ILogger<ApiEndp
             var raw = row.GetValueOrDefault(column.Name);
             // A number the database returns stays a number where the schema could not say (SQLite reports a SELECT's columns as text).
             var kind = column.Kind == FieldKinds.Text && raw is long or int or short or byte or decimal or double or float ? FieldKinds.Number : column.Kind;
-            var value = FieldValues.FromDatabase(raw, kind) ?? raw;
+            var value = FieldValues.FromDatabase(raw, kind, dateTimes) ?? raw;
             item[column.Field] = value switch { null => null, decimal number => number, bool flag => flag, _ => FieldValues.ToJson(value) };
         }
         return item;
@@ -132,6 +132,7 @@ public static class ApiEndpointExtensions
     /// <summary>Registers the published API endpoints: their catalogue, the runner, and the check publishing makes.</summary>
     public static IUmbracoBuilder AddApiEndpoints(this IUmbracoBuilder builder)
     {
+        builder.Services.AddOptions<ApiEndpointOptions>().Bind(builder.Config.GetSection(ApiEndpointOptions.Section));
         builder.Services.AddScoped<ApiEndpointCatalog>();
         builder.Services.AddScoped<ApiEndpointRunner>();
         builder.AddNotificationAsyncHandler<ContentPublishingNotification, ApiEndpointValidator>();

@@ -8,22 +8,13 @@ using AppBlocks.DocumentOutput;
 namespace AppBlocks.Documents;
 
 /// <summary>The only Pressroom transport used by Documents and its consumers.</summary>
-public sealed class DocumentOutputService : IDocumentOutputService
+public sealed class DocumentOutputService(IHttpClientFactory clients, ILogger<DocumentOutputService> logger, DocumentSettingsStore settings)
+    : IDocumentOutputService
 {
     internal const string ClientName = "AppBlocks.Documents.Pressroom";
-    private readonly IConfiguration configuration;
-    private readonly IHttpClientFactory clients;
-    private readonly ILogger logger;
-    private readonly DocumentSettingsStore? settings;
-
-    public DocumentOutputService(IConfiguration configuration, IHttpClientFactory clients, ILogger<DocumentOutputService> logger,
-        DocumentSettingsStore settings) : this(configuration, clients, (ILogger)logger, settings) { }
-    internal DocumentOutputService(IConfiguration configuration, IHttpClientFactory clients, ILogger logger, DocumentSettingsStore? settings)
-        => (this.configuration, this.clients, this.logger, this.settings) = (configuration, clients, logger, settings);
 
     public IReadOnlyList<DocumentDestination> GetDestinations()
     {
-        if (settings is null) return Legacy() is { } legacy ? [legacy.Destination] : [];
         var configurations = settings.List().Configurations;
         // A hand-edited settings file can hold any output: that configuration is left out, and the rest are still offered.
         foreach (var invalid in configurations.Where(c => !DocumentSettingsStore.ValidOutput(c.Output)))
@@ -37,8 +28,7 @@ public sealed class DocumentOutputService : IDocumentOutputService
         ArgumentNullException.ThrowIfNull(document);
         ArgumentException.ThrowIfNullOrWhiteSpace(document.Html);
         cancellationToken.ThrowIfCancellationRequested();
-        var destination = settings?.Resolve(configurationId)
-            ?? (Legacy() is { } legacy && legacy.Id == configurationId ? legacy : throw new KeyNotFoundException("The selected document configuration no longer exists."));
+        var destination = settings.Resolve(configurationId);
         return SubmitAsync(destination, new RenderRequest { Html = document.Html, FileName = document.FileName,
             Options = Convert(document.Options) }, cancellationToken);
     }
@@ -48,7 +38,7 @@ public sealed class DocumentOutputService : IDocumentOutputService
         try
         {
             // A browser GET must never submit to a printer, even if it is the only configured output.
-            var destination = settings is null ? Legacy() : settings.DefaultPdf();
+            var destination = settings.DefaultPdf();
             return destination is null ? Html(request) : (DocumentFileResult)await SubmitAsync(destination, request, ct);
         }
         catch (Exception error) when (Recoverable(error, ct))
@@ -105,7 +95,7 @@ public sealed class DocumentOutputService : IDocumentOutputService
 
     public async Task<PressroomPrinterList> DiscoverPrintersAsync(DiscoverPressroomPrinters request, CancellationToken ct = default)
     {
-        var destination = settings?.ForDiscovery(request) ?? throw new InvalidOperationException("Document settings are not registered.");
+        var destination = settings.ForDiscovery(request);
         if (string.IsNullOrWhiteSpace(destination.ApiKey)) throw new ArgumentException("An API key is required to list Pressroom printers. PDF output can still use anonymous rendering.");
         try
         {
@@ -145,12 +135,6 @@ public sealed class DocumentOutputService : IDocumentOutputService
         catch { client.Dispose(); throw; }
     }
 
-    private ResolvedPressroomConfiguration? Legacy()
-    {
-        var defaults = PressroomSettings.FromConfiguration(configuration);
-        return string.IsNullOrWhiteSpace(defaults.Url) ? null : new(DocumentSettingsStore.LegacyId, "Pressroom PDF", defaults.Url, defaults.ApiKey, "pdf", defaults.TimeoutSeconds);
-    }
-
     internal static DocumentFileResult Html(RenderRequest request)
         => new(new MemoryStream(Encoding.UTF8.GetBytes(request.Html)), "text/html; charset=utf-8",
             Path.ChangeExtension(RequestValidator.SanitizeFileName(request.FileName), ".html"), true);
@@ -158,16 +142,21 @@ public sealed class DocumentOutputService : IDocumentOutputService
         => error is HttpRequestException or PressroomException or ArgumentException or FormatException or IOException
             or System.Security.Cryptography.CryptographicException or JsonException || error is OperationCanceledException && !ct.IsCancellationRequested;
 
-    private static RenderOptions Convert(DocumentRenderOptions? options)
+    /// <summary>
+    /// Pressroom's options for a consumer's: a locale or time zone the consumer leaves out is the submitting request's culture and the
+    /// web server's time zone, and no options at all are Pressroom's defaults with those two and a page-number footer.
+    /// </summary>
+    internal static RenderOptions Convert(DocumentRenderOptions? options)
     {
-        if (options is null) return new();
+        options ??= new DocumentRenderOptions();
         return new() {
             PageSize = options.PageSize is { } page ? new PageSize { Name = page.Name, Width = page.Width, Height = page.Height } : null,
             Landscape = options.Landscape, Margins = options.Margins is { } m ? new PageMargins { Top = m.Top, Right = m.Right, Bottom = m.Bottom, Left = m.Left } : new(),
             PreferCssPageSize = options.PreferCssPageSize, PrintBackground = options.PrintBackground, Scale = options.Scale,
             DisplayHeaderFooter = options.DisplayHeaderFooter, HeaderTemplate = options.HeaderTemplate, FooterTemplate = options.FooterTemplate,
             Tagged = options.Tagged, Outline = options.Outline, Media = options.Media, JavaScript = options.JavaScript,
-            Locale = options.Locale, TimeZone = options.TimeZone, TimeoutMs = options.TimeoutMs,
+            Locale = options.Locale ?? DocumentRenderOptions.LocaleName(System.Globalization.CultureInfo.CurrentCulture),
+            TimeZone = options.TimeZone ?? DocumentRenderOptions.ServerTimeZone, TimeoutMs = options.TimeoutMs,
             Readiness = options.Readiness is { } r ? new ReadinessOptions { Selector = r.Selector, Function = r.Function, DelayMs = r.DelayMs, TimeoutMs = r.TimeoutMs } : new(),
         };
     }

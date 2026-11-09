@@ -12,8 +12,7 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
     DataSourceHandlers? handlers = null)
 {
     /// <summary>Whether this definition supports anonymous reads, before page access and custom policies are checked.</summary>
-    public bool AllowsAnonymousRead(DataSourceDefinition definition) => CanRead(definition, DataSourceUser.Anonymous)
-        && runtime.Plan(definition).Plan is { BindsUser: false };
+    public bool AllowsAnonymousRead(DataSourceDefinition definition) => CanRead(definition, DataSourceUser.Anonymous, runtime.Plan(definition).Plan);
 
     public Task<DataSourceQueryResult> QueryAsync(DataSourceDefinition definition, FormExecutionContext context,
         int maximumRows = 1000, CancellationToken ct = default)
@@ -31,8 +30,8 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
         await using var connection = await runtime.OpenAsync(definition.Connection, ct);
         var user = await AuthorizeAsync(definition, context, connection, ct);
         var app = providers is null ? null : await providers.ResolveAsync(context, ct);
-        var parameters = new SqlParameters(plan.Dialect);
-        var now = runtime.Now();
+        var parameters = plan.Parameters();
+        var now = runtime.Now(definition);
         object? Value(BindVariable variable) => Bind(variable, user, context.Parameters, now, plan.Dialect, app);
         if (definition.Handler is { } named && handlers?.Find(named) is { } handler)
         {
@@ -133,7 +132,7 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
                 throw new UnauthorizedAccessException();
             }
             var operation = new DataSourceOperation(definition.Alias, DataSourceAction.Query, user, context, plan.Dialect.Kind) { Connection = connection };
-            var now = runtime.Now();
+            var now = runtime.Now(definition);
             var app = providers is null ? null : await providers.ResolveAsync(context, ct);
             await using var sql = new DataSourceSql(plan, operation, variable => Bind(variable, user, context.Parameters, now, plan.Dialect, app),
                 token => runtime.OpenAsync(definition.Connection, token));
@@ -160,6 +159,13 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
         if (user is not null && !user.IsAnonymous) return user;
         return principal.Identities.Any(identity => identity.IsAuthenticated) ? null : DataSourceUser.Anonymous;
     }
+
+    /// <summary>
+    /// The access setting, and for an anonymous caller also a plan that binds nothing about the caller: a query that binds an identity means
+    /// nothing without an account, even when marked Public. Callers must also enforce page access and policies.
+    /// </summary>
+    internal static bool CanRead(DataSourceDefinition definition, DataSourceUser user, DataSourcePlan? plan)
+        => CanRead(definition, user) && (!user.IsAnonymous || plan is { BindsUser: false });
 
     /// <summary>The source's access setting. Callers must also enforce page access, identity binds and policies.</summary>
     public static bool CanRead(DataSourceDefinition definition, DataSourceUser user) => definition.Access switch {

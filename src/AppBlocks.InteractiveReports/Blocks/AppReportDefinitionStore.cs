@@ -24,9 +24,12 @@ public sealed class AppReportDefinitionStore(
     AppBlocks.DocumentOutput.IAppDocumentLinks? documents = null,
     ReportSourcePreviews? previews = null, IHttpContextAccessor? http = null, SavedViewStore? savedViews = null, AppPageAccess? pages = null,
     FormResourceRegistry? formResources = null, PublishedDataCatalog? dataCatalog = null, ILogger<AppReportDefinitionStore>? logger = null,
-    IDataSourceUserResolver? users = null, Umbraco.Cms.Core.Services.IMemberGroupService? memberGroups = null)
+    IDataSourceUserResolver? users = null, Umbraco.Cms.Core.Services.IMemberGroupService? memberGroups = null,
+    IEnumerable<IAppBlockPlugin>? plugins = null)
     : IReportDefinitionStore, IReportDefinitionAuthorizationStore
 {
+    /// <summary>Blocks already reported for an Open link without a key column, so the log says it once per block, not per request.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> MissingKeyColumnLogged = new();
     private bool CallerIsAnonymous => http?.HttpContext is { } context && context.User.Identity?.IsAuthenticated != true;
 
     /// <summary>
@@ -117,8 +120,15 @@ public sealed class AppReportDefinitionStore(
             if (open.Visibility != ReportLinkVisibility.Hidden) {
                 var column = block.Value<string>("keyColumn");
                 var parameter = block.Value<string>("keyParameter") is { Length: > 0 } key ? key : "id";
-                if (string.IsNullOrWhiteSpace(column)) throw new InvalidOperationException("A report that opens records on a form page requires its record key column.");
-                if (await ShowsAsync(open, instance.Page, formPage, instance.Culture, update: true, ct))
+                // Publishing refuses this, but a block published before the Open link setting existed can still hold it: the report
+                // then offers no Open link rather than failing every request.
+                if (string.IsNullOrWhiteSpace(column))
+                {
+                    if (MissingKeyColumnLogged.TryAdd(block.Key, true))
+                        logger?.LogWarning("Report block {Block} on page {Page} opens records on a form page but has no record key column, so it offers no Open link. Select the column or hide the link, and publish the page again.",
+                            block.Key, instance.Page.Key);
+                }
+                else if (await ShowsAsync(open, instance.Page, formPage, instance.Culture, update: true, ct))
                     result.EditLink = new ReportEditLink { UrlTemplate = url + "?" + Uri.EscapeDataString(parameter) + "={" + column + "}", Label = Label(block, "editLabel") };
             }
             if (await ShowsAsync(ReportLinkRule.Read(ReportLinkRule.Create, block), instance.Page, formPage, instance.Culture, update: false, ct))
@@ -149,11 +159,7 @@ public sealed class AppReportDefinitionStore(
             || await DataSourceQueries.ResolveReaderAsync(users, caller, ct) is not { IsAnonymous: false } user) return false;
         if (rule.UserGroups.Any(user.IsInUserGroup)) return true;
         if (rule.MemberGroups.Length == 0 || memberGroups is null) return false;
-        // The picker stores group ids or keys; a group deleted since it was picked shows the link to nobody.
-        var all = (await memberGroups.GetAllAsync()).ToArray();
-        return rule.MemberGroups.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(item => int.TryParse(item, out var id) ? all.FirstOrDefault(g => g.Id == id) : Guid.TryParse(item, out var groupKey) ? all.FirstOrDefault(g => g.Key == groupKey) : null)
-            .Any(group => group?.Name is { } name && user.IsInMemberGroup(name));
+        return (await DefaultReportAccessPolicy.MemberGroupNamesAsync(memberGroups, rule.MemberGroups)).Any(user.IsInMemberGroup);
     }
 
     /// <summary>
@@ -166,7 +172,9 @@ public sealed class AppReportDefinitionStore(
         if (formResources is null || pages is null) return true;
         var forms = new List<FormDefinition>();
         foreach (var block in AppBlockContent.Flatten(AppBlockContent.Blocks(formPage, culture), culture).Where(b => b.Content.ContentType.Alias == "appForm"))
-            if (await FormDefinition.ResolveAsync(formPage, block.ContentKey, formResources, dataCatalog, culture) is { } form) forms.Add(form);
+        {
+            if (await FormDefinition.ResolveAsync(formPage, block.ContentKey, formResources, dataCatalog, culture, plugins) is { } form) forms.Add(form);
+        }
         if (forms.Count == 0) return true;
         // The form page refuses this caller altogether, as its Public Access does someone not signed in.
         if (await pages.VisitorAsync(formPage) is not { } caller) return false;

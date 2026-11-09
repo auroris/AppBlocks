@@ -14,6 +14,10 @@ public sealed class PostgreSqlDialect : SqlDialect
     public override IsolationLevel WriteIsolation => IsolationLevel.ReadCommitted;
     public override string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"") + "\"";
     public override string CompileOnly(string statement) => "EXPLAIN " + statement;
+    // Npgsql's own timeout wraps a TimeoutException; the server's statement_timeout cancels with SQLSTATE 57014.
+    internal override bool IsTimeout(DbException error) => base.IsTimeout(error) || error.SqlState == "57014";
+    // EXPLAIN takes no procedure call or anonymous block.
+    internal override bool Compiles(string statement) => SqlTemplate.FirstWord(statement)?.ToUpperInvariant() is not ("CALL" or "DO");
 
     public override string? KindOf(string storeType) => storeType.ToLowerInvariant() switch {
         "bool" or "boolean" => FieldKinds.Checkbox,
@@ -25,6 +29,17 @@ public sealed class PostgreSqlDialect : SqlDialect
         _ => FieldKinds.Text,
     };
     public override string? ExpressionKind(SourceColumn column) => KindOf(column.StoreType ?? "text");
+
+    /// <summary>A type <see cref="KindOf"/> does not list, which a form edits as text: json, jsonb, xml, inet, interval, an array, an enum and the like.</summary>
+    private bool Unlisted(string type) => KindOf(type) == FieldKinds.Text
+        && type is not ("text" or "varchar" or "character varying" or "char" or "character" or "bpchar" or "name" or "citext" or "\"char\"" or "uuid");
+
+    // Npgsql's NpgsqlDbType.Unknown sends the text with no type, so the server reads it as the column's; set by name, as AppBlocks references no provider.
+    internal override void BindUntyped(DbParameter parameter)
+    {
+        var property = parameter.GetType().GetProperty("NpgsqlDbType");
+        if (property is { CanWrite: true, PropertyType.IsEnum: true } && Enum.TryParse(property.PropertyType, "Unknown", out var unknown)) property.SetValue(parameter, unknown);
+    }
     public override bool IsInteger(TableColumn column) => column.StoreType.ToLowerInvariant() is "int2" or "int4" or "int8" or "smallint" or "integer" or "bigint"
         || column.StoreType.ToLowerInvariant() is "numeric" or "decimal" && column.Scale == 0;
     public override (decimal? Min, decimal? Max) Range(TableColumn column) => column.StoreType.ToLowerInvariant() switch {
@@ -34,7 +49,7 @@ public sealed class PostgreSqlDialect : SqlDialect
         _ => (null, null),
     };
 
-    public override object? ToDatabase(object? value, string kind, TableColumn? column)
+    public override object? ToDatabase(object? value, string kind, TableColumn? column, DataSourceDateTimes dateTimes = DataSourceDateTimes.ServerLocal)
     {
         var type = column?.StoreType.ToLowerInvariant() ?? "";
         try
@@ -43,6 +58,8 @@ public sealed class PostgreSqlDialect : SqlDialect
                 null => null,
                 bool flag when column is not null && KindOf(type) == FieldKinds.Number => ToDatabase(flag ? 1m : 0m, FieldKinds.Number, column),
                 string text when type == "uuid" => Guid.TryParse(text, out var id) ? id : throw new DataSourceException("Enter a valid identifier."),
+                // Sent as text would be refused: PostgreSQL has no assignment cast from text to jsonb, inet, an enum and so on.
+                string text when column is not null && Unlisted(type) => new UntypedText(text),
                 decimal number => type switch {
                     "int2" or "smallint" => checked((short)Whole(number)),
                     "int4" or "integer" => checked((int)Whole(number)),
@@ -57,7 +74,7 @@ public sealed class PostgreSqlDialect : SqlDialect
                 DateOnly date => new TypedValue(date, DbType.Date),
                 TimeOnly time => new TypedValue(time.ToTimeSpan(), DbType.Time),
                 DateTimeOffset moment when type is "timestamptz" or "timestamp with time zone" => moment.UtcDateTime,
-                DateTimeOffset moment => new TypedValue(DateTime.SpecifyKind(moment.LocalDateTime, DateTimeKind.Unspecified), DbType.DateTime2),
+                DateTimeOffset moment => new TypedValue(DateTime.SpecifyKind(WallTime(moment, dateTimes), DateTimeKind.Unspecified), DbType.DateTime2),
                 _ => value,
             };
         }
@@ -69,12 +86,12 @@ public sealed class PostgreSqlDialect : SqlDialect
     // A timestamptz, the moment itself: Npgsql writes an offset of zero as timestamp with time zone.
     public override object NowUtc(DateTime utc) => new TypedValue(new DateTimeOffset(DateTime.SpecifyKind(utc, DateTimeKind.Unspecified), TimeSpan.Zero), DbType.DateTimeOffset);
 
-    public override TableSchema? ReadTable(DbConnection connection, TableName name)
+    public override TableSchema? ReadTable(DbConnection connection, TableName name, int commandTimeout = DataSourceOptions.DefaultCommandTimeoutSeconds)
     {
         long id;
         string schema, table;
         bool view;
-        using (var command = connection.CreateCommand())
+        using (var command = CatalogCommand(connection, commandTimeout))
         {
             command.CommandText = """
                 SELECT CAST(c.oid AS bigint), n.nspname, c.relname, c.relkind IN ('v', 'm')
@@ -89,7 +106,7 @@ public sealed class PostgreSqlDialect : SqlDialect
             (id, schema, table, view) = (reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetBoolean(3));
         }
         var columns = new List<TableColumn>();
-        using (var command = connection.CreateCommand())
+        using (var command = CatalogCommand(connection, commandTimeout))
         {
             command.CommandText = """
                 SELECT a.attname, pg_catalog.format_type(a.atttypid, NULL), NOT a.attnotnull,
@@ -106,7 +123,7 @@ public sealed class PostgreSqlDialect : SqlDialect
                 reader.GetBoolean(4), reader.GetBoolean(5), false, OptionalInt(reader, 6), OptionalInt(reader, 7), OptionalInt(reader, 8)));
         }
         var keys = new List<IReadOnlyList<string>>();
-        using (var command = connection.CreateCommand())
+        using (var command = CatalogCommand(connection, commandTimeout))
         {
             command.CommandText = """
                 SELECT CAST(i.indexrelid AS bigint), a.attname FROM pg_catalog.pg_index i
@@ -127,17 +144,6 @@ public sealed class PostgreSqlDialect : SqlDialect
             }
         }
         return new(new(schema, table) { SchemaIsQuoted = true, NameIsQuoted = true }, view, columns, keys);
-    }
-
-    private static int? OptionalInt(DbDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : Convert.ToInt32(reader.GetValue(ordinal), Invariant);
-
-    public override string Insert(TableName table, IReadOnlyList<(string Column, string Value)> values, IReadOnlyList<TableColumn> returning)
-    {
-        var text = new StringBuilder("INSERT INTO ").Append(Quote(table));
-        if (values.Count == 0) text.Append(" DEFAULT VALUES");
-        else text.Append(" (").AppendJoin(", ", values.Select(v => Quote(v.Column))).Append(") VALUES (").AppendJoin(", ", values.Select(v => v.Value)).Append(')');
-        if (returning.Count > 0) text.Append(" RETURNING ").AppendJoin(", ", returning.Select(c => Quote(c.Name)));
-        return text.ToString();
     }
 
     public override string? Lock(TableName table, IReadOnlyList<(string Column, string Marker)> keys)

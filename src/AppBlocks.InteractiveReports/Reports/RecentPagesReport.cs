@@ -17,6 +17,15 @@ public sealed class RecentPagesReport(ApplicationAccessPolicy access, IUserServi
     public const string Name = "umbraco-recent-pages";
     public const string Policy = "UmbracoBackOfficeContentReports";
 
+    /// <summary>
+    /// A published report node's inline SQL as it runs: a node that takes this report's name gets the placeholders the built-in
+    /// definition has filled in, and any other node's SQL is returned as written.
+    /// </summary>
+    internal static string PrepareNodeSql(string alias, string sql, IConfiguration configuration) => alias == Name ? PrepareSql(sql, configuration) : sql;
+
+    /// <summary>Whether <see cref="RestrictAsync"/> decides a report's <c>{{RowRestriction}}</c>: it does for this name, built in or published.</summary>
+    internal static bool DecidesRowRestriction(string alias) => alias == Name;
+
     // Aggregate the ancestors in tree order without imposing a maximum content depth.
     internal static string PrepareSql(string sql, IConfiguration configuration)
     {

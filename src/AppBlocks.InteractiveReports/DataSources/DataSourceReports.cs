@@ -28,7 +28,7 @@ internal static class DataSourceReportParameters
 /// <summary>Request-owned values: report SQL carries parameters, never interpolated user or URL data.</summary>
 public sealed class DataSourceReportBindings(DataSourceRuntime runtime, IDataSourceUserResolver users, IHttpContextAccessor http, BindVariableProviders? providers = null)
 {
-    internal const string Prefix = "apphost:data-source:";
+    internal const string Prefix = "appblocks:data-source:";
     private readonly Dictionary<string, object?> values = new(StringComparer.Ordinal);
     internal object? Get(string token) => values.GetValueOrDefault(token);
 
@@ -39,8 +39,8 @@ public sealed class DataSourceReportBindings(DataSourceRuntime runtime, IDataSou
         var principal = http.HttpContext?.User ?? new ClaimsPrincipal();
         var user = await users.ResolveAsync(principal, ct) ?? DataSourceUser.Anonymous;
         var query = DataSourceReportParameters.From(http.HttpContext);
-        var parameters = new SqlParameters(plan.Dialect);
-        var now = runtime.Now();
+        var parameters = plan.Parameters();
+        var now = runtime.Now(source);
         var app = providers is null ? null : await providers.ResolveAsync(new FormExecutionContext(principal, page, block, source.ComputeFingerprint(), Parameters: query), ct);
         object? Value(BindVariable variable) => DataSourceQueries.Bind(variable, user, query, now, plan.Dialect, app);
         var from = plan.From(parameters, Value);

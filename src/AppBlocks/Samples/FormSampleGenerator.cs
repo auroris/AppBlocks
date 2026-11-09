@@ -81,7 +81,7 @@ public static class FormSampleGenerator
             code.AppendLine($"            {f.Name} = reader.IsDBNull({column}) ? null : {read},");
         }
         code.AppendLine("        };\n        return new(reader.GetString(0), Checksum(values), values);\n    }\n");
-        code.AppendLine("    // A checksum of the row's values, read with the record and compared inside the write transaction, as Oracle APEX's row-values check does.");
+        code.AppendLine("    // A checksum of the row's values, read with the record and compared inside the write transaction.");
         code.AppendLine("    // A save by someone else since the read gives a different checksum, and the stale change is refused.");
         code.AppendLine("    private static string Checksum(SampleFormValues values)\n        => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(values)))[..32];\n}");
         return code.ToString();

@@ -142,7 +142,7 @@ public sealed class DefinitionsTests
 
         // The site's content and its own type, which uses the package's grid, are as they were, and the page still works.
         Assert.Equal("orders.lines", contents.GetById(source.Id)!.GetValue<string>("alias"));
-        Assert.Equal(FormsContainerGrid, types.Get(AppBlockSchema.PageAlias)!.PropertyTypes.Single(p => p.Alias == AppBlockSchema.BodyAlias).DataTypeKey);
+        Assert.Equal(FormsContainerGrid, types.Get(BlockSite.PageAlias)!.PropertyTypes.Single(p => p.Alias == BlockSite.BodyAlias).DataTypeKey);
         var member = site.CreateMember("definitions-" + Guid.NewGuid().ToString("N")[..8], Guid.NewGuid().ToString("N") + "@example.invalid", "Definitions member");
         using var client = await site.SignInMemberAsync(member);
         var lines = await site.Tabular(client, BlockSite.FormPageKey, BlockPages.LinesBlock).ListAsync("id=4");
@@ -182,7 +182,7 @@ public sealed class DefinitionsTests
             Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
             var detail = (await refused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("detail").GetString()!;
             Assert.Contains($"({DataSourceSchema.SqlAlias})", detail);
-            Assert.Contains($"({AppBlockSchema.PageAlias})", detail);
+            Assert.Contains($"({BlockSite.PageAlias})", detail);
             var status = await admin.GetFromJsonAsync<JsonElement>(Api);
             Assert.False(status.GetProperty("uninstalled").GetBoolean());
             var package = Assert.Single(status.GetProperty("packages").EnumerateArray());
@@ -378,6 +378,97 @@ public sealed class DefinitionsTests
         Assert.Equal(["sqlDataSource", "listOfValues", "apiEndpoint"], Allowed());
     }
 
+    [Fact]
+    public async Task The_editor_alias_step_moves_every_data_type_off_the_old_AppHost_aliases()
+    {
+        await using var site = await BlockSite.BootAsync();
+        using var scope = site.CreateScope();
+        var services = scope.ServiceProvider;
+        await WaitForInstallAsync(services.GetRequiredService<IContentTypeService>());
+        var dataTypes = services.GetRequiredService<IDataTypeService>();
+        var serializer = services.GetRequiredService<IConfigurationEditorJsonSerializer>();
+        // The package's data types carry the new aliases from the start.
+        foreach (var current in RenameEditorUiAliases.Renamed.Values) Assert.NotEmpty(await dataTypes.GetByEditorUiAlias(current));
+        foreach (var old in RenameEditorUiAliases.Renamed.Keys) Assert.Empty(await dataTypes.GetByEditorUiAlias(old));
+
+        // A site from before the rename: the package's picker on its old alias, and a picker of the site's own made from the same editor.
+        var packaged = (await dataTypes.GetByEditorUiAlias("AppBlocks.DataSourcePicker")).First();
+        packaged.EditorUiAlias = "AppHost.DataSourcePicker";
+        Assert.True((await dataTypes.UpdateAsync(packaged, Constants.Security.SuperUserKey)).Success);
+        var field = (await dataTypes.GetByEditorUiAlias("AppBlocks.FieldPicker")).First();
+        var own = new DataType(field.Editor!, serializer) { Key = Guid.NewGuid(), Name = "Site field picker", EditorUiAlias = "AppHost.FieldPicker", ConfigurationData = field.ConfigurationData };
+        Assert.True((await dataTypes.CreateAsync(own, Constants.Security.SuperUserKey)).Success);
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            services.GetRequiredService<IKeyValueService>().SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-04-checksum-concurrency");
+            await RunPlanAsync(services);
+            Assert.Equal("AppBlocks.DataSourcePicker", (await dataTypes.GetAsync(packaged.Key))!.EditorUiAlias);
+            Assert.Equal("AppBlocks.FieldPicker", (await dataTypes.GetAsync(own.Key))!.EditorUiAlias);
+            foreach (var old in RenameEditorUiAliases.Renamed.Keys) Assert.Empty(await dataTypes.GetByEditorUiAlias(old));
+        }
+    }
+
+    [Fact]
+    public async Task A_registered_element_is_allowed_in_the_named_Block_Grid_once_both_are_there()
+    {
+        await using var site = await BlockSite.BootAsync(configure: builder => {
+            var appBlocks = (AppBlocks.Connections.AppBlocksBuilder)builder.Services.Single(d => d.ServiceType == typeof(AppBlocks.Connections.AppBlocksBuilder)).ImplementationInstance!;
+            appBlocks.AllowInBlockGrid("Site grid", "siteNotice", columnSpan: 6).AllowInBlockGrid("Site grid", "siteBanner", areaKey: "main")
+                .AllowInBlockGrid("No such grid", "siteNotice");
+        });
+        using var scope = site.CreateScope();
+        var services = scope.ServiceProvider;
+        await WaitForInstallAsync(services.GetRequiredService<IContentTypeService>());
+        var types = services.GetRequiredService<IContentTypeService>();
+        var dataTypes = services.GetRequiredService<IDataTypeService>();
+        var serializer = services.GetRequiredService<IConfigurationEditorJsonSerializer>();
+        var strings = services.GetRequiredService<IShortStringHelper>();
+        async Task<IContentType> Element(string alias)
+        {
+            var element = new ContentType(strings, -1) { Key = Guid.NewGuid(), Alias = alias, Name = alias, IsElement = true };
+            Assert.True((await types.CreateAsync(element, Constants.Security.SuperUserKey)).Success);
+            return element;
+        }
+
+        // The site's grid: a section block whose area "main" takes only the blocks it lists.
+        var section = await Element("siteSection");
+        var editor = services.GetRequiredService<PropertyEditorCollection>().Single(e => e.Alias == Constants.PropertyEditors.Aliases.BlockGrid);
+        var area = $$"""{"key":"{{Guid.NewGuid()}}","alias":"main","columnSpan":12,"rowSpan":1,"specifiedAllowance":[{"elementTypeKey":"{{section.Key}}"}]}""";
+        var json = $$"""{"gridColumns":12,"blocks":[{"contentElementTypeKey":"{{section.Key}}","allowAtRoot":true,"allowInAreas":false,"areas":[{{area}}]}]}""";
+        var grid = new DataType(editor, serializer) { Key = Guid.NewGuid(), Name = "Site grid", EditorUiAlias = "Umb.PropertyEditorUi.BlockGrid",
+            ConfigurationData = editor.GetConfigurationEditor().FromDatabase(json, serializer) };
+        Assert.True((await dataTypes.CreateAsync(grid, Constants.Security.SuperUserKey)).Success);
+        System.Text.Json.Nodes.JsonObject Configuration() => System.Text.Json.Nodes.JsonNode.Parse(
+            editor.GetConfigurationEditor().ToDatabase(dataTypes.GetAsync(grid.Key).GetAwaiter().GetResult()!.ConfigurationData, serializer))!.AsObject();
+        System.Text.Json.Nodes.JsonNode[] Blocks(Guid key) => Configuration()["blocks"]!.AsArray()
+            .Where(block => string.Equals(block!["contentElementTypeKey"]!.GetValue<string>(), key.ToString(), StringComparison.OrdinalIgnoreCase)).ToArray()!;
+
+        // An element type created after startup, as a package's own startup creates one, is allowed when it is saved.
+        var notice = await Element("siteNotice");
+        var allowed = Assert.Single(Blocks(notice.Key));
+        Assert.True(allowed["allowAtRoot"]!.GetValue<bool>());
+        Assert.Equal(6, allowed["columnSpanOptions"]![0]!["columnSpan"]!.GetValue<int>());
+        // One for an area goes into the area's list, and not at the root.
+        var banner = await Element("siteBanner");
+        Assert.False(Assert.Single(Blocks(banner.Key))["allowAtRoot"]!.GetValue<bool>());
+        var listed = Configuration()["blocks"]![0]!["areas"]![0]!["specifiedAllowance"]!.AsArray();
+        Assert.Single(listed, entry => string.Equals(entry!["elementTypeKey"]!.GetValue<string>(), banner.Key.ToString(), StringComparison.OrdinalIgnoreCase));
+
+        // What the site changes afterwards stays, and running again after the package migrations adds nothing twice.
+        var configuration = Configuration();
+        configuration["blocks"]!.AsArray().Single(block => string.Equals(block!["contentElementTypeKey"]!.GetValue<string>(), notice.Key.ToString(), StringComparison.OrdinalIgnoreCase))!["label"] = "Site's own label";
+        var changed = (await dataTypes.GetAsync(grid.Key))!;
+        changed.ConfigurationData = editor.GetConfigurationEditor().FromDatabase(configuration.ToJsonString(), serializer);
+        Assert.True((await dataTypes.UpdateAsync(changed, Constants.Security.SuperUserKey)).Success);
+        services.GetRequiredService<IKeyValueService>().SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-04-checksum-concurrency");
+        await RunPlanAsync(services);
+        Assert.Equal("Site's own label", Assert.Single(Blocks(notice.Key))["label"]!.GetValue<string>());
+        Assert.Single(Blocks(banner.Key));
+        Assert.Equal(3, Configuration()["blocks"]!.AsArray().Count);
+        Assert.Equal(2, Configuration()["blocks"]![0]!["areas"]![0]!["specifiedAllowance"]!.AsArray().Count);
+    }
+
     /// <summary>Takes the backing class away again, as a site that has not run its step has it, and sets the plan back before the step.</summary>
     private static async Task BeforeTheStepAsync(IServiceProvider services)
     {
@@ -409,5 +500,47 @@ public sealed class DefinitionsTests
     {
         for (var i = 0; i < 100 && types.Get(DataSourceSchema.SqlAlias) is null; i++) await Task.Delay(100);
         Assert.NotNull(types.Get(DataSourceSchema.SqlAlias));
+    }
+
+    [Fact]
+    public async Task The_date_time_and_list_access_step_gives_an_existing_site_both_properties_and_tolerates_a_missing_type()
+    {
+        await using var site = await BlockSite.BootAsync();
+        using var scope = site.CreateScope();
+        var services = scope.ServiceProvider;
+        var types = services.GetRequiredService<IContentTypeService>();
+        var dataTypes = services.GetRequiredService<IDataTypeService>();
+        await WaitForInstallAsync(types);
+        var mode = types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes.Single(p => p.Alias == AddDateTimeModeAndListAccess.DateTimeProperty);
+        var audit = types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes.Single(p => p.Alias == "auditColumns").Description;
+        var access = types.Get(PublishedDataCatalog.ListAlias)!.PropertyTypes.Single(p => p.Alias == AddDateTimeModeAndListAccess.AccessProperty);
+        Assert.Equal("Application: Data source date-times", (await dataTypes.GetAsync(mode.DataTypeKey))!.Name);
+
+        // The site as it was before the step: neither property, no date-time data type, the old audit description, and the plan at the step before.
+        var source = types.Get(DataSourceSchema.SqlAlias)!;
+        source.RemovePropertyType(mode.Alias);
+        source.PropertyTypes.Single(p => p.Alias == "auditColumns").Description = "The engine writes the username and the server's local time.";
+        Assert.True((await types.UpdateAsync(source, Constants.Security.SuperUserKey)).Success);
+        Assert.True((await dataTypes.DeleteAsync(mode.DataTypeKey, Constants.Security.SuperUserKey)).Success);
+        var list = types.Get(PublishedDataCatalog.ListAlias)!;
+        list.RemovePropertyType(access.Alias);
+        Assert.True((await types.UpdateAsync(list, Constants.Security.SuperUserKey)).Success);
+        var keyValues = services.GetRequiredService<IKeyValueService>();
+        keyValues.SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-04-checksum-concurrency");
+        await RunPlanAsync(services);
+
+        var added = types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes.Single(p => p.Alias == mode.Alias);
+        Assert.Equal((mode.Key, mode.Name, mode.Description, mode.DataTypeKey), (added.Key, added.Name, added.Description, added.DataTypeKey));
+        Assert.NotNull(await dataTypes.GetAsync(mode.DataTypeKey));
+        Assert.Equal(audit, types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes.Single(p => p.Alias == "auditColumns").Description);
+        var restored = types.Get(PublishedDataCatalog.ListAlias)!.PropertyTypes.Single(p => p.Alias == access.Alias);
+        Assert.Equal((access.Key, access.DataTypeKey, access.Mandatory), (restored.Key, restored.DataTypeKey, restored.Mandatory));
+
+        // A site without the list type: the step adds what it can and the plan still completes.
+        Assert.Equal(ContentTypeOperationStatus.Success, await types.DeleteAsync(types.Get(PublishedDataCatalog.ListAlias)!.Key, Constants.Security.SuperUserKey));
+        keyValues.SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-04-checksum-concurrency");
+        await RunPlanAsync(services);
+        Assert.Null(types.Get(PublishedDataCatalog.ListAlias));
+        Assert.Single(types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes, p => p.Alias == mode.Alias);
     }
 }

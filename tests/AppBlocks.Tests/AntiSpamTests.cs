@@ -134,6 +134,24 @@ public sealed class AntiSpamTests
         Assert.Equal(outcome, (await service.VerifyAsync(Request((decimal)threshold), default)).Outcome);
     }
 
+    [Theory]
+    [InlineData("""{"success":true,"hostname":"www.example.org"}""", "www.example.org", AntiSpamOutcome.Passed)]
+    [InlineData("""{"success":true,"hostname":"WWW.Example.org"}""", "www.example.org", AntiSpamOutcome.Passed)]
+    [InlineData("""{"success":true,"hostname":"elsewhere.example"}""", "www.example.org", AntiSpamOutcome.Failed)]
+    // Nothing to compare: no host name in the answer, or the site turned the check off.
+    [InlineData("""{"success":true}""", "www.example.org", AntiSpamOutcome.Passed)]
+    [InlineData("""{"success":true,"hostname":"elsewhere.example"}""", null, AntiSpamOutcome.Passed)]
+    public async Task A_token_solved_on_another_host_fails(string reply, string? hostname, AntiSpamOutcome outcome)
+    {
+        foreach (var alias in new[] { "turnstile", "recaptchaV2", "hcaptcha" })
+        {
+            var (service, _, _) = With(f => Adapter(alias, f), reply);
+            Assert.Equal(outcome, (await service.VerifyAsync(Request() with { Hostname = hostname }, default)).Outcome);
+        }
+        var (three, _, _) = With(f => new RecaptchaV3Service(f), reply.Replace("\"success\":true", "\"success\":true,\"score\":0.9,\"action\":\"appblocks_form\""));
+        Assert.Equal(outcome, (await three.VerifyAsync(Request() with { Hostname = hostname }, default)).Outcome);
+    }
+
     [Fact]
     public void Each_adapter_describes_its_own_widget_and_offers_only_what_it_can()
     {
@@ -301,35 +319,35 @@ public sealed class AntiSpamTests
     public void Publishing_takes_the_block_inside_a_form_and_nowhere_else()
     {
         var validator = Validator();
-        Assert.Empty(validator.ValidateWebsite(FormWith([("service", "honeypot")]).Json));
         Assert.Empty(validator.Validate(FormWith([("service", "honeypot")]).Json));
-        Assert.Empty(validator.ValidateEmbedded(FormWith([("service", "turnstile"), ("siteKey", "public-key"), ("scoreThreshold", "0.7"), ("theme", "dark"), ("size", "compact")]).Json));
+        Assert.Empty(validator.Validate(FormWith([("service", "honeypot")]).Json));
+        Assert.Empty(validator.Validate(FormWith([("service", "turnstile"), ("siteKey", "public-key"), ("scoreThreshold", "0.7"), ("theme", "dark"), ("size", "compact")]).Json));
 
         // Inside a fieldset inside the form is still inside the form.
         var nested = BlockPages.ContentBlocksForm();
         var fieldset = BlockPages.Wrap(nested, "appFieldset", [BlockPages.Add(nested, AppBlockSchema.AntiSpamAlias, ("service", "honeypot"))]);
         BlockPages.Layout(nested)[0]!["areas"]![0]!["items"]!.AsArray().Add(fieldset);
-        Assert.Empty(validator.ValidateWebsite(nested.ToJsonString()));
+        Assert.Empty(validator.Validate(nested.ToJsonString()));
 
         // Outside one it is refused, wherever it was left.
         var page = BlockPages.Empty();
         BlockPages.Layout(page).Add(BlockPages.Add(page, AppBlockSchema.AntiSpamAlias, ("service", "honeypot")));
-        Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.ValidateWebsite(page.ToJsonString()));
-        Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.ValidateEmbedded(page.ToJsonString()));
+        Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.Validate(page.ToJsonString()));
+        Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.Validate(page.ToJsonString()));
         Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.Validate(page.ToJsonString()));
         page = BlockPages.Empty();
         BlockPages.Layout(page).Add(BlockPages.Wrap(page, AppBlockSchema.RegionAlias, [BlockPages.Add(page, AppBlockSchema.AntiSpamAlias, ("service", "honeypot"))]));
-        Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.ValidateWebsite(page.ToJsonString()));
+        Assert.Contains("Place the Anti-spam block inside the form it protects.", validator.Validate(page.ToJsonString()));
     }
 
     [Fact]
     public void Publishing_refuses_a_block_set_up_wrongly()
     {
         var validator = Validator();
-        Assert.Contains("Use one Anti-spam block per form.", validator.ValidateWebsite(FormWith([("service", "honeypot")], [("service", "honeypot")]).Json));
-        Assert.Contains("Choose a service for the Anti-spam block.", validator.ValidateWebsite(FormWith([("theme", "dark")]).Json));
-        Assert.Contains(validator.ValidateWebsite(FormWith([("service", "recaptchaV3"), ("scoreThreshold", "1.5")]).Json), error => error.Contains("score threshold"));
-        Assert.Contains(validator.ValidateWebsite(FormWith([("service", "turnstile"), ("siteKey", "not a key\"")]).Json), error => error.Contains("site key holds"));
+        Assert.Contains("Use one Anti-spam block per form.", validator.Validate(FormWith([("service", "honeypot")], [("service", "honeypot")]).Json));
+        Assert.Contains("Choose a service for the Anti-spam block.", validator.Validate(FormWith([("theme", "dark")]).Json));
+        Assert.Contains(validator.Validate(FormWith([("service", "recaptchaV3"), ("scoreThreshold", "1.5")]).Json), error => error.Contains("score threshold"));
+        Assert.Contains(validator.Validate(FormWith([("service", "turnstile"), ("siteKey", "not a key\"")]).Json), error => error.Contains("site key holds"));
     }
 
     private static string Config(string path)
@@ -344,7 +362,7 @@ public sealed class AntiSpamTests
     {
         var definition = XElement.Parse(Config("Schema/ContentTypes/appantispam.config"));
         Assert.Equal(AppBlockSchema.Key(AppBlockSchema.AntiSpamAlias).ToString(), definition.Attribute("Key")!.Value);
-        Assert.Equal("2e061fe8-821d-2da6-2367-1cacd65983fe", definition.Attribute("Key")!.Value);
+        Assert.Equal("bb529b16-87cc-a2f5-2806-165bb5edcd8c", definition.Attribute("Key")!.Value);
         var aliases = definition.Element("GenericProperties")!.Elements("GenericProperty").Select(property => property.Element("Alias")!.Value).ToArray();
         Assert.Equal(new[] { "service", "siteKey", "scoreThreshold", "theme", "size" }, aliases);
         // The schema offers no property a secret could be typed into.

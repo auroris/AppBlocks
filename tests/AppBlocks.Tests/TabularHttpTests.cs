@@ -62,6 +62,14 @@ public sealed class TabularHttpTests
         Assert.Equal(0m, Number(newRow, "unitPrice"));
         Assert.True(newRow.GetProperty("capabilities").GetProperty("create").GetBoolean());
 
+        // A body that is not JSON is refused as such, not answered as a server failure.
+        using (var request = new HttpRequestMessage(HttpMethod.Post, $"{site.PathBase}/api/tabular/{BlockSite.FormPageKey}/{BlockPages.LinesBlock}?id=4")
+        { Content = new StringContent("changes", System.Text.Encoding.UTF8, "text/plain") })
+        {
+            request.Headers.Add("RequestVerificationToken", list.Body.GetProperty("antiforgeryToken").GetString());
+            Assert.Equal(HttpStatusCode.UnsupportedMediaType, (await client.SendAsync(request)).StatusCode);
+        }
+
         // A save without the token is refused before anything is read.
         using (var request = new HttpRequestMessage(HttpMethod.Post, $"{site.PathBase}/api/tabular/{BlockSite.FormPageKey}/{BlockPages.LinesBlock}?id=4")
         { Content = JsonContent.Create(new { submissionKey = Guid.NewGuid(), changes = new[] { new { operation = "create", values = new { item = "Tokenless" } } } }) })
@@ -176,8 +184,8 @@ public sealed class TabularHttpTests
         using var scope = site.CreateScope();
         var contents = scope.ServiceProvider.GetRequiredService<IContentService>();
 #pragma warning disable CS0618
-        var draft = contents.Create("Lines without a source", contents.GetById(BlockSite.FormPageKey)!.ParentId, AppBlockSchema.PageAlias);
-        draft.SetValue(AppBlockSchema.BodyAlias, copy.ToJsonString());
+        var draft = contents.Create("Lines without a source", contents.GetById(BlockSite.FormPageKey)!.ParentId, BlockSite.PageAlias);
+        draft.SetValue(BlockSite.BodyAlias, copy.ToJsonString());
         contents.Save(draft);
         var published = contents.Publish(draft, ["*"]);
 #pragma warning restore CS0618

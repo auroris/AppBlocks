@@ -63,16 +63,6 @@ public static class DatabaseKinds
     public static DatabaseDialect FromProvider(string provider)
         => TryFromProvider(provider, out var dialect) ? dialect : throw new InvalidOperationException("Unsupported database provider.");
 
-    /// <summary>The kind whose scripts an application schema folder holds; <c>oracle</c> is the automatic Oracle mode.</summary>
-    /// <exception cref="InvalidOperationException">No kind has that folder.</exception>
-    public static DatabaseDialect FromSchemaFolder(string folder) => folder switch {
-        "sqlite" => DatabaseDialect.Sqlite,
-        "sqlserver" => DatabaseDialect.SqlServer,
-        "postgresql" => DatabaseDialect.Postgres,
-        "oracle" => DatabaseDialect.Oracle,
-        _ => throw new InvalidOperationException("Unsupported database provider."),
-    };
-
     /// <summary>
     /// The provider name for any spelling a site may write in configuration or send from the screen: a provider name in any case, or a
     /// driver's invariant name such as <c>Microsoft.Data.SqlClient</c> or <c>Npgsql</c>.

@@ -11,13 +11,15 @@
 @inject ListOfValuesService Lists
 @inject IVariationContextAccessor VariationContext
 @inject IEnumerable<IAppBlockPlugin> Plugins
+@inject AppBlocks.Blocks.AppBlocksText Text
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
 @{
     var item = Model.Block;
     var block = item.Content;
     var alias = block.ContentType.Alias;
     // Umbraco returns an empty string, not null, for a text property nobody filled in, so a ?? fallback needs this.
-    string? Text(string property) => block.Value<string>(property) is { } value && !string.IsNullOrWhiteSpace(value) ? value : null;
-    var heading = Text("heading");
+    string? Property(string property) => block.Value<string>(property) is { } value && !string.IsNullOrWhiteSpace(value) ? value : null;
+    var heading = Property("heading");
     var paperReport = block.Value<IPublishedContent>("paperReport");
     var printUrl = paperReport is null ? null : Context.RequestServices.GetService<AppBlocks.DocumentOutput.IAppDocumentLinks>()?.Url(paperReport.Key, Context.Request.PathBase);
     var culture = VariationContext.VariationContext?.Culture;
@@ -33,7 +35,7 @@
 }
 else if (alias == "appForm" && !Model.Admitted)
 {
-    <p class="app-block-signin" role="status">Sign in to use this form.</p>
+    <p class="app-block-signin" role="status">@Text["signInToUseForm", "Sign in to use this form."]</p>
 }
 else if (Plugins.FirstOrDefault(plugin => plugin.Alias == alias) is { } plugin)
 {
@@ -41,27 +43,28 @@ else if (Plugins.FirstOrDefault(plugin => plugin.Alias == alias) is { } plugin)
 }
 else if (alias == "appForm")
 {
-    var definition = await FormDefinition.ResolveAsync(Model.Page, item.ContentKey, Resources, Definitions, apiQuery.Length > 0 ? culture : null);
+    var definition = await FormDefinition.ResolveAsync(Model.Page, item.ContentKey, Resources, Definitions, apiQuery.Length > 0 ? culture : null, Plugins);
     if (definition is null)
     {
-        <p role="alert">This form has an invalid resource or field configuration.</p>
+        <p role="alert">@Text["formInvalid", "This form has an invalid resource or field configuration."]</p>
     }
     else if (Model.Anonymous && await FormEndpoints.RefusesAnonymousAsync(definition, Model.Page.Key, Context))
     {
         @* The class said no before the runtime asked, so there is no form to show and nothing to flash. *@
-        <p class="app-block-signin" role="status">Sign in to use this form.</p>
+        <p class="app-block-signin" role="status">@Text["signInToUseForm", "Sign in to use this form."]</p>
     }
     else
     {
         var destination = definition.ReturnUrl(Context.Request.PathBase);
-        <form class="app-form" data-label-position="@(string.Equals(block.Value<string>("labelPosition")?.Trim(), "left", StringComparison.OrdinalIgnoreCase) ? "left" : "top")" data-app-form data-api="@(Context.Request.PathBase)/api/forms/@Model.Page.Key/@item.ContentKey@apiQuery"
+        var api = Context.Request.PathBase + AppBlocks.AppBlocksRoutes.Under(Configuration, $"forms/{Model.Page.Key}/{item.ContentKey}") + apiQuery;
+        <form class="app-form" data-label-position="@(string.Equals(block.Value<string>("labelPosition")?.Trim(), "left", StringComparison.OrdinalIgnoreCase) ? "left" : "top")" data-app-form data-api="@api"
             data-key-parameter="@definition.KeyParameter" data-return="@destination" data-anonymous="@(Model.Anonymous ? "true" : null)" novalidate>
             @if (!string.IsNullOrWhiteSpace(heading)) { <h2>@heading</h2> }
             <div class="app-form-message" role="status" aria-live="polite"></div>
             <div class="app-form-errors" role="alert" tabindex="-1" hidden></div>
             @if (printUrl is not null && !Model.Anonymous)
             {
-                <p><a href="@printUrl" target="_blank" rel="noopener" data-print data-print-url="@printUrl" data-print-key-parameter="@definition.KeyParameter" hidden>Print</a></p>
+                <p><a href="@printUrl" target="_blank" rel="noopener" data-print data-print-url="@printUrl" data-print-key-parameter="@definition.KeyParameter" hidden>@Text["print", "Print"]</a></p>
             }
             <fieldset class="app-form-body" disabled>
                 @foreach (var area in item.Areas)
@@ -71,7 +74,7 @@ else if (alias == "appForm")
                 }
                 @if (!AppBlockContent.Flatten(item.Areas.SelectMany(a => a)).Any(b => b.Content.ContentType.Alias == "appActions"))
                 {
-                    <div class="app-form-actions"><button type="submit" data-save>Save</button><a href="@destination">Cancel</a><button type="button" data-delete hidden>Delete</button></div>
+                    <div class="app-form-actions"><button type="submit" data-save>@Text["save", "Save"]</button><a href="@destination">@Text["cancel", "Cancel"]</a><button type="button" data-delete hidden>@Text["delete", "Delete"]</button></div>
                 }
             </fieldset>
         </form>
@@ -79,7 +82,7 @@ else if (alias == "appForm")
 }
 else if (alias == "appFieldset")
 {
-    var help = Text("helpText");
+    var help = Property("helpText");
     <fieldset class="app-fieldset">
         <legend>@heading</legend>
         @if (help is not null) { <p class="app-fieldset-help">@help</p> }
@@ -138,9 +141,9 @@ else if (alias == "appActions" && Model.Form is not null)
 {
     var destination = Model.Form.ReturnUrl(Context.Request.PathBase);
     <div class="app-form-actions">
-        <button type="submit" data-save>@(Text("saveLabel") ?? "Save")</button>
-        <a href="@destination">@(Text("cancelLabel") ?? "Cancel")</a>
-        <button type="button" data-delete hidden>@(Text("deleteLabel") ?? "Delete")</button>
+        <button type="submit" data-save>@(Property("saveLabel") ?? Text["save", "Save"])</button>
+        <a href="@destination">@(Property("cancelLabel") ?? Text["cancel", "Cancel"])</a>
+        <button type="button" data-delete hidden>@(Property("deleteLabel") ?? Text["delete", "Delete"])</button>
     </div>
 }
 else if (Model.Form is not null && AppBlockSchema.FieldAliases.Contains(alias))
@@ -152,10 +155,10 @@ else if (Model.Form is not null && AppBlockSchema.FieldAliases.Contains(alias))
         var id = "field-" + item.ContentKey.ToString("N");
         var readOnly = field.ReadOnly || block.Value<bool>("readOnly") || alias == "appDisplay";
         var required = field.Required || block.Value<bool>("required");
-        var label = Text("label") ?? field.Label;
-        var placeholder = Text(AppBlockField.PlaceholderAlias);
+        var label = Property("label") ?? field.Label;
+        var placeholder = Property(AppBlockField.PlaceholderAlias);
         // Resolved now and applied by the runtime to a new record's empty field; null leaves the field as the resource starts it.
-        var defaultValue = Model.Variables?.Resolve(Text(AppBlockField.DefaultValueAlias), field.Kind);
+        var defaultValue = Model.Variables?.Resolve(Property(AppBlockField.DefaultValueAlias), field.Kind);
         // Razor writes a data-* attribute even when its value is null, so this one is written whole, and only when there is a default.
         var defaultAttribute = defaultValue is null ? HtmlString.Empty : new HtmlString("data-default=\"" + Html.Encode(defaultValue) + "\"");
         if (AppBlockField.IsHidden(block))
@@ -177,52 +180,54 @@ else if (Model.Form is not null && AppBlockSchema.FieldAliases.Contains(alias))
                 else if (alias == AppBlockSchema.ColorAlias)
                 {
                     <div class="app-color" data-app-color>
-                        <input type="color" data-color-picker disabled="@readOnly" aria-label="Choose a color for @label" aria-describedby="@id-help @id-error" />
+                        @* {label} stands for the field's label, so a translation can put it where its language does. *@
+                        <input type="color" data-color-picker disabled="@readOnly" aria-label="@Text["chooseColorFor", "Choose a color for {label}"].Replace("{label}", label)" aria-describedby="@id-help @id-error" />
                         <input type="text" id="@id" name="@key" data-field="@key" data-kind="text" data-readonly="@readOnly.ToString().ToLowerInvariant()"
                             required="@required" readonly="@readOnly" maxlength="@field.MaxLength" pattern="#[0-9a-fA-F]{6}"
-                            title="Enter a color in #RRGGBB format, such as #2a5d8f." placeholder="@(placeholder ?? "#RRGGBB")" spellcheck="false" autocomplete="off"
+                            title="@Text["colorFormat", "Enter a color in #RRGGBB format, such as #2a5d8f."]" placeholder="@(placeholder ?? "#RRGGBB")" spellcheck="false" autocomplete="off"
                             @defaultAttribute aria-describedby="@id-help @id-error" />
-                        <button type="button" data-color-clear disabled="@readOnly" aria-label="Clear color for @label">Clear</button>
+                        <button type="button" data-color-clear disabled="@readOnly" aria-label="@Text["clearColorFor", "Clear color for {label}"].Replace("{label}", label)">@Text["clear", "Clear"]</button>
                     </div>
                 }
                 else if (alias is "appSelect" or AppBlockSchema.ShuttleAlias)
                 {
                     IReadOnlyList<FormChoice> choices = field.Choices ?? [];
                     string? listProblem = null;
-                    if (Text("listOfValues") is { } selected)
+                    if (Property("listOfValues") is { } selected)
                     {
                         try {
-                            var parameters = Context.Request.Query.Where(p => p.Value.Count == 1).ToDictionary(p => p.Key, p => p.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+                            // Bounded as the form endpoints bound them, so the page and the runtime's requests bind the same :PARAM values.
+                            var parameters = FormEndpoints.Parameters(Context.Request.Query);
                             choices = await Lists.ChoicesAsync(selected, new FormExecutionContext(Context.User, Model.Page.Key, Model.Form.Block.ContentKey, Model.Form.Revision, Parameters: parameters), Context.RequestAborted);
                         }
-                        catch (Exception error) when (error is not OperationCanceledException) { choices = []; listProblem = "The choices for this field are not available. Try reloading the page."; }
+                        catch (Exception error) when (error is not OperationCanceledException) { choices = []; listProblem = Text["choicesUnavailable", "The choices for this field are not available. Try reloading the page."]; }
                     }
                     @if (alias == AppBlockSchema.ShuttleAlias)
                     {
                         <div class="app-shuttle" data-app-shuttle data-required="@required.ToString().ToLowerInvariant()" role="group" aria-labelledby="@id-label">
                             <input type="hidden" id="@id" name="@key" data-field="@key" data-kind="shuttle" data-readonly="@readOnly.ToString().ToLowerInvariant()" data-label="@label" @defaultAttribute />
                             <div class="app-shuttle-list">
-                                <label for="@id-available">Available</label>
+                                <label for="@id-available">@Text["shuttleAvailable", "Available"]</label>
                                 <select id="@id-available" data-shuttle-available multiple size="8" disabled="@readOnly" aria-describedby="@id-help @id-error">
                                     @foreach (var choice in choices.Where(choice => ShuttleValue.IsItemValue(choice.Value)).DistinctBy(choice => choice.Value, StringComparer.Ordinal))
                                     { <option value="@choice.Value">@choice.Label</option> }
                                 </select>
                             </div>
-                            <div class="app-shuttle-actions" aria-label="Move items">
-                                <button type="button" data-shuttle-action="add" disabled="@readOnly">Add →</button>
-                                <button type="button" data-shuttle-action="add-all" disabled="@readOnly">Add all →</button>
-                                <button type="button" data-shuttle-action="remove" disabled="@readOnly">← Remove</button>
-                                <button type="button" data-shuttle-action="remove-all" disabled="@readOnly">← Remove all</button>
+                            <div class="app-shuttle-actions" aria-label="@Text["shuttleMoveItems", "Move items"]">
+                                <button type="button" data-shuttle-action="add" disabled="@readOnly">@Text["shuttleAdd", "Add →"]</button>
+                                <button type="button" data-shuttle-action="add-all" disabled="@readOnly">@Text["shuttleAddAll", "Add all →"]</button>
+                                <button type="button" data-shuttle-action="remove" disabled="@readOnly">@Text["shuttleRemove", "← Remove"]</button>
+                                <button type="button" data-shuttle-action="remove-all" disabled="@readOnly">@Text["shuttleRemoveAll", "← Remove all"]</button>
                             </div>
                             <div class="app-shuttle-list">
-                                <label for="@id-selected">Selected (in order)</label>
+                                <label for="@id-selected">@Text["shuttleSelectedHeading", "Selected (in order)"]</label>
                                 <select id="@id-selected" data-shuttle-selected multiple size="8" disabled="@readOnly" aria-required="@required.ToString().ToLowerInvariant()" aria-describedby="@id-help @id-error"></select>
                             </div>
-                            <div class="app-shuttle-actions" aria-label="Reorder selected items">
-                                <button type="button" data-shuttle-action="top" disabled="@readOnly">Top</button>
-                                <button type="button" data-shuttle-action="up" disabled="@readOnly">Up</button>
-                                <button type="button" data-shuttle-action="down" disabled="@readOnly">Down</button>
-                                <button type="button" data-shuttle-action="bottom" disabled="@readOnly">Bottom</button>
+                            <div class="app-shuttle-actions" aria-label="@Text["shuttleReorder", "Reorder selected items"]">
+                                <button type="button" data-shuttle-action="top" disabled="@readOnly">@Text["shuttleTop", "Top"]</button>
+                                <button type="button" data-shuttle-action="up" disabled="@readOnly">@Text["shuttleUp", "Up"]</button>
+                                <button type="button" data-shuttle-action="down" disabled="@readOnly">@Text["shuttleDown", "Down"]</button>
+                                <button type="button" data-shuttle-action="bottom" disabled="@readOnly">@Text["shuttleBottom", "Bottom"]</button>
                             </div>
                             <span class="app-shuttle-status" role="status" aria-live="polite"></span>
                         </div>
@@ -232,7 +237,7 @@ else if (Model.Form is not null && AppBlockSchema.FieldAliases.Contains(alias))
                     @* A select has no placeholder attribute; its empty choice carries the text instead. *@
                     <select id="@id" name="@key" data-field="@key" data-kind="@field.Kind" data-readonly="@readOnly.ToString().ToLowerInvariant()" required="@required" disabled="@readOnly"
                         @defaultAttribute aria-describedby="@id-help @id-error">
-                        <option value="">@(placeholder ?? "Select a value")</option>
+                        <option value="">@(placeholder ?? Text["selectValue", "Select a value"])</option>
                         @foreach (var choice in choices) { <option value="@choice.Value">@choice.Label</option> }
                     </select>
                     }

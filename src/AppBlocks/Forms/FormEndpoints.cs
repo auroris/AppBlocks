@@ -37,8 +37,9 @@ public static class FormEndpoints
 
     public static void MapApplicationForms(this IEndpointRouteBuilder endpoints)
     {
-        var limit = endpoints.ServiceProvider.GetService<IConfiguration>()?.GetValue<long?>("AppBlocks:Forms:MaxBodySize") ?? DefaultMaxBodySize;
-        var group = endpoints.MapGroup("/api/forms/{pageKey:guid}/{formKey:guid}").WithMetadata(new RequestSizeLimitAttribute(limit));
+        var configuration = endpoints.ServiceProvider.GetService<IConfiguration>();
+        var limit = configuration?.GetValue<long?>("AppBlocks:Forms:MaxBodySize") ?? DefaultMaxBodySize;
+        var group = endpoints.MapGroup(AppBlocksRoutes.Under(configuration, "forms/{pageKey:guid}/{formKey:guid}")).WithMetadata(new RequestSizeLimitAttribute(limit));
         group.MapGet("", Load);
         group.MapPost("", Create);
         group.MapPut("/{key}", Update);
@@ -53,7 +54,9 @@ public static class FormEndpoints
         if (member is null) return (null, null);
         // Bind antiforgery tokens to the actual Umbraco Member or backoffice User, or to nobody.
         http.User = member;
-        return (await FormDefinition.ResolveAsync(page, formKey, http.RequestServices.GetRequiredService<FormResourceRegistry>(), http.RequestServices.GetRequiredService<PublishedDataCatalog>(), AppBlockContent.RequestCulture(http)), member);
+        var services = http.RequestServices;
+        return (await FormDefinition.ResolveAsync(page, formKey, services.GetRequiredService<FormResourceRegistry>(), services.GetRequiredService<PublishedDataCatalog>(),
+            AppBlockContent.RequestCulture(http), services.GetServices<IAppBlockPlugin>()), member);
     }
 
     private static IResult Result(FormResult result) => result.Status == 204 ? Results.NoContent() : Results.Json(result, statusCode: result.Status);
@@ -168,6 +171,8 @@ public static class FormEndpoints
     {
         // Read by hand, as a DELETE gets no body binding, so the size limit and bad JSON are answered here as they are for the others.
         FormSubmission? submission;
+        // A body that is not JSON is refused as the bound POST and PUT refuse it, before anything reads it.
+        if (!http.Request.HasJsonContentType()) return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
         try { submission = await http.Request.ReadFromJsonAsync<FormSubmission>(ct); }
         catch (BadHttpRequestException error) { return Results.StatusCode(error.StatusCode); }
         catch (JsonException) { return Results.BadRequest(); }
@@ -199,7 +204,8 @@ public static class FormEndpoints
             if (current.Record.Checksum is { } expected && expected != submission.Checksum) return Result(FormResult.Conflict());
             var deletion = await form.Resource.DeleteAsync(key!, submission.Checksum, context, ct);
             Audit(http, operation, form.Resource.Alias, key, member, deletion.Status);
-            return Result(deletion);
+            // The runtime reads only an empty answer as "the record is gone", so a class that reports success with no record means just that.
+            return deletion is { Status: >= 200 and < 300, Record: null } ? Results.NoContent() : Result(deletion);
         }
         var errors = form.Validate(submission.Values, key is null);
         if (errors.Count > 0) return Result(new(422, Errors: errors));
@@ -272,7 +278,7 @@ public static class FormEndpoints
             if (detail is null) return (null, Results.BadRequest());
             if (details.Any(d => d.Key == detail.Block)) return (null, DetailRefusal(detail.Block, 422, "The rows of a block are sent once."));
             if (blocks.FirstOrDefault(b => b.ContentKey == detail.Block) is not { } item) return (null, DetailRefusal(detail.Block, 422, "This form has no such Tabular form block."));
-            var block = TabularBlock.Read(item.Content);
+            var block = TabularBlock.Read(item.Content, http.RequestServices.GetService<IOptions<TabularOptions>>()?.Value.MaxRows ?? TabularBlock.MaxRowsLimit);
             if (!block.OwnedByForm) return (null, DetailRefusal(detail.Block, 422, "This Tabular form block names its own owner, so its rows save on their own."));
             if (await resources.FindAsync(block.DataSource) is not SqlDataSource source || block.LinkField.Length == 0)
                 return (null, DetailRefusal(detail.Block, 422, $"The data source {block.DataSource} is not a published data source."));

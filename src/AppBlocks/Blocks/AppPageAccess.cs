@@ -12,26 +12,23 @@ namespace AppBlocks.Blocks;
 public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker access, IHttpContextAccessor http,
     ApplicationAccessPolicy applicationAccess, IPublicAccessService publicAccess, IEnumerable<IProtectedPageAdmission> admissions)
 {
-    /// <summary>Retains member-only access for hosts that explicitly require it.</summary>
-    public async Task<ClaimsPrincipal?> MemberAsync(Guid pageKey)
-    {
-        var user = await UserAsync(pageKey);
-        return user?.Identity?.AuthenticationType == IdentityConstants.ApplicationScheme ? user : null;
-    }
-
     /// <summary>The signed-in Member and/or backoffice User this page admits, Member first when both are present. Null for everyone else, including an anonymous visitor to an open page.</summary>
-    public async Task<ClaimsPrincipal?> UserAsync(Guid pageKey)
+    public async Task<ClaimsPrincipal?> UserAsync(Guid pageKey, bool includeMember = true)
     {
         if (await content.PageAsync(pageKey) is not { } page) return null;
-        return await UserAsync(page);
+        return await UserAsync(page, includeMember);
     }
 
-    /// <summary>Checks the same member/Public Access boundary for another published application page, such as a paper report. Null for anyone not signed in.</summary>
-    public async Task<ClaimsPrincipal?> UserAsync(IPublishedContent page)
+    /// <summary>
+    /// Checks the same member/Public Access boundary for another published application page, such as a paper report. Null for anyone not
+    /// signed in. A route that has decided its caller carries no Member, such as a backoffice route, passes false for
+    /// <paramref name="includeMember"/>, and the Member cookie is then not consulted, so that only the backoffice User is judged.
+    /// </summary>
+    public async Task<ClaimsPrincipal?> UserAsync(IPublishedContent page, bool includeMember = true)
     {
         if (http.HttpContext is not { } context) return null;
-        var member = await context.AuthenticateAsync(IdentityConstants.ApplicationScheme);
-        if (member.Succeeded && member.Principal?.Identity?.IsAuthenticated == true)
+        var member = includeMember ? await context.AuthenticateAsync(IdentityConstants.ApplicationScheme) : null;
+        if (member is { Succeeded: true } && member.Principal?.Identity?.IsAuthenticated == true)
         {
             if (await access.HasMemberAccessToContentAsync(page.Id, member.Principal) != PublicAccessStatus.AccessAccepted) return null;
             var backOfficeUser = await applicationAccess.BackOfficeUserAsync(context);
@@ -86,21 +83,31 @@ public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker 
 
 public sealed record AppPageRequirement(Guid PageKey) : IAuthorizationRequirement;
 
+/// <summary>
+/// Admits the request's user when one of its authenticated identities is an account the page admits. Identities are matched one by
+/// one, by authentication type and identifier, because the caller may carry fewer of them than the page's principal: a backoffice-only
+/// route keeps only the User while the page also finds the Member cookie on the request.
+/// </summary>
 public sealed class AppPageAuthorizationHandler(IHttpContextAccessor http) : AuthorizationHandler<AppPageRequirement>
 {
     protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context, AppPageRequirement requirement)
     {
         if (http.HttpContext is not { } request) return;
-        var member = await request.RequestServices.GetRequiredService<AppPageAccess>().UserAsync(requirement.PageKey);
-        if (member is not null && context.User.Identity?.AuthenticationType == member.Identity?.AuthenticationType
-            && context.User.FindFirstValue(ClaimTypes.NameIdentifier) == member.FindFirstValue(ClaimTypes.NameIdentifier)) context.Succeed(requirement);
+        // The route decided who the caller is: when its principal carries no Member identity, as the reports companion's backoffice
+        // routes do on purpose, a Member cookie on the request is not the caller and is left out of the page's answer.
+        var includeMember = ApplicationAccessPolicy.MemberIdentity(context.User) is not null;
+        if (await request.RequestServices.GetRequiredService<AppPageAccess>().UserAsync(requirement.PageKey, includeMember) is not { } admitted) return;
+        if (context.User.Identities.Any(identity => identity.IsAuthenticated && admitted.Identities.Any(page => page.IsAuthenticated
+            && page.AuthenticationType == identity.AuthenticationType
+            && identity.FindFirst(ClaimTypes.NameIdentifier)?.Value is { Length: > 0 } id && page.FindFirst(ClaimTypes.NameIdentifier)?.Value == id)))
+            context.Succeed(requirement);
     }
 }
 
 /// <summary>Combines the host page boundary with the report source's original policy.</summary>
 public sealed class AppPagePolicyProvider(IAuthorizationPolicyProvider fallback) : IAuthorizationPolicyProvider
 {
-    private const string Prefix = "AppHostPage:";
+    private const string Prefix = "AppBlocksPage:";
     public static string Name(Guid page, string? sourcePolicy) => Prefix + page.ToString("N") + ":" + Uri.EscapeDataString(sourcePolicy ?? "");
     public Task<AuthorizationPolicy> GetDefaultPolicyAsync() => fallback.GetDefaultPolicyAsync();
     public Task<AuthorizationPolicy?> GetFallbackPolicyAsync() => fallback.GetFallbackPolicyAsync();

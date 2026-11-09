@@ -4,6 +4,12 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AppBlocks.Blocks;
+using AppBlocks.Connections;
+using AppBlocks.DataSources;
+using AppBlocks.Tabular;
+using Microsoft.Extensions.DependencyInjection;
+using Umbraco.Cms.Core.Models;
+using Umbraco.Cms.Core.Services;
 
 namespace AppBlocks.Tests;
 
@@ -115,6 +121,100 @@ public sealed class MasterDetailHttpTests
         var saved = await lines.SaveAsync([new("update", gear.GetProperty("key").GetString(), gear.GetProperty("checksum").GetString(), new { quantity = "6" })], $"id={key}");
         Assert.True(saved.IsSuccess, saved.Body.ToString());
         Assert.Equal(6L, Scalar(site, $"SELECT QUANTITY FROM ORDER_LINES WHERE ORDER_ID = {key} AND ITEM = 'Gear'"));
+    }
+
+    [Fact]
+    public async Task A_form_on_a_published_data_source_saves_the_record_and_its_rows_in_one_transaction()
+    {
+        await using var site = await BlockSite.StartAsync();
+        var linesBlock = Guid.NewGuid(); var ownedBlock = Guid.NewGuid();
+        Guid pageKey, formKey;
+        using (var scope = site.CreateScope())
+        {
+            var contents = scope.ServiceProvider.GetRequiredService<IContentService>();
+            var root = contents.GetRootContent().Single(c => c.ContentType.Alias == DataSourceSchema.RootAlias);
+            var records = contents.Create("Order records", root.Id, DataSourceSchema.SqlAlias);
+            records.SetValue("access", "Public"); records.SetValue("alias", "orders.records"); records.SetValue("connection", ConnectionCatalog.ApplicationConnection);
+            records.SetValue("source", "ORDERS"); records.SetValue("keyColumns", "ORDER_ID");
+            records.SetValue("allowInsert", 1); records.SetValue("allowUpdate", 1); records.SetValue("allowDelete", 1);
+            Publish(contents, records);
+        }
+        using (var scope = site.CreateScope())
+        {
+            var contents = scope.ServiceProvider.GetRequiredService<IContentService>();
+            var blocks = BlockPages.Empty();
+            JsonNode Keyed(JsonNode layout, Guid key)
+            {
+                var block = blocks["contentData"]!.AsArray()[^1]!;
+                block["key"] = key.ToString(); blocks["expose"]!.AsArray()[^1]!["contentKey"] = key.ToString(); layout["contentKey"] = key.ToString();
+                return layout;
+            }
+            // The form's own rows, and rows that name their owner by a field of the form's record, in another letter case than the field's.
+            var lines = Keyed(BlockPages.Add(blocks, AppBlockSchema.TabularAlias, ("dataSource", "orders.lines"), ("linkField", "orderId"), ("fields", "item, quantity")), linesBlock);
+            var owned = Keyed(BlockPages.Add(blocks, AppBlockSchema.TabularAlias, ("dataSource", "orders.lines"), ("linkField", "orderId"), ("fields", "item"),
+                (TabularBlock.OwnerResourceAlias, "orders.records"), (TabularBlock.OwnerKeyAlias, ":FIELD.ORDERID"), ("readOnly", "1")), ownedBlock);
+            var form = BlockPages.FormBlock(blocks, "orders.records", [BlockPages.Add(blocks, "appText", ("field", "customer")), lines, owned], []);
+            formKey = Guid.Parse(form["contentKey"]!.GetValue<string>());
+            BlockPages.Layout(blocks).Add(form);
+            var page = contents.Create("Order records", contents.GetById(BlockSite.FormPageKey)!.ParentId, BlockSite.PageAlias);
+            page.SetValue(BlockSite.BodyAlias, blocks.ToJsonString());
+            Publish(contents, page);
+            pageKey = page.Key;
+        }
+        await site.WaitForPublishedAsync(pageKey);
+        var member = site.CreateMember("records", "records@example.invalid", "Records member");
+        using var client = await site.SignInMemberAsync(member);
+        var api = $"{site.PathBase}/api/forms/{pageKey}/{formKey}";
+
+        using (var page = await site.GetPageAsync(client, "/order-records/"))
+            Assert.Contains($"data-api=\"{api}\"", await page.Content.ReadAsStringAsync());
+        var state = await client.GetFromJsonAsync<JsonElement>(api);
+        var token = state.GetProperty("antiforgeryToken").GetString()!;
+        var definitionVersion = state.GetProperty("definitionVersion").GetString()!;
+        var revision = (await client.GetFromJsonAsync<JsonElement>($"{site.PathBase}/api/tabular/{pageKey}/{linesBlock}/new")).GetProperty("revision").GetString()!;
+        Task<HttpResponseMessage> Create(object values, params object[] changes)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, api) { Content = JsonContent.Create(new {
+                values, definitionVersion, checksum = (string?)null, submissionKey = Guid.NewGuid().ToString(),
+                details = new[] { new { block = linesBlock, revision, submissionKey = Guid.NewGuid().ToString(), changes } },
+            }) };
+            request.Headers.Add("RequestVerificationToken", token);
+            return client.SendAsync(request);
+        }
+
+        using var created = await Create(new { customer = "Hooli" },
+            new { operation = "create", values = new { item = "Gear", quantity = "2" } }, new { operation = "create", values = new { item = "Belt" } });
+        var body = await Body(created);
+        Assert.True(created.StatusCode == HttpStatusCode.OK, body.ToString());
+        var key = body.GetProperty("record").GetProperty("key").GetString()!;
+        Assert.Equal("Hooli", Scalar(site, $"SELECT CUSTOMER FROM ORDERS WHERE ORDER_ID = {key}"));
+        Assert.Equal(2L, Scalar(site, $"SELECT COUNT(*) FROM ORDER_LINES WHERE ORDER_ID = {key}"));
+        Assert.Equal(key, Assert.Single(body.GetProperty("details").EnumerateArray()).GetProperty("list").GetProperty("owner").GetProperty("key").GetString());
+
+        // A row refused inside the shared transaction takes the record with it, which no save on a C# class can do.
+        var orders = Scalar(site, "SELECT COUNT(*) FROM ORDERS");
+        using var refused = await Create(new { customer = "Rolled back" },
+            new { operation = "create", values = new { item = "Spoke" } }, new { operation = "create", values = new { quantity = "2" } });
+        body = await Body(refused);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+        Assert.Equal(linesBlock, body.GetProperty("block").GetGuid());
+        Assert.Equal(1, body.GetProperty("index").GetInt32());
+        Assert.Equal(orders, Scalar(site, "SELECT COUNT(*) FROM ORDERS"));
+        Assert.Equal(0L, Scalar(site, "SELECT COUNT(*) FROM ORDER_LINES WHERE ITEM = 'Spoke'"));
+
+        // :FIELD.ORDERID finds the record's orderId field whatever its letter case, as publishing accepted it.
+        var named = await site.Tabular(client, pageKey, ownedBlock).ListAsync("id=4");
+        Assert.True(named.IsSuccess, named.Problem);
+        Assert.Equal(["Bearing", "Sprocket"], named.Rows.Select(row => row.GetProperty("values").GetProperty("item").GetString()));
+    }
+
+    private static void Publish(IContentService contents, IContent content)
+    {
+#pragma warning disable CS0618
+        Assert.True(contents.Save(content).Success);
+        var published = contents.Publish(content, ["*"]);
+        Assert.True(published.Success, content.Name + ": " + string.Join("; ", published.EventMessages?.GetAll().Select(m => m.Message) ?? []));
+#pragma warning restore CS0618
     }
 
     private static async Task<JsonElement> Body(HttpResponseMessage response)

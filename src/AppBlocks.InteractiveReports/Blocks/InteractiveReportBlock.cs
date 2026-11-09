@@ -52,11 +52,7 @@ public sealed class InteractiveReportBlock(ReportDefinitionCompiler compiler,
 
 
     /// <summary>Print opens /api/paper-reports/{key}, which only a Paper report node answers. A node not yet imported is not judged.</summary>
-    private void PaperReport(string picked, List<string> errors)
-    {
-        if (contents is null || PaperReportLinks.PickedKey(picked) is not { } key || contents.GetById(key) is not { } node) return;
-        if (node.ContentType.Alias != PaperReportLinks.ContentTypeAlias) errors.Add($"Select a Paper report node for Paper report; {node.Name} is not one.");
-    }
+    private void PaperReport(string picked, List<string> errors) => AppBlocks.Blocks.AppBlocksValidator.PaperReport(contents, picked, errors);
 
 
     private static string Text(JsonElement block, string alias) {

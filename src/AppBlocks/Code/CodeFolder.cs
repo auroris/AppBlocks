@@ -1,5 +1,5 @@
+using System.Buffers;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace AppBlocks.Code;
 
@@ -11,10 +11,11 @@ public sealed class CodePathException(string message) : ArgumentException(messag
 
 /// <summary>
 /// The site's C# folder, <c>AppBlocks/Code</c> under the content root unless <c>AppBlocks:CodeDirectory</c> says otherwise. Every path it
-/// takes is relative to the root and must stay below it: no <c>..</c>, no rooted or drive paths, no link anywhere below the root, names of
-/// letters, digits, '_', '-' and '.', and files ending in <c>.cs</c>. The root is created by the first write, never on startup.
+/// takes is relative to the root and must stay below it: no <c>..</c>, no rooted or drive paths, no link anywhere below the root, and files
+/// ending in <c>.cs</c>. A name is any the file system takes, in any language and with spaces inside it, such as <c>Réservations.cs</c>.
+/// The root is created by the first write, never on startup.
 /// </summary>
-public sealed partial class CodeFolder
+public sealed class CodeFolder
 {
     public const string DefaultDirectory = "AppBlocks/Code";
     /// <summary>The largest file the folder writes or compiles.</summary>
@@ -35,8 +36,12 @@ public sealed partial class CodeFolder
     public string Root { get; }
     public bool Exists => Directory.Exists(Root);
 
-    [GeneratedRegex("^[A-Za-z0-9_][A-Za-z0-9_.-]*$")]
-    private static partial Regex Name();
+    /// <summary>
+    /// What no name may hold: control characters, what this system refuses in a file name, and what Windows refuses, so a folder
+    /// copied between servers keeps every file.
+    /// </summary>
+    private static readonly SearchValues<char> Refused = SearchValues.Create(
+        [.. Enumerable.Range(0, 32).Select(c => (char)c), '\x7f', .. Path.GetInvalidFileNameChars(), '\\', '/', ':', '*', '?', '"', '<', '>', '|']);
 
     /// <summary>The path in its one spelling, '/' between names; throws <see cref="CodePathException"/> for anything the folder refuses.</summary>
     public static string Normalize(string? path, bool file)
@@ -50,7 +55,9 @@ public sealed partial class CodeFolder
         {
             if (name is "" or "." or "..") throw new CodePathException("A path cannot have empty names, '.' or '..'.");
             if (name.Length > MaxNameLength) throw new CodePathException($"A name has at most {MaxNameLength} characters.");
-            if (!Name().IsMatch(name) || name.EndsWith('.')) throw new CodePathException($"'{name}' is not a name: use letters, digits, '_', '-' and '.', starting with a letter, digit or '_'.");
+            if (name.AsSpan().ContainsAny(Refused)) throw new CodePathException($"'{name}' is not a name: leave out control characters and \\ / : * ? \" < > |.");
+            // Windows drops a trailing dot or space, which would make two spellings of one file; a leading dot hides the file from the list.
+            if (name.EndsWith('.') || name.StartsWith('.') || name != name.Trim()) throw new CodePathException($"'{name}' is not a name: start and end it with a character other than a dot or a space.");
             if (DeviceNames.Contains(name.Split('.')[0], StringComparer.OrdinalIgnoreCase)) throw new CodePathException($"'{name}' is a reserved device name.");
         }
         if (file && !names[^1].EndsWith(".cs", StringComparison.Ordinal)) throw new CodePathException("A file name ends in .cs.");

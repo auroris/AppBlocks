@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Microsoft.Extensions.Options;
 using AppBlocks.DataSources;
 using AppBlocks.Forms;
 
@@ -61,7 +62,7 @@ public sealed record ScheduleData(DataSourceQueryResult? Rows, DataSourceQueryRe
 /// Reads a schedule's rows and bars for the current visitor, through <see cref="DataSourceQueries"/> like a list of
 /// values or a paper report. A source that cannot be read becomes a message, never a failed page.
 /// </summary>
-public sealed class ScheduleQueries(ScheduleSources sources, DataSourceQueries queries, ILogger<ScheduleQueries> logger)
+public sealed class ScheduleQueries(ScheduleSources sources, DataSourceQueries queries, ILogger<ScheduleQueries> logger, IOptions<ScheduleOptions> options)
 {
     /// <summary>Both sources must allow anonymous reads; policies are still checked when they are queried.</summary>
     public async Task<bool> AllowsAnonymousReadAsync(ScheduleSettings settings)
@@ -72,7 +73,7 @@ public sealed class ScheduleQueries(ScheduleSources sources, DataSourceQueries q
         && queries.AllowsAnonymousRead(rows.Definition) && queries.AllowsAnonymousRead(bars.Definition);
     }
 
-    /// <summary>Rows beyond this are a problem the editor must narrow, not a slower page.</summary>
+    /// <summary>The defaults of <see cref="ScheduleOptions.MaxRows"/> and <see cref="ScheduleOptions.MaxBars"/>: rows beyond them are a problem the editor must narrow, not a slower page.</summary>
     public const int MaxRows = 2000;
     public const int MaxBars = 5000;
 
@@ -85,8 +86,9 @@ public sealed class ScheduleQueries(ScheduleSources sources, DataSourceQueries q
         var bound = window.Parameters(parameters);
         try
         {
-            var rowData = await queries.QueryAsync(rows.Definition, Context(rows), MaxRows, ct);
-            var barData = await queries.QueryAsync(bars.Definition, Context(bars), MaxBars, ct);
+            var limits = options.Value;
+            var rowData = await queries.QueryAsync(rows.Definition, Context(rows), limits.MaxRows, ct);
+            var barData = await queries.QueryAsync(bars.Definition, Context(bars), limits.MaxBars, ct);
             return new(rowData, barData, null);
         }
         catch (UnauthorizedAccessException) { return ScheduleData.Failed("You do not have access to this schedule's data."); }
@@ -115,13 +117,15 @@ public static class ScheduleValidation
 {
     public sealed record SourceSchema(IReadOnlyList<string>? Columns);
 
-    public static IReadOnlyList<string> Validate(ScheduleSettings settings, Func<string, SourceSchema?>? columnsOf, string? scaleText = null)
+    /// <param name="options">The site's limits; the defaults when null.</param>
+    public static IReadOnlyList<string> Validate(ScheduleSettings settings, Func<string, SourceSchema?>? columnsOf, string? scaleText = null, ScheduleOptions? options = null)
     {
         var errors = new List<string>();
         Source("rows", settings.RowsSource, ScheduleSettings.RowColumns);
         Source("bars", settings.BarsSource, ScheduleSettings.BarColumns);
-        if (settings.DaysBefore < 0 || settings.DaysBefore > ScheduleSettings.MaxDays || settings.DaysAfter < 0 || settings.DaysAfter > ScheduleSettings.MaxDays)
-            errors.Add($"The schedule's days before and after today must be whole numbers from 0 to {ScheduleSettings.MaxDays}.");
+        var maxDays = (options ?? ScheduleOptions.Default).MaxDays;
+        if (settings.DaysBefore < 0 || settings.DaysBefore > maxDays || settings.DaysAfter < 0 || settings.DaysAfter > maxDays)
+            errors.Add($"The schedule's days before and after today must be whole numbers from 0 to {maxDays}.");
         if (ScheduleSettings.ParseScale(scaleText) is null) errors.Add($"The schedule's columns must be {ScheduleSettings.DaysOption} or {ScheduleSettings.HoursOption}.");
         return errors;
 
@@ -143,9 +147,10 @@ public static class ScheduleValidation
 
 public static class ScheduleExtensions
 {
-    /// <summary>The Schedule block's services: the source resolver publishing and rendering share, and the two-query read.</summary>
+    /// <summary>The Schedule block's services: its limits, the source resolver publishing and rendering share, and the two-query read.</summary>
     public static IUmbracoBuilder AddSchedules(this IUmbracoBuilder builder)
     {
+        builder.Services.AddOptions<ScheduleOptions>().Bind(builder.Config.GetSection(ScheduleOptions.Section));
         builder.Services.AddScoped<ScheduleSources>();
         builder.Services.AddScoped<ScheduleQueries>();
         return builder;

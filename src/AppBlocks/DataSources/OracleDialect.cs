@@ -19,6 +19,18 @@ public sealed class OracleDialect : SqlDialect
     public override string CompileOnly(string statement) => "EXPLAIN PLAN FOR " + statement;
     public override void ConfigureCompilation(DbCommand command) => command.Parameters.Clear();
 
+    // ODP.NET cancels a command that runs past its timeout, which Oracle reports as ORA-01013.
+    internal override bool IsTimeout(DbException error) => ErrorProperty(error, "Number") is 1013;
+
+    // EXPLAIN PLAN takes a SELECT, INSERT, UPDATE, DELETE or MERGE, never a PL/SQL block or a CALL.
+    internal override bool Compiles(string statement) => SqlTemplate.FirstWord(statement)?.ToUpperInvariant() is not ("BEGIN" or "DECLARE" or "CALL");
+
+    /// <summary>Whether a statement is an anonymous PL/SQL block, which ends in a semicolon and takes no RETURNING clause.</summary>
+    internal static bool IsBlock(string statement) => SqlTemplate.FirstWord(statement)?.ToUpperInvariant() is "BEGIN" or "DECLARE";
+
+    // The provider refuses a SQL statement that ends in a semicolon, as SQL editors write it; a block keeps its END;.
+    internal override string Statement(string text) => IsBlock(text) ? text : text.TrimEnd().TrimEnd(';').TrimEnd();
+
     // Also support host-supplied command wrappers exposing Oracle's named-binding option.
     public override void ConfigureCommand(DbCommand command)
     {
@@ -38,7 +50,7 @@ public sealed class OracleDialect : SqlDialect
     public override bool IsInteger(TableColumn column) => column.StoreType.ToUpperInvariant() is "INTEGER"
         || column.StoreType.ToUpperInvariant() is "NUMBER" or "DECIMAL" && column.Scale == 0;
 
-    public override object? ToDatabase(object? value, string kind, TableColumn? column)
+    public override object? ToDatabase(object? value, string kind, TableColumn? column, DataSourceDateTimes dateTimes = DataSourceDateTimes.ServerLocal)
     {
         var type = column?.StoreType.ToUpperInvariant() ?? "";
         return value switch {
@@ -51,7 +63,7 @@ public sealed class OracleDialect : SqlDialect
             DateOnly date => new TypedValue(date.ToDateTime(TimeOnly.MinValue), DbType.Date),
             TimeOnly time => time.ToString("HH:mm:ss.FFF", Invariant),
             DateTimeOffset moment when type.Contains("WITH TIME ZONE", StringComparison.Ordinal) => new TypedValue(moment, DbType.DateTimeOffset),
-            DateTimeOffset moment => new TypedValue(moment.LocalDateTime, DbType.DateTime),
+            DateTimeOffset moment => new TypedValue(WallTime(moment, dateTimes), DbType.DateTime),
             _ => value,
         };
     }
@@ -59,20 +71,20 @@ public sealed class OracleDialect : SqlDialect
     // The UTC wall time as a DATE, as SYS_EXTRACT_UTC(SYSTIMESTAMP) gives it.
     public override object NowUtc(DateTime utc) => new TypedValue(DateTime.SpecifyKind(utc, DateTimeKind.Unspecified), DbType.DateTime);
 
-    private DbCommand Command(DbConnection connection, string text)
+    private DbCommand Command(DbConnection connection, int commandTimeout, string text)
     {
         var command = connection.CreateCommand();
         command.CommandText = text;
-        command.CommandTimeout = 30;
+        command.CommandTimeout = commandTimeout;
         ConfigureCommand(command);
         return command;
     }
 
-    public override TableSchema? ReadTable(DbConnection connection, TableName name)
+    public override TableSchema? ReadTable(DbConnection connection, TableName name, int commandTimeout = DataSourceOptions.DefaultCommandTimeoutSeconds)
     {
         string owner, table;
         bool view;
-        using (var command = Command(connection, """
+        using (var command = Command(connection, commandTimeout, """
             SELECT OWNER, OBJECT_NAME, OBJECT_TYPE FROM ALL_OBJECTS
             WHERE OWNER = COALESCE(:owner, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA'))
               AND OBJECT_NAME = :name AND OBJECT_TYPE IN ('TABLE', 'VIEW')
@@ -87,13 +99,13 @@ public sealed class OracleDialect : SqlDialect
         var identity = new HashSet<string>(StringComparer.Ordinal);
         if (!legacy)
         {
-            using var command = Command(connection, "SELECT COLUMN_NAME FROM ALL_TAB_IDENTITY_COLS WHERE OWNER = :owner AND TABLE_NAME = :table_name");
+            using var command = Command(connection, commandTimeout, "SELECT COLUMN_NAME FROM ALL_TAB_IDENTITY_COLS WHERE OWNER = :owner AND TABLE_NAME = :table_name");
             Bind(command, ":owner", owner); Bind(command, ":table_name", table);
             using var reader = command.ExecuteReader();
             while (reader.Read()) identity.Add(reader.GetString(0));
         }
         var columns = new List<TableColumn>();
-        using (var command = Command(connection, """
+        using (var command = Command(connection, commandTimeout, """
             SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DEFAULT_LENGTH, VIRTUAL_COLUMN, CHAR_LENGTH, DATA_PRECISION, DATA_SCALE
             FROM ALL_TAB_COLS WHERE OWNER = :owner AND TABLE_NAME = :table_name AND HIDDEN_COLUMN = 'NO' ORDER BY COLUMN_ID
             """))
@@ -111,7 +123,7 @@ public sealed class OracleDialect : SqlDialect
             }
         }
         var keys = new List<IReadOnlyList<string>>();
-        using (var command = Command(connection, """
+        using (var command = Command(connection, commandTimeout, """
             SELECT c.CONSTRAINT_NAME, cc.COLUMN_NAME FROM ALL_CONSTRAINTS c
             JOIN ALL_CONS_COLUMNS cc ON cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME
             WHERE c.OWNER = :owner AND c.TABLE_NAME = :table_name AND c.CONSTRAINT_TYPE IN ('P', 'U') AND c.STATUS = 'ENABLED'
@@ -131,9 +143,9 @@ public sealed class OracleDialect : SqlDialect
         return new(new(owner, table) { SchemaIsQuoted = true, NameIsQuoted = true }, view, columns, keys);
     }
 
-    public override TableName? ReadSequence(DbConnection connection, TableName name)
+    public override TableName? ReadSequence(DbConnection connection, TableName name, int commandTimeout = DataSourceOptions.DefaultCommandTimeoutSeconds)
     {
-        using var command = Command(connection, """
+        using var command = Command(connection, commandTimeout, """
             SELECT SEQUENCE_OWNER, SEQUENCE_NAME FROM ALL_SEQUENCES
             WHERE SEQUENCE_OWNER = COALESCE(:owner, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')) AND SEQUENCE_NAME = :name
             """);
@@ -142,8 +154,6 @@ public sealed class OracleDialect : SqlDialect
         using var reader = command.ExecuteReader();
         return reader.Read() ? new(reader.GetString(0), reader.GetString(1)) { SchemaIsQuoted = true, NameIsQuoted = true } : null;
     }
-
-    private static int? OptionalInt(DbDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : Convert.ToInt32(reader.GetValue(ordinal), Invariant);
 
     public override string Select(string from, IEnumerable<string> columns, IReadOnlyList<(string Column, string Marker)> keys, string? restriction, int? limit = null,
         IReadOnlyList<(string Column, bool Descending)>? order = null)

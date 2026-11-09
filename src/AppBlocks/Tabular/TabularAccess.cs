@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Microsoft.Extensions.Options;
 using AppBlocks.Blocks;
 using AppBlocks.DataSources;
 using AppBlocks.Forms;
@@ -22,7 +23,7 @@ public sealed record TabularScope(int Status, string? Problem = null, TabularBlo
 /// source because the rows are read and written through the engine. The data source's own groups, allow flags and
 /// policies decide each row operation after that.
 /// </summary>
-public sealed class TabularAccess(BlockOwnerAccess owners, FormResourceRegistry resources)
+public sealed class TabularAccess(BlockOwnerAccess owners, FormResourceRegistry resources, IOptions<TabularOptions> options)
 {
     /// <summary>The revision string the owner's record is loaded under; the block never compares it with a form's.</summary>
     public const string Definition = "tabular";
@@ -67,7 +68,7 @@ public sealed class TabularAccess(BlockOwnerAccess owners, FormResourceRegistry 
 
     private SqlDataSource? Source(Umbraco.Cms.Core.Models.PublishedContent.IPublishedElement element, out TabularBlock block)
     {
-        block = TabularBlock.Read(element);
+        block = TabularBlock.Read(element, options.Value.MaxRows);
         return block.DataSource.Length > 0 && block.LinkField.Length > 0 && resources.Find(block.DataSource) is SqlDataSource { Problem: null } source ? source : null;
     }
 

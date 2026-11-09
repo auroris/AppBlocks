@@ -42,7 +42,8 @@ public sealed record AntiSpamResult(FormResult? Refusal, IReadOnlyDictionary<str
 /// Checks a submission against a form's Anti-spam blocks on the server, whatever the browser did or left out. It fails closed:
 /// a missing token, an unknown service, a missing key or a service that cannot answer all refuse, and the class never runs.
 /// </summary>
-public sealed class AntiSpamGate(IEnumerable<IAntiSpamService> services, AntiSpamSettings settings, AntiSpamHealth health, IPreviewService previews)
+public sealed class AntiSpamGate(IEnumerable<IAntiSpamService> services, AntiSpamSettings settings, AntiSpamHealth health, IPreviewService previews,
+    IHttpContextAccessor? requests = null)
 {
     /// <summary>What a visitor sees when a check fails: the same for a token that fails, no token and a filled-in honeypot, so a bot learns nothing about which.</summary>
     public const string RefusedMessage = "We could not confirm this came from a person, so it was not sent. Please try again.";
@@ -119,7 +120,8 @@ public sealed class AntiSpamGate(IEnumerable<IAntiSpamService> services, AntiSpa
                 ? "The saved secret key cannot be read with this installation's Data Protection keys. Save it again." : "No secret key is set.");
         // No token, nothing to ask about: a bot that leaves it out costs the service no call.
         if (!formData.TryGetValue(service.TokenField, out var token) || string.IsNullOrWhiteSpace(token)) return Refused();
-        var answer = await AskAsync(service, new(token, secret, siteKey, block.ScoreThreshold), ct);
+        var hostname = settings.VerifyHostname ? requests?.HttpContext?.Request.Host.Host : null;
+        var answer = await AskAsync(service, new(token, secret, siteKey, block.ScoreThreshold, hostname), ct);
         if (answer.Outcome == AntiSpamOutcome.Unavailable)
             return Unavailable(service.Alias, (answer.Problem ?? $"{service.Name} gave no answer.").Replace(secret, "[secret key]").Replace(token, "[token]"));
         health.Clear(service.Alias);

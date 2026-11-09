@@ -39,7 +39,7 @@
     },
     {
       "type": "propertyEditorUi",
-      "alias": "AppHost.ResourcePicker",
+      "alias": "AppBlocks.ResourcePicker",
       "name": "Application form resource",
       "element": "/App_Plugins/ApplicationBlocks/resource-picker.js",
       "meta": {
@@ -51,7 +51,7 @@
     },
     {
       "type": "propertyEditorUi",
-      "alias": "AppHost.FieldPicker",
+      "alias": "AppBlocks.FieldPicker",
       "name": "Application field binding",
       "element": "/App_Plugins/ApplicationBlocks/field-picker.js",
       "meta": {
@@ -63,7 +63,7 @@
     },
     {
       "element": "/App_Plugins/ApplicationBlocks/list-picker.js",
-      "alias": "AppHost.ListPicker",
+      "alias": "AppBlocks.ListPicker",
       "type": "propertyEditorUi",
       "meta": {
         "propertyEditorSchemaAlias": "Umbraco.TextBox",
@@ -75,7 +75,7 @@
     },
     {
       "element": "/App_Plugins/ApplicationBlocks/data-source-picker.js",
-      "alias": "AppHost.DataSourcePicker",
+      "alias": "AppBlocks.DataSourcePicker",
       "type": "propertyEditorUi",
       "meta": {
         "propertyEditorSchemaAlias": "Umbraco.TextBox",

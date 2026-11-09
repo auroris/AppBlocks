@@ -52,9 +52,15 @@ public static class AppBlocksExtensions
         // For packages that generate content nodes from code, such as their API endpoints and lists of values.
         services.AddTransient<Setup.OwnedNodeInstaller>();
         builder.PackageMigrationPlans().Add<Setup.AppBlocksMigrationPlan>();
+        // The element types packages allow in a site's Block Grid data types, once the definitions are installed.
+        builder.AddNotificationAsyncHandler<UmbracoApplicationStartedNotification, Setup.BlockGridAllowances>();
+        builder.AddNotificationAsyncHandler<Umbraco.Cms.Infrastructure.Migrations.Notifications.MigrationPlansExecutedNotification, Setup.BlockGridAllowances>();
+        builder.AddNotificationAsyncHandler<ContentTypeSavedNotification, Setup.BlockGridAllowances>();
         services.TryAddScoped<ApplicationAccessPolicy>();
         services.AddControllersWithViews().AddApplicationPart(typeof(AppBlocksExtensions).Assembly);
         services.AddScoped<AppBlockContent>();
+        // The texts the blocks show, with whatever sources a host registers (its Umbraco dictionary among them) answering first.
+        services.AddScoped<AppBlocksText>();
         services.AddScoped<AppPageAccess>();
         services.AddScoped<FormResourceRegistry>();
         // The C# folder: compiled at run time only when the site brings a compiler, and read by the registries beside registered classes.
@@ -82,6 +88,9 @@ public static class AppBlocksExtensions
         services.AddTransient<Microsoft.AspNetCore.Razor.TagHelpers.ITagHelperComponent, AppPageAssetsTagHelperComponent>();
         services.AddScoped<AppBindVariableResolver>();
         builder.AddNotificationAsyncHandler<RoutingRequestNotification, AppBlocks.Publishing.PageCacheHeaders>();
+        // A layout's ApplyCacheHeaders answers 304 after Razor has buffered output, which this filter discards; once, whoever else adds it.
+        services.Configure<Microsoft.AspNetCore.Mvc.MvcOptions>(options => { if (!options.Filters.OfType<Publishing.PageCacheResponseFilter>().Any()) options.Filters.Add(new Publishing.PageCacheResponseFilter()); });
+        services.AddScoped<IAppBlocksTextSource, UmbracoDictionaryTextSource>();
         // Umbraco's website routing registers the Public Access check; whoever a host's IProtectedPageAdmission admits passes it, as on the blocks' endpoints.
         if (services.Any(descriptor => descriptor.ServiceType == typeof(IPublicAccessRequestHandler)))
             Decorate<IPublicAccessRequestHandler>(services, (provider, inner) =>

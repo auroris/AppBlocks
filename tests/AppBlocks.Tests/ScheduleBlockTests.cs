@@ -51,7 +51,7 @@ public sealed class ScheduleBlockTests
         await validator.LoadAsync();
         var page = BlockPages.Schedule().ToJsonString();
         Assert.Empty(validator.Validate(page));
-        Assert.Empty(validator.ValidateWebsite(page));
+        Assert.Empty(validator.Validate(page));
         // Inside a form the block is content like an Attachments block.
         var form = BlockPages.OrdersForm();
         var schedule = JsonNode.Parse(page)!["contentData"]![0]!.DeepClone();

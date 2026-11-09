@@ -55,6 +55,12 @@ public sealed class AntiSpamSettings(IConfiguration configuration, IWebHostEnvir
     internal string? ConfiguredSecret(string service) => configuration[$"{Section}:{service}:SecretKey"] is { Length: > 0 } value ? value : null;
     internal string? ConfiguredSiteKey(string service) => configuration[$"{Section}:{service}:SiteKey"] is { Length: > 0 } value ? value : null;
 
+    /// <summary>
+    /// <c>AppBlocks:AntiSpam:VerifyHostname</c>, true unless set to false: whether a service's answer must name the host the form was sent to.
+    /// A site whose requests reach it under another host name, such as behind a proxy that does not forward the original one, turns it off.
+    /// </summary>
+    public bool VerifyHostname => configuration.GetValue($"{Section}:VerifyHostname", true);
+
     /// <summary>The secret key to verify with, or null when there is none to use.</summary>
     internal string? SecretKey(string service)
     {

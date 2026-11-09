@@ -3,7 +3,7 @@ using InteractiveReport.Client.FileDownload;
 using InteractiveReport.Client.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.Data.Sqlite;
+using AppBlocks.Connections;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Authorization;
 using Umbraco.Cms.Core;
@@ -13,16 +13,6 @@ namespace AppBlocks.InteractiveReports.Reports;
 /// <summary>Registers Interactive Reports with the site's databases and Umbraco-backed authorization.</summary>
 public static class InteractiveReportsSite
 {
-    /// <summary>Optional separate store for saved reports and authorization grants; AppBlocks defaults to AppBlocksDb.</summary>
-    public const string ReportsConnection = "ReportsDb";
-
-    /// <summary>
-    /// Umbraco's own database, for reports over members, media or content. Follows
-    /// <c>ConnectionStrings:umbracoDbDSN</c> and its provider name, so moving Umbraco to SQL
-    /// Server moves these reports with it.
-    /// </summary>
-    public const string UmbracoConnection = "UmbracoDb";
-
     /// <summary>Route prefix of the JSON client: the REST API, the viewer and administration pages, and the packaged assets.</summary>
     public const string ReportsRoute = "/api/reports";
 
@@ -40,27 +30,9 @@ public static class InteractiveReportsSite
     private static readonly PathString[] ReportPaths = [ReportsRoute, DownloadRoute, ..BackOfficeReportPaths];
 
     /// <summary>
-    /// Opens Umbraco's database with the configured provider. Umbraco's SQLite connection string
-    /// uses the <c>|DataDirectory|</c> token, which only Umbraco's own factory expands.
-    /// </summary>
-    public static System.Data.Common.DbConnection UmbracoDatabase(IConfiguration configuration)
-    {
-        var connectionString = configuration.GetConnectionString("umbracoDbDSN")
-            ?? throw new InvalidOperationException("ConnectionStrings:umbracoDbDSN is not configured.");
-        var providerName = configuration["ConnectionStrings:umbracoDbDSN_ProviderName"] ?? "Microsoft.Data.SqlClient";
-        if (providerName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
-        {
-            var dataDirectory = AppDomain.CurrentDomain.GetData("DataDirectory") as string ?? AppContext.BaseDirectory;
-            return new SqliteConnection(connectionString.Replace("|DataDirectory|", dataDirectory, StringComparison.OrdinalIgnoreCase));
-        }
-        return new Microsoft.Data.SqlClient.SqlConnection(connectionString);
-    }
-
-    /// <summary>
-    /// Registers the package: an optional separate report store under <c>App_Data</c>, the
-    /// <see cref="UmbracoConnection"/>, the built-in audit reports, the JSON and download clients,
-    /// the authorization bridge, and the virtual-path link fix. <paramref name="configure"/> customizes
-    /// the report engine through the same builder.
+    /// Registers the package: Umbraco's own database as <see cref="ConnectionCatalog.UmbracoConnection"/>, opened as AppBlocks
+    /// opens it, the built-in audit reports, the JSON and download clients, the authorization bridge, and the virtual-path link fix.
+    /// <paramref name="configure"/> customizes the report engine through the same builder.
     /// </summary>
     public static IUmbracoBuilder AddInteractiveReportsSite(
         this IUmbracoBuilder builder,
@@ -70,9 +42,7 @@ public static class InteractiveReportsSite
         var services = builder.Services;
 
         var reports = services.AddInteractiveReports(configuration)
-            .AddConnection(ReportsConnection, provider => new SqliteConnection(
-                $"Data Source={DataFile(provider, "Reports.sqlite.db")}"))
-            .AddConnection(UmbracoConnection, provider => UmbracoDatabase(provider.GetRequiredService<IConfiguration>()))
+            .AddConnection(ConnectionCatalog.UmbracoConnection, provider => provider.GetRequiredService<ConnectionCatalog>().Openable(ConnectionCatalog.UmbracoConnection))
             .UseAdministrators(async (request, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -160,13 +130,4 @@ public static class InteractiveReportsSite
             }));
         return app;
     }
-
-    /// <summary>Absolute path of a SQLite file under the site's <c>App_Data</c> folder.</summary>
-    public static string DataFile(IServiceProvider provider, string fileName)
-        => provider.GetRequiredService<IConfiguration>()["AppBlocks:DataRoot"] is { Length: > 0 } root
-            ? Path.Combine(root, "App_Data", fileName)
-            : DataFile(provider.GetRequiredService<IWebHostEnvironment>(), fileName);
-
-    public static string DataFile(IWebHostEnvironment environment, string fileName)
-        => Path.Combine(environment.ContentRootPath, "App_Data", fileName);
 }

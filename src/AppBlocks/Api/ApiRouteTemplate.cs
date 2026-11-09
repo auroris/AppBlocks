@@ -3,12 +3,14 @@ using AppBlocks.DataSources;
 namespace AppBlocks.Api;
 
 /// <summary>
-/// An API endpoint's route below the base path, such as <c>orders/:id/lines</c>: up to eight segments, each a literal or a
-/// <c>:name</c> parameter that binds as <c>:PARAM.name</c>. Literals compare ignoring case, as ASP.NET Core routes do.
+/// An API endpoint's route below the base path, such as <c>orders/:id/lines</c>: up to eight segments unless
+/// <see cref="ApiEndpointOptions.MaxRouteSegments"/> says otherwise, each a literal or a <c>:name</c> parameter that binds as
+/// <c>:PARAM.name</c>. Literals compare ignoring case, as ASP.NET Core routes do.
 /// </summary>
 public sealed class ApiRouteTemplate
 {
-    public const int MaxSegments = 8;
+    /// <summary>The most segments a route has unless the site sets <see cref="ApiEndpointOptions.MaxRouteSegments"/>.</summary>
+    public const int DefaultMaxSegments = 8;
     public const int MaxLength = 400;
 
     private ApiRouteTemplate(string text, IReadOnlyList<Segment> segments)
@@ -27,7 +29,7 @@ public sealed class ApiRouteTemplate
     public int Literals => Segments.Count(s => !s.IsParameter);
 
     /// <summary>Reads a template, reporting every mistake to <paramref name="errors"/>; one leading slash is allowed and dropped.</summary>
-    public static ApiRouteTemplate? Parse(string text, ICollection<string> errors)
+    public static ApiRouteTemplate? Parse(string text, ICollection<string> errors, int maxSegments = DefaultMaxSegments)
     {
         var start = errors.Count;
         text = text.Trim();
@@ -36,7 +38,7 @@ public sealed class ApiRouteTemplate
         if (text.Length > MaxLength) { errors.Add($"The route is longer than {MaxLength} characters."); return null; }
         if (text.IndexOfAny(['?', '#']) >= 0) errors.Add("The route is a path only; query parameters are listed under Query parameters.");
         var parts = text.Split('/');
-        if (parts.Length > MaxSegments) errors.Add($"The route has more than {MaxSegments} segments.");
+        if (parts.Length > maxSegments) errors.Add($"The route has more than {maxSegments} segments.");
         var segments = new List<Segment>();
         foreach (var part in parts)
         {

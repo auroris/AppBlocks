@@ -8,8 +8,6 @@ namespace AppBlocks.Blocks;
 /// <summary>Stable identities shared by the embedded schema catalogue and block rendering.</summary>
 public static class AppBlockSchema
 {
-    public const string PageAlias = "appBlockPage";
-    public const string BodyAlias = "applicationBlocks";
     public const string FormsContainerAlias = "appFormsContainer";
     public static bool IsBlockEditor(string? alias) => alias is "Umbraco.BlockGrid" or "Umbraco.BlockList" or "Umbraco.SingleBlock";
 
@@ -26,7 +24,7 @@ public static class AppBlockSchema
     /// </summary>
     public static readonly string[] ColumnLayoutAliases = ["appFullWidth", "appColumns", "appThreeColumns"];
 
-    /// <summary>APEX's region: an optional title bar over one area. It is content to a column layout, not a layout.</summary>
+    /// <summary>A region: an optional title bar over one area. It is content to a column layout, not a layout.</summary>
     public const string RegionAlias = "appRegion";
 
     /// <summary>Blocks that only arrange other blocks, so a form or a validator can pass over them to their contents.</summary>
@@ -70,6 +68,6 @@ public static class AppBlockSchema
     /// </summary>
     public const string AntiSpamAlias = "appAntiSpam";
 
-    // The seed is older than the namespace rename. Every stored content key derives from it, so it does not change.
-    public static Guid Key(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes("UmbracoAppHost.Blocks.v1:" + value))[..16]);
+    // Every definition key derives from this seed, so changing it changes every key: an installed site then needs Reinstall.
+    public static Guid Key(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes("AppBlocks.Blocks.v1:" + value))[..16]);
 }
