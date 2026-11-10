@@ -87,7 +87,7 @@ public static class TabularEndpoints
 
     /// <summary>
     /// The runtime's changes as the engine takes them: only the block's own columns, as a form sends only its bound fields, without
-    /// the link field, which is the server's; no new rows or deletions where the block offers none. A refusal names the change.
+    /// the link field, which is the server's; no new rows, changed rows or deletions where the block offers none. A refusal names the change.
     /// </summary>
     internal static TabularRefusal? Changes(TabularBlock block, SqlDataSource source, IReadOnlyList<TabularChange> sent, out List<DataSourceChange>? changes)
     {
@@ -99,6 +99,7 @@ public static class TabularEndpoints
             var change = sent[i];
             if (Operation(change.Operation) is not { } operation) return new(422, i, "Each change is a create, an update or a delete.");
             if (operation == RowOperation.Create && block.HideAdd) return new(403, i, "This tabular form does not add rows.");
+            if (operation == RowOperation.Update && block.HideEdit) return new(403, i, "This tabular form does not change saved rows.");
             if (operation == RowOperation.Delete && block.HideDelete) return new(403, i, "This tabular form does not delete rows.");
             var values = new JsonObject();
             if (change.Values is { ValueKind: JsonValueKind.Object } submitted)
@@ -139,7 +140,7 @@ public static class TabularEndpoints
             dataSource = source.Alias,
             revision = Revision(source),
             canAdd = write && !block.HideAdd && source.Definition.AllowInsert,
-            canUpdate = write && source.Definition.AllowUpdate,
+            canUpdate = write && !block.HideEdit && source.Definition.AllowUpdate,
             canDelete = write && !block.HideDelete && source.Definition.AllowDelete,
             maxRows = block.MaxRows,
             fields = columns,

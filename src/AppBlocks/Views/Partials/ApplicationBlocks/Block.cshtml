@@ -169,8 +169,10 @@ else if (Model.Form is not null && AppBlockSchema.FieldAliases.Contains(alias))
         }
         else
         {
+            // A Display value with a link template shows its value as a link, which no label can point at; the link names the label instead.
+            var linkTemplate = alias == "appDisplay" ? Property(AppBlockField.LinkTemplateAlias) : null;
             <div class="app-form-field">
-                <label id="@id-label" for="@(alias == AppBlockSchema.ShuttleAlias ? id + "-available" : id)">@(label)@if (required) { <span aria-hidden="true"> *</span> }</label>
+                <label id="@id-label" for="@(linkTemplate is not null ? null : alias == AppBlockSchema.ShuttleAlias ? id + "-available" : id)">@(label)@if (required) { <span aria-hidden="true"> *</span> }</label>
                 @if (alias == "appTextArea")
                 {
                     <textarea id="@id" name="@key" data-field="@key" data-kind="@field.Kind" data-readonly="@readOnly.ToString().ToLowerInvariant()"
@@ -242,6 +244,13 @@ else if (Model.Form is not null && AppBlockSchema.FieldAliases.Contains(alias))
                     </select>
                     }
                     @if (listProblem is not null) { <p role="alert">@listProblem</p> }
+                }
+                else if (linkTemplate is not null)
+                {
+                    @* The hidden input holds the value as every field does. The runtime writes the link's text from it and its address
+                       from the template and the loaded record, and leaves the address out when the value is empty or the address unsafe. *@
+                    <input type="hidden" id="@id" name="@key" data-field="@key" data-kind="@field.Kind" data-readonly="true" data-label="@label" @defaultAttribute />
+                    <a id="@id-link" class="app-display-link" data-display-link="@key" data-link-template="@linkTemplate.Trim()" aria-labelledby="@id-label @id-link" aria-describedby="@id-help"></a>
                 }
                 else
                 {

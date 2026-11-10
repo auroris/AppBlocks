@@ -5,6 +5,7 @@ using AppBlocks.Api;
 using AppBlocks.Blocks;
 using AppBlocks.DataSources;
 using AppBlocks.Setup;
+using AppBlocks.Tabular;
 using Microsoft.Extensions.DependencyInjection;
 using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Models;
@@ -542,5 +543,46 @@ public sealed class DefinitionsTests
         await RunPlanAsync(services);
         Assert.Null(types.Get(PublishedDataCatalog.ListAlias));
         Assert.Single(types.Get(DataSourceSchema.SqlAlias)!.PropertyTypes, p => p.Alias == mode.Alias);
+    }
+
+    [Fact]
+    public async Task The_display_link_and_tabular_editing_step_gives_an_existing_site_both_settings_in_the_packages_order()
+    {
+        await using var site = await BlockSite.BootAsync();
+        using var scope = site.CreateScope();
+        var services = scope.ServiceProvider;
+        var types = services.GetRequiredService<IContentTypeService>();
+        await WaitForInstallAsync(types);
+        var link = types.Get(AddDisplayLinkAndTabularEditing.DisplayAlias)!.PropertyTypes.Single(p => p.Alias == AppBlockField.LinkTemplateAlias);
+        var edit = types.Get(AppBlockSchema.TabularAlias)!.PropertyTypes.Single(p => p.Alias == TabularBlock.HideEditAlias);
+        string[] Order() => [.. types.Get(AppBlockSchema.TabularAlias)!.PropertyTypes.OrderBy(p => p.SortOrder).Select(p => p.Alias)];
+        var order = Order();
+        Assert.Equal([TabularBlock.HideAddAlias, TabularBlock.HideEditAlias, TabularBlock.HideDeleteAlias, TabularBlock.ReadOnlyAlias], order[7..11]);
+
+        // The site as it was before the step: neither setting, the Tabular form's later settings one place up, and the plan at the step before.
+        var display = types.Get(AddDisplayLinkAndTabularEditing.DisplayAlias)!;
+        display.RemovePropertyType(link.Alias);
+        Assert.True((await types.UpdateAsync(display, Constants.Security.SuperUserKey)).Success);
+        var tabular = types.Get(AppBlockSchema.TabularAlias)!;
+        tabular.RemovePropertyType(edit.Alias);
+        foreach (var later in tabular.PropertyTypes.Where(p => p.SortOrder > edit.SortOrder).ToArray()) later.SortOrder--;
+        Assert.True((await types.UpdateAsync(tabular, Constants.Security.SuperUserKey)).Success);
+        Assert.DoesNotContain(TabularBlock.HideEditAlias, Order());
+        var keyValues = services.GetRequiredService<IKeyValueService>();
+        keyValues.SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-08-appblocks-editor-ui-aliases");
+        await RunPlanAsync(services);
+
+        var linked = types.Get(AddDisplayLinkAndTabularEditing.DisplayAlias)!.PropertyTypes.Single(p => p.Alias == link.Alias);
+        Assert.Equal((link.Key, link.Name, link.Description, link.DataTypeKey, link.SortOrder), (linked.Key, linked.Name, linked.Description, linked.DataTypeKey, linked.SortOrder));
+        var edited = types.Get(AppBlockSchema.TabularAlias)!.PropertyTypes.Single(p => p.Alias == edit.Alias);
+        Assert.Equal((edit.Key, edit.Name, edit.Description, edit.DataTypeKey), (edited.Key, edited.Name, edited.Description, edited.DataTypeKey));
+        Assert.Equal(order, Order());
+
+        // A site without the Display value type: the step adds what it can and the plan still completes.
+        Assert.Equal(ContentTypeOperationStatus.Success, await types.DeleteAsync(types.Get(AddDisplayLinkAndTabularEditing.DisplayAlias)!.Key, Constants.Security.SuperUserKey));
+        keyValues.SetValue(Constants.Conventions.Migrations.KeyValuePrefix + "AppBlocks", "2026-11-08-appblocks-editor-ui-aliases");
+        await RunPlanAsync(services);
+        Assert.Null(types.Get(AddDisplayLinkAndTabularEditing.DisplayAlias));
+        Assert.Single(types.Get(AppBlockSchema.TabularAlias)!.PropertyTypes, p => p.Alias == edit.Alias);
     }
 }

@@ -13,7 +13,7 @@ namespace AppBlocks.Tests;
 /// Tabular forms on a real site with AppBlocks alone: an Orders form's order lines through /api/tabular as a member, the owner
 /// check, the list's columns and new row, a batch of a create, an update and a delete applied together, batches
 /// refused whole at the change that failed, the link to the order kept by the server, a retried submission, a second
-/// page's copy of the block, the rendered frame, and publishing's check of the data source.
+/// page's copy of the block, the rendered frame, publishing's check of the data source, and a block Without editing.
 /// </summary>
 [Collection("Standalone Umbraco")]
 public sealed class TabularHttpTests
@@ -191,6 +191,34 @@ public sealed class TabularHttpTests
 #pragma warning restore CS0618
         Assert.False(published.Success);
         Assert.Contains(published.EventMessages?.GetAll() ?? [], m => m.Message.Contains("'orders.nowhere' is not a published data source"));
+
+        // A copy whose block is Without editing keeps the lines as a log: a new line is written, a saved one is only read or deleted.
+        var logged = site.FormContent.DeepClone();
+        BlockPages.SetValue(logged["contentData"]!.AsArray().Single(b => b!["key"]!.GetValue<string>() == BlockPages.LinesBlock.ToString())!, "hideEdit", "1");
+#pragma warning disable CS0618
+        var log = contents.Create("Lines as a log", contents.GetById(BlockSite.FormPageKey)!.ParentId, BlockSite.PageAlias);
+        log.SetValue(BlockSite.BodyAlias, logged.ToJsonString());
+        Assert.True(contents.Save(log).Success);
+        var logPublished = contents.Publish(log, ["*"]);
+#pragma warning restore CS0618
+        Assert.True(logPublished.Success, string.Join("; ", logPublished.EventMessages?.GetAll().Select(m => m.Message) ?? []));
+        await site.WaitForPublishedAsync(log.Key);
+        var appended = site.Tabular(client, log.Key, BlockPages.LinesBlock);
+        var listed = await appended.ListAsync("id=4");
+        Assert.True(listed.IsSuccess, listed.Problem);
+        Assert.Equal((true, false, true), (listed.CanAdd, listed.CanUpdate, listed.CanDelete));
+        var kept = listed.Rows[0];
+        var changed = await appended.SaveAsync([new("create", Values: new { item = "Log entry" }), new("update", Key(kept), Checksum(kept), new { notes = "Changed in a log" })], "id=4");
+        Assert.Equal(HttpStatusCode.Forbidden, changed.Response.StatusCode);
+        Assert.Equal(1, changed.Index);
+        Assert.Equal("This tabular form does not change saved rows.", changed.Errors[""].Single());
+        // The refused batch wrote none of its changes, the new line included.
+        Assert.Equal(0L, Sample(site, "SELECT COUNT(*) FROM ORDER_LINES WHERE ITEM = 'Log entry' OR NOTES = 'Changed in a log'"));
+        var added = await appended.SaveAsync([new("create", Values: new { item = "Log entry" })], "id=4");
+        Assert.True(added.IsSuccess, added.Body.ToString());
+        Assert.Equal(1L, Sample(site, "SELECT COUNT(*) FROM ORDER_LINES WHERE ITEM = 'Log entry'"));
+        // The original page's block still changes the same lines.
+        Assert.True((await lines.ListAsync("id=4")).CanUpdate);
     }
 
     private static string Key(JsonElement row) => row.GetProperty("key").GetString()!;

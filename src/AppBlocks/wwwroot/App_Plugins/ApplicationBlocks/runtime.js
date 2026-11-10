@@ -1,4 +1,4 @@
-import { ApiError, errorText, request } from "./data-api.js";
+import { ApiError, errorText, pathBase, request } from "./data-api.js";
 import { mountSchedule } from "./schedule.js";
 
 // Every text the runtime shows, by id, in English. A site that translates or rewords them writes a JSON object of the ids
@@ -132,6 +132,31 @@ function toLocalInput(value) {
     return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 const fromLocalInput = text => text === "" ? null : new Date(text).toISOString();
+// A value as text, for a link's text and its address: nothing for no value, true or false for a checkbox.
+const plain = value => blank(value) ? "" : String(value).trim();
+// A record's own value of that name, so a template naming {constructor} reads a field or nothing.
+const valueOf = (values, name) => Object.hasOwn(values, name) ? values[name] : null;
+// An address a page may link to: a path, or an http, https, mailto or tel address. Another scheme, such as javascript:, and
+// an address that starts with two slashes, which leaves the site as a full address would, give null. AppBlockField.IsSafeLink
+// is the same rule, which publishing applies to the template.
+function safeAddress(link) {
+    if (!link || /[\u0000-\u001f\u007f-\u009f]/.test(link) || /^[/\\]{2}/.test(link)) return null;
+    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(link);
+    return !scheme || /^(https?|mailto|tel)$/i.test(scheme[1]) ? link : null;
+}
+// The address a Display value links to, from its template and the record shown: {field} becomes that field's value, escaped
+// so that it stays the one part of the address it was written into. A template that is one field alone takes the whole
+// address from it, for a field that holds an address. A path from the site's root gets the site's path base.
+function recordAddress(template, values) {
+    const text = (template ?? "").trim();
+    const whole = /^\{([^{}]*)\}$/.exec(text);
+    // A mail or phone address has no host for a value to change, and mail and dialling programs differ on whether they read
+    // %40 and %2B back, so there an @ and a + stay as written.
+    const literal = /^(mailto|tel):/i.test(text);
+    const escaped = value => literal ? encodeURIComponent(value).replace(/%40/g, "@").replace(/%2B/gi, "+") : encodeURIComponent(value);
+    const link = safeAddress(whole ? plain(valueOf(values, whole[1].trim())) : text.replace(/\{([^{}]*)\}/g, (_, name) => escaped(plain(valueOf(values, name.trim())))));
+    return link?.startsWith("/") ? pathBase + link : link;
+}
 // A stored value no longer among the choices stays visible and selected as it is, so saving another field leaves it alone.
 function retiredOption(choices, value) {
     if (blank(value) || [...choices].some(choice => choice.value === String(value))) return null;
@@ -396,6 +421,14 @@ function mountForm(form) {
             field.disabled = field.dataset.readonly === "true" || !(record.key ? record.capabilities.update : record.capabilities.create);
             shuttles.get(field)?.display();
             colors.get(field)?.display();
+        }
+        // A Display value shown as a link: its text is the field's value, and it leads somewhere only when there is a value
+        // and the address built from the record is one a page may link to.
+        for (const link of form.querySelectorAll("[data-display-link]")) {
+            const shown = plain(fields.find(field => field.dataset.field === link.dataset.displayLink)?.value);
+            const address = shown ? recordAddress(link.dataset.linkTemplate, { ...record.values, [link.dataset.displayLink]: shown }) : null;
+            link.textContent = shown;
+            if (address) link.setAttribute("href", address); else link.removeAttribute("href");
         }
         for (const button of form.querySelectorAll("[data-save]")) button.hidden = !(record.key ? record.capabilities.update : record.capabilities.create);
         for (const button of form.querySelectorAll("[data-delete]")) button.hidden = !record.key || !record.capabilities.delete;

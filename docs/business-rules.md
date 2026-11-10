@@ -635,6 +635,23 @@ Everything else still applies around the class. Before it is asked, the engine c
 
 Two limits follow from where the class sits. A value `LoadAsync` changes is what the form shows and sends back, so a form that saves it writes the changed value: change only fields the form cannot edit, or expect that. And `QueryAsync` can only refuse: a report runs its own SELECT in Interactive Reports, so its rows never pass through AppBlocks, and lists of values, schedules and paper reports get the same check so that every reader is judged alike. Put a rule about which rows they may read in the row restriction, which every reader applies.
 
+## What a Tabular form block offers
+
+A Tabular form block offers each operation its data source allows and the caller may perform. Four settings narrow that for one block, and leave the data source as it is for every other block, form and report that uses it:
+
+| Setting | The block |
+| --- | --- |
+| **Without adding** | Offers no new rows |
+| **Without editing** | Shows saved rows as text. A new row is still filled in before it is saved |
+| **Without deleting** | Offers no deletions |
+| **Read only** | Shows the rows and writes nothing |
+
+**Without editing** on a block that adds rows keeps them as a log: the notes on a case, the steps of an approval. Each save appends, and what was saved before stays as it was written. Add **Without deleting** for a log nobody shortens.
+
+The server enforces each setting. A change the block does not offer is refused with 403 and the batch it came in is not written, whether the rows were saved by the block or with the form's record. To hold a rule for every block and form, clear **Allow update** or **Allow delete** on the data source, or state it in an `IDataSourcePolicy`.
+
+On an existing site the package migration step `2026-11-09-display-link-and-tabular-without-editing` adds **Without editing** at startup.
+
 ## A form and its rows in one save
 
 A Tabular form block inside a form edits the rows of the form's record. When the caller can save that record, the block shows no save control of its own: its pending changes go with the form's save, in the same request. A record not saved yet can take rows too, and they are linked to its key once it has one; the block lists them from `/api/tabular/{page}/{block}/new`, below `AppBlocks:ApiRoot` when the site moves it. A block on its own, or inside a form the caller cannot save, keeps its own save control and saves its rows as before.

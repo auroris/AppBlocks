@@ -27,5 +27,7 @@ public sealed class AppBlocksMigrationPlan() : AppBlocksPackagePlan("AppBlocks",
         To<AddDateTimeModeAndListAccess>("2026-11-08-date-time-mode-and-list-access");
         // The pickers' editor UI aliases, from AppHost.* to AppBlocks.*.
         To<RenameEditorUiAliases>("2026-11-08-appblocks-editor-ui-aliases");
+        // The Display value block's link template and the Tabular form block's Without editing.
+        To<AddDisplayLinkAndTabularEditing>("2026-11-09-display-link-and-tabular-without-editing");
     }
 }

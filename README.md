@@ -57,6 +57,7 @@ Sites using Umbraco's conventional `blockgrid/Components` or `blocklist/Componen
 | [API endpoints](docs/api-endpoints.md) | Rows of a data source as JSON over GET at a route you define: parameters, access without a page, shapes and limits |
 | [Database setup](docs/database-setup.md) | The tables AppBlocks creates, and what to do when the database account may not |
 | [Anti-spam](docs/anti-spam.md) | The Anti-spam block, its keys, privacy and rate limits |
+| [Display value](docs/display-value.md) | Read-only values, and values shown as links to a page, a mail message or a phone number |
 | [Shuttle field](docs/shuttle.md) | Two lists, ordered selections, and single-line CSV values |
 | [Schedule block](docs/schedule.md) | Rows, bars, markers across the top, colours, descriptions and the window |
 | [Color picker](docs/color-picker.md) | Hex color fields, defaults, clearing and validation |

@@ -131,6 +131,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
         // A data source's fields come from its database; without them every binding would look wrong.
         if (resource is SqlDataSource { Problem: { } problem }) { errors.Add($"The data source {resource.Alias} is not available: {problem}"); return; }
         var fields = new Dictionary<string, BlockItemData>(StringComparer.Ordinal); var actions = 0; var checks = 0;
+        var links = new List<(string Binding, string Template)>();
         void Visit(IBlockLayoutItem item, int depth) {
             var key = item.ContentKey;
             if (!visited.Add(key)) throw new InvalidOperationException("Blocks cannot be repeated or cyclic.");
@@ -153,6 +154,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
                 else if (!Compatible(alias, field, Text(child, "listOfValues").Length > 0)) errors.Add($"The block for '{binding}' does not match its {field.Kind} type.");
                 if (definitions is not null && alias is "appSelect" or AppBlockSchema.ShuttleAlias && Text(child, "listOfValues") is { Length: > 0 } selected && definitions.FindList(selected) is null)
                     errors.Add($"Select a published list of values for '{binding}'.");
+                if (alias == "appDisplay" && Text(child, AppBlockField.LinkTemplateAlias).Trim() is { Length: > 0 } template) links.Add((binding, template));
             }
             else if (alias is not ("appForm" or "appFieldset" or "appActions") && !AppBlockSchema.LayoutAliases.Contains(alias) && !AppBlockSchema.ContentAliases.Contains(alias)) errors.Add("The form contains an unsupported block.");
             foreach (var nested in BlockValueSets.Children(item)) Visit(nested, depth + 1);
@@ -160,6 +162,12 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
         Visit(layout, 0);
         if (actions > 1) errors.Add("Use one Form actions block per form.");
         if (checks > 1) errors.Add("Use one Anti-spam block per form.");
+        // A link is built in the browser from the record the form loaded, which holds the form's own fields and no others.
+        foreach (var (binding, template) in links) {
+            if (AppBlockField.LinkProblem(template) is { } unsafeLink) errors.Add($"The link template of '{binding}' is not one a page may link to. {unsafeLink}");
+            foreach (var name in AppBlockField.LinkFields(template).Where(name => !fields.ContainsKey(name)))
+                errors.Add($"The link template of '{binding}' names {{{name}}}, which is not a field on this form. Add a field block for it; it may be hidden.");
+        }
         // A form that edits some fields of existing records is a real use, so a required field it does not edit is a warning: the form
         // still updates, and a create is refused at run time, where FormDefinition.Validate asks for every required field.
         if (!Flag(configuration, "viewOnly")) {

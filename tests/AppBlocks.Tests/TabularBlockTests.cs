@@ -28,7 +28,7 @@ public sealed class TabularBlockTests
         Assert.Equal("", empty.LinkField);
         Assert.Empty(empty.Fields);
         Assert.True(empty.OwnedByForm);
-        Assert.False(empty.HideAdd || empty.HideDelete || empty.ReadOnly);
+        Assert.False(empty.HideAdd || empty.HideEdit || empty.HideDelete || empty.ReadOnly);
         Assert.Equal(TabularBlock.DefaultMaxRows, empty.MaxRows);
         Assert.Equal("Add row", empty.AddLabel);
         Assert.Equal("Save rows", empty.SaveLabel);
@@ -42,7 +42,8 @@ public sealed class TabularBlockTests
         // Commas, semicolons and whitespace separate the names; each is kept once, in the order written.
         Assert.Equal(["item", "quantity", "unitPrice", "notes"], block.Fields);
         Assert.False(block.OwnedByForm);
-        Assert.Equal((true, true, false), (block.HideAdd, block.HideDelete, block.ReadOnly));
+        Assert.Equal((true, false, true, false), (block.HideAdd, block.HideEdit, block.HideDelete, block.ReadOnly));
+        Assert.True(Read(("hideEdit", "true")).HideEdit);
         Assert.Equal(50, block.MaxRows);
         Assert.Equal("Lines", block.Heading);
         Assert.Equal("New line", block.AddLabel);
@@ -153,8 +154,33 @@ public sealed class TabularBlockTests
         Assert.Equal(AppBlockSchema.TabularAlias, type.Attribute("Alias")!.Value);
         var aliases = type.Element("GenericProperties")!.Elements("GenericProperty").Select(p => p.Element("Alias")!.Value).ToArray();
         Assert.Equal(new[] { TabularBlock.HeadingAlias, TabularBlock.HelpAlias, TabularBlock.DataSourceAlias, TabularBlock.LinkFieldAlias, TabularBlock.FieldsAlias,
-            TabularBlock.OwnerResourceAlias, TabularBlock.OwnerKeyAlias, TabularBlock.HideAddAlias, TabularBlock.HideDeleteAlias, TabularBlock.ReadOnlyAlias,
-            TabularBlock.MaxRowsAlias, TabularBlock.EmptyMessageAlias, TabularBlock.AddLabelAlias, TabularBlock.SaveLabelAlias }, aliases);
+            TabularBlock.OwnerResourceAlias, TabularBlock.OwnerKeyAlias, TabularBlock.HideAddAlias, TabularBlock.HideEditAlias, TabularBlock.HideDeleteAlias,
+            TabularBlock.ReadOnlyAlias, TabularBlock.MaxRowsAlias, TabularBlock.EmptyMessageAlias, TabularBlock.AddLabelAlias, TabularBlock.SaveLabelAlias }, aliases);
+        // The backoffice lists them in this order too.
+        Assert.Equal(Enumerable.Range(0, aliases.Length), type.Element("GenericProperties")!.Elements("GenericProperty").Select(p => (int)p.Element("SortOrder")!));
+    }
+
+    [Fact]
+    public async Task A_block_without_editing_takes_new_rows_and_refuses_changes_to_saved_ones()
+    {
+        using var provider = Services();
+        using var scope = provider.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<AppBlocksValidator>().LoadAsync();
+        var source = Assert.IsType<SqlDataSource>(await scope.ServiceProvider.GetRequiredService<FormResourceRegistry>().FindAsync("orders.lines"));
+        var values = System.Text.Json.JsonSerializer.SerializeToElement(new { item = "Bolt" });
+        AppBlocks.Tabular.TabularChange[] sent = [new("create", null, null, values), new("update", "1", "checksum", values), new("delete", "2", "checksum", null)];
+
+        var log = Read(("linkField", "orderId"), ("hideEdit", "1"));
+        var refused = TabularEndpoints.Changes(log, source, sent, out var none);
+        Assert.NotNull(refused);
+        Assert.Equal((403, 1, "This tabular form does not change saved rows."), (refused.Status, refused.Index, refused.Message));
+        Assert.Null(none);
+        // New rows and deletions are still the block's to offer.
+        Assert.Null(TabularEndpoints.Changes(log, source, [sent[0], sent[2]], out var accepted));
+        Assert.Equal(2, accepted!.Count);
+        // Without the setting the same batch goes to the engine, which judges it by the data source.
+        Assert.Null(TabularEndpoints.Changes(Read(("linkField", "orderId")), source, sent, out var all));
+        Assert.Equal(3, all!.Count);
     }
 
     /// <summary>The orders form with its Tabular form block's settings replaced; an empty value clears it.</summary>

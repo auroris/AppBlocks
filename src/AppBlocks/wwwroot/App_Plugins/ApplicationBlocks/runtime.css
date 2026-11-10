@@ -152,6 +152,15 @@
 .app-form-field small { color: var(--app-muted); font-size: .85rem; line-height: 1.4; }
 .app-form-field small:empty { display: none; }
 .app-form-field textarea { resize: vertical; min-height: 5.5rem; line-height: 1.5; }
+/* A Display value shown as a link takes the height of a control, so it lines up with the fields beside it; without an
+   address it is the value as plain text. */
+.app-display-link {
+    align-self: flex-start; max-width: 100%; padding: var(--app-control-padding); padding-inline: 0; border: 1px solid transparent;
+    border-radius: var(--app-radius-sm); color: var(--app-accent); overflow-wrap: anywhere;
+}
+.app-display-link:not([href]) { color: var(--app-text); }
+.app-display-link:empty::before { content: "\200b"; }
+.app-display-link:focus-visible { outline: none; box-shadow: var(--app-focus); }
 .app-field-error { color: var(--app-danger); font-size: .85rem; font-weight: 500; line-height: 1.4; }
 .app-field-error:empty { display: none; }
 .app-form-field [role=alert] { margin: 0; color: var(--app-danger); font-size: .85rem; }
