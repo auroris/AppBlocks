@@ -59,10 +59,11 @@ async function mount(body, answer, { head = '', lang = 'en', base = '', timezone
 const runtime = base => `<script type="module" src="${base}/App_Plugins/ApplicationBlocks/runtime.js"></script>`;
 
 test('an unchanged date-time keeps its seconds and offset, while an edit or clear uses the control', async () => {
-    for (const [timezoneId, original, shown, edited] of [
-        ['UTC', '2026-11-09T14:30:45.678+00:00', '2026-11-09T14:30', '2026-11-09T10:45:00.000Z'],
-        // The second 01:30 at the autumn clock change must not become the first 01:30.
-        ['America/Edmonton', '2026-11-01T01:30:45.678-07:00', '2026-11-01T01:30', '2026-11-09T17:45:00.000Z'],
+    for (const [timezoneId, original, shown, typed, edited] of [
+        ['UTC', '2026-11-09T14:30:45.678+00:00', '2026-11-09T14:30', '2026-11-09T10:45', '2026-11-09T10:45:00.000Z'],
+        // The second 01:30 at the autumn clock change must not become the first 01:30. The change of 2024 is used because it
+        // is settled: from 2026 the time-zone data keeps Edmonton at -06:00 all year, so a date there no longer has two 01:30s.
+        ['America/Edmonton', '2024-11-03T01:30:45.678-07:00', '2024-11-03T01:30', '2024-11-09T10:45', '2024-11-09T17:45:00.000Z'],
     ]) {
         const { page, requests, errors } = await mount(form('<input id="when" type="datetime-local" data-field="when">') + runtime(''),
             ({ method, body }) => formAnswer(record('7', method === 'GET' ? { title: 'Report', when: original } : body.values)), { timezoneId });
@@ -73,7 +74,7 @@ test('an unchanged date-time keeps its seconds and offset, while an edit or clea
             await page.getByText('Saved.', { exact: true }).waitFor();
             assert.equal(requests.at(-1).body.values.when, original);
 
-            await page.locator('#when').fill('2026-11-09T10:45');
+            await page.locator('#when').fill(typed);
             await page.getByRole('button', { name: 'Save', exact: true }).click();
             await page.getByText('Saved.', { exact: true }).waitFor();
             assert.equal(requests.at(-1).body.values.when, edited);

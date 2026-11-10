@@ -107,7 +107,7 @@ A page can lay out a schedule table itself, from rows it loads with the [data AP
 
 `scheduleRowLabel(row)` returns the `th` that starts a row, from `label`, `color`, `textColor`, `description` and `closeLabel`; a description makes the label a button that opens it.
 
-`mountSchedule(root)` scrolls today's column into view, shows a bar's `textContent` as a tooltip on hover and keyboard focus, hides it on Escape and when anything scrolls, and places a popover under the bar or label that opened it, inside the viewport. It finds bars and popovers inside the root as they are used, so the page can draw the table again, for another window or new data, without mounting again. It returns a function that removes its listeners and tooltip. Mounting the same root again replaces the earlier mount, so mounting after every redraw is also fine.
+`mountSchedule(root)` scrolls today's column into view, shows a bar's `textContent` as a tooltip on hover and keyboard focus, hides it on Escape and when a scroll moves the bar, and places a popover under the bar or label that opened it, inside the viewport. It finds bars and popovers inside the root as they are used, so the page can draw the table again, for another window or new data, without mounting again. It returns a function that removes its listeners and tooltip. Mounting the same root again replaces the earlier mount, so mounting after every redraw is also fine.
 
 The table follows the block's own markup, which `runtime.css` styles. Class names not listed here are the block's own and may change.
 

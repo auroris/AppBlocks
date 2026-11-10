@@ -141,7 +141,8 @@ export function mountSchedule(root) {
     tooltip.setAttribute("aria-hidden", "true");
     tooltip.hidden = true;
     root.append(tooltip);
-    let active = null;
+    // The bar whose details show, and where it was in the viewport when the tooltip was put under it.
+    let active = null, placed = null;
     const barOf = target => target instanceof Element ? target.closest(".app-schedule-bar") : null;
     function show(bar) {
         if (!bar || bar === active || !root.contains(bar)) return;
@@ -152,6 +153,7 @@ export function mountSchedule(root) {
         tooltip.hidden = false;
         // Under the bar, kept inside the viewport even when the schedule is wider than it.
         const bounds = bar.getBoundingClientRect(), frame = root.getBoundingClientRect();
+        placed = { left: bounds.left, top: bounds.top };
         tooltip.style.left = `${Math.max(8, Math.min(bounds.left, viewportWidth() - tooltip.offsetWidth - 8)) - frame.left}px`;
         tooltip.style.top = `${bounds.bottom - frame.top + 4}px`;
     }
@@ -161,8 +163,14 @@ export function mountSchedule(root) {
     root.addEventListener("focusin", event => show(barOf(event.target)), options);
     root.addEventListener("focusout", event => { if (active && barOf(event.target) === active) hide(); }, options);
     root.addEventListener("keydown", event => { if (event.key === "Escape") hide(); }, options);
-    // Scrolling anything, the schedule's own scroller, a panel around it or the page, leaves the tooltip behind its bar.
-    document.addEventListener("scroll", () => { if (active) hide(); }, { ...options, capture: true, passive: true });
+    // Scrolling anything, the schedule's own scroller, a panel around it or the page, moves the bar and leaves the tooltip
+    // behind it, so the tooltip goes. A scroll that left the bar where it was does not: the browser brings a bar into view
+    // as it takes focus and reports that scroll afterwards, when the tooltip is already under the bar.
+    document.addEventListener("scroll", () => {
+        if (!active) return;
+        const bounds = active.getBoundingClientRect();
+        if (Math.abs(bounds.left - placed.left) >= .5 || Math.abs(bounds.top - placed.top) >= .5) hide();
+    }, { ...options, capture: true, passive: true });
     // The browser centres a popover; here it goes under its opener, kept inside the viewport, and the tooltip steps aside.
     root.addEventListener("toggle", event => {
         const popover = event.target;

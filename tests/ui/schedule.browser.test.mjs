@@ -190,8 +190,17 @@ test('the tooltip shows a bar\'s details inside the viewport and leaves when any
     assert.equal(await tooltip(page).textContent(), 'Inspection: Room 4, 6 Nov 2026');
     await page.keyboard.press('Escape');
     await tooltip(page).waitFor({ state: 'hidden' });
+    // The page was scrolled above, so this bar is partly out of view and the browser scrolls to it as it takes focus. That
+    // scroll is reported a frame later, when the tooltip is already under the bar, and it stays there.
+    assert.ok(await page.evaluate(() => rooms.querySelector('[data-key="b1"]').getBoundingClientRect().top < 0));
     await page.locator('[data-key="b1"]').focus();
     await tooltip(page).waitFor({ state: 'visible' });
+    await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+    const focused = await page.evaluate(() => {
+        const tip = rooms.querySelector('.app-schedule-tooltip'), bar = rooms.querySelector('[data-key="b1"]').getBoundingClientRect();
+        return { hidden: tip.hidden, top: tip.getBoundingClientRect().top, barTop: bar.top, barBottom: bar.bottom };
+    });
+    assert.ok(!focused.hidden && focused.barTop > -1 && Math.abs(focused.top - (focused.barBottom + 4)) < 1, JSON.stringify(focused));
     await page.locator('[data-key="b3"]').focus();
     assert.equal(await tooltip(page).textContent(), 'Inspection: Room 4, 6 Nov 2026');
     assert.deepEqual(errors, []);
