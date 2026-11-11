@@ -144,6 +144,37 @@ public sealed class AttachmentStoreTests
         Assert.Equal([draft.Id], (await store.ListAsync(Order, default)).Select(i => i.Id));
     }
 
+    [Fact]
+    public async Task Adoption_can_commit_or_rollback_with_the_callers_transaction()
+    {
+        var root = Directory.CreateTempSubdirectory("attachment-transaction-").FullName;
+        var file = Path.Combine(root, "files.db");
+        var connectionString = $"Data Source={file};Pooling=False";
+        try
+        {
+            var store = Store(connectionString, value => new SqliteConnection(value));
+            var caller = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity([new(System.Security.Claims.ClaimTypes.NameIdentifier, "7")], "Test"));
+            var pending = AttachmentOwner.Pending(Order.Alias, Guid.NewGuid(), caller);
+            var fileItem = await store.AddAsync(pending, Upload("pending.pdf", "application/pdf", "pending"), null, null, null, "7", TestContext.Current.CancellationToken);
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using (var transaction = await connection.BeginTransactionAsync(TestContext.Current.CancellationToken))
+            {
+                Assert.Equal(1, await AttachmentStore.AdoptAsync(connection, transaction, pending, Order, "7", TestContext.Current.CancellationToken));
+                await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+            }
+            Assert.Equal(fileItem.Id, Assert.Single(await store.ListAsync(pending, TestContext.Current.CancellationToken)).Id);
+            Assert.Empty(await store.ListAsync(Order, TestContext.Current.CancellationToken));
+            await using (var transaction = await connection.BeginTransactionAsync(TestContext.Current.CancellationToken))
+            {
+                Assert.Equal(1, await AttachmentStore.AdoptAsync(connection, transaction, pending, Order, "7", TestContext.Current.CancellationToken));
+                await transaction.CommitAsync(TestContext.Current.CancellationToken);
+            }
+            Assert.Equal(fileItem.Id, Assert.Single(await store.ListAsync(Order, TestContext.Current.CancellationToken)).Id);
+        }
+        finally { File.Delete(file); Directory.Delete(root); }
+    }
+
     private static AttachmentStore Store(string connectionString, Func<string, DbConnection> open, int pendingLifetimeHours = 24)
     {
         var configuration = new ConfigurationBuilder().Build();

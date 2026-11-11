@@ -4,6 +4,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using AppBlocks.Authentication;
 using AppBlocks.Databases;
+using AppBlocks.Forms;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
@@ -187,6 +188,16 @@ public static class AttachmentEndpoints
         if (adoption?.Key?.Trim() is not { Length: > 0 and <= 200 } key) return Results.Problem("Name the record the files now belong to.", statusCode: 422);
         var scope = await Pending(access.ResolveSavedAsync(http, pageKey, blockKey, key, ct), store, ct);
         if (scope.Status != 200) return Refusal(scope);
+        var resource = await http.RequestServices.GetRequiredService<FormResourceRegistry>().FindAsync(scope.Owner!.Alias);
+        if (resource is ISubmittedAttachmentOwner submitted)
+        {
+            try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
+            catch (AntiforgeryValidationException) { return Results.BadRequest(); }
+            var context = new FormExecutionContext(scope.User!, pageKey, blockKey, "attachments");
+            if (!await submitted.ConfirmSubmissionAsync(key, submissionKey, context, ct))
+                return Audited(http, "adopt", scope, null, Results.Problem("This submission does not belong to the record.", statusCode: 403), 403);
+            return await List(Task.FromResult(scope), http, store, ct);
+        }
         if (!scope.CanWrite) return Audited(http, "adopt", scope, null, Results.Problem("You may read these files but not change them.", statusCode: 403), 403);
         try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
         catch (AntiforgeryValidationException) { return Results.BadRequest(); }

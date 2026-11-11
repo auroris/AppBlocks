@@ -13,3 +13,13 @@ public interface IAttachmentOwner
     /// <param name="record">The owning record as the resource loaded it for this caller.</param>
     ValueTask<bool> MayWriteAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct);
 }
+
+/// <summary>
+/// A resource that adopts pending files in its create transaction. The normal post-save adoption request
+/// only confirms that submission; it never transfers more files. Implementations must verify the caller,
+/// record and submission key against persisted state, independently of later file-write permission.
+/// </summary>
+public interface ISubmittedAttachmentOwner
+{
+    ValueTask<bool> ConfirmSubmissionAsync(string key, Guid submissionKey, FormExecutionContext context, CancellationToken ct);
+}

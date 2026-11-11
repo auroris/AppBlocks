@@ -170,12 +170,25 @@ public sealed partial class AttachmentStore(IApplicationConnectionFactory connec
     public Task<int> AdoptAsync(AttachmentOwner pending, AttachmentOwner owner, string by, CancellationToken ct) => GuardAsync(write: true, async () =>
     {
         await using var connection = await OpenAsync(ct);
-        await using var command = Command(connection, null, """
+        return await AdoptAsync(connection, null, pending, owner, by, ct);
+    });
+
+    /// <summary>
+    /// Adopts files on the caller's open attachment database connection and transaction. The caller ensures
+    /// the attachment schema before opening its transaction and authorizes both owners. Neither connection
+    /// nor transaction is disposed or committed here, so record creation and adoption can commit together.
+    /// </summary>
+    public static async Task<int> AdoptAsync(DbConnection connection, DbTransaction? transaction,
+        AttachmentOwner pending, AttachmentOwner owner, string by, CancellationToken ct)
+    {
+        if (!pending.IsPending || owner.IsPending || pending.ResourceAlias != owner.Alias)
+            throw new ArgumentException("Adopt pending files into a saved record of the same resource.");
+        await using var command = Command(connection, transaction, """
             UPDATE APP_ATTACHMENT_LINK SET OWNER_ALIAS = @alias, OWNER_KEY = @key, UPDATED_BY = @by, UPDATED_AT = @now
             WHERE OWNER_ALIAS = @pendingAlias AND OWNER_KEY = @pendingKey AND REMOVED_AT IS NULL
             """, ("@alias", owner.Alias), ("@key", owner.Key), ("@by", by), ("@now", DateTime.UtcNow), ("@pendingAlias", pending.Alias), ("@pendingKey", pending.Key));
         return await command.ExecuteNonQueryAsync(ct);
-    });
+    }
 
     /// <summary>Whether another uploader than <paramref name="pending"/>'s has live files pending under the same submission key.</summary>
     public Task<bool> PendingForOthersAsync(AttachmentOwner pending, Guid submissionKey, CancellationToken ct) => GuardAsync(write: false, async () =>

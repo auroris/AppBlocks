@@ -156,6 +156,7 @@ public sealed class AppBlocksValidator(FormResourceRegistry resources, Published
                     errors.Add($"Select a published list of values for '{binding}'.");
                 if (alias == "appDisplay" && Text(child, AppBlockField.LinkTemplateAlias).Trim() is { Length: > 0 } template) links.Add((binding, template));
             }
+            else if (Plugin(alias) is { } plugin) plugin.Validate(BlockValueSets.Element(child), errors);
             else if (alias is not ("appForm" or "appFieldset" or "appActions") && !AppBlockSchema.LayoutAliases.Contains(alias) && !AppBlockSchema.ContentAliases.Contains(alias)) errors.Add("The form contains an unsupported block.");
             foreach (var nested in BlockValueSets.Children(item)) Visit(nested, depth + 1);
         }
