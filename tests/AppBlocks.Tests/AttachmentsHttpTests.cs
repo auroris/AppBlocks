@@ -218,6 +218,32 @@ public sealed class AttachmentsHttpTests
         Assert.Equal(file.GetProperty("id").GetInt64(), adopted.GetProperty("items").EnumerateArray().Single().GetProperty("id").GetInt64());
     }
 
+    [Fact]
+    public async Task An_owner_can_let_a_caller_add_files_without_changing_the_ones_there()
+    {
+        await using var site = await BlockSite.BootAsync(configure: builder =>
+            builder.Services.AddSingleton<IFormResource>(new FilesResource("files.added", requireMember: false, write: false, add: true)));
+        await site.PublishAsync();
+        var (page, block, _) = await PublishFilesFormAsync(site, "Added files", "files.added", insideForm: false);
+        using var client = site.CreateClient();
+        var files = site.Attachments(client, page, block);
+
+        // The list says the caller may add and may not write, which is what the block shows: the upload row and no Replace or Remove.
+        var list = await files.ListAsync("id=1");
+        Assert.True(list.IsSuccess, list.Problem);
+        Assert.False(list.CanWrite);
+        Assert.True(list.Body.GetProperty("canAdd").GetBoolean());
+
+        var added = await files.UploadAsync(Pdf("asked-for.pdf", "sent later"), query: "id=1");
+        Assert.Equal(HttpStatusCode.Created, added.Response.StatusCode);
+        // What is there stays as it is, the caller's own file included.
+        var replaced = await files.ReplaceAsync(added.Id!.Value, Pdf("other.pdf", "changed"), query: "id=1");
+        Assert.Equal(HttpStatusCode.Forbidden, replaced.Response.StatusCode);
+        Assert.Contains("add files", replaced.Problem);
+        Assert.Equal(HttpStatusCode.Forbidden, (await files.RemoveAsync(added.Id.Value, "id=1")).StatusCode);
+        Assert.Equal("asked-for.pdf", Assert.Single((await files.ListAsync("id=1")).Items).GetProperty("fileName").GetString());
+    }
+
     /// <summary>A page with an Attachments block and a Tabular form block whose records are <paramref name="resource"/>'s: inside a form over it with a title field, or on the page naming it as their owner with the key from the address.</summary>
     private static async Task<(Guid Page, Guid Files, Guid Rows)> PublishFilesFormAsync(BlockSite site, string name, string resource, bool insideForm)
     {
@@ -240,8 +266,9 @@ public sealed class AttachmentsHttpTests
         return (page.Key, Guid.Parse(files["contentKey"]!.GetValue<string>()), Guid.Parse(rows["contentKey"]!.GetValue<string>()));
     }
 
-    /// <summary>A form class whose records anyone it admits may load, create and attach files to.</summary>
-    private sealed class FilesResource(string alias, bool requireMember) : IFormResource, AppBlocks.Attachments.IAttachmentOwner
+    /// <summary>A form class whose records anyone it admits may load and create, and attach files to as <paramref name="write"/> and <paramref name="add"/> say.</summary>
+    private sealed class FilesResource(string alias, bool requireMember, bool write = true, bool add = false)
+        : IFormResource, AppBlocks.Attachments.IAttachmentOwner, AppBlocks.Attachments.IAddOnlyAttachmentOwner
     {
         public string Alias => alias;
         public string ContractVersion => "1";
@@ -253,7 +280,8 @@ public sealed class AttachmentsHttpTests
         public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct) => Answer("1");
         public Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct) => Answer(key);
         public Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct) => Answer(key);
-        public ValueTask<bool> MayWriteAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct) => ValueTask.FromResult(true);
+        public ValueTask<bool> MayWriteAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct) => ValueTask.FromResult(write);
+        public ValueTask<bool> MayAddAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct) => ValueTask.FromResult(add);
     }
 
     /// <summary>A site's own words for one text, as a dictionary-backed source would give them.</summary>

@@ -71,7 +71,7 @@ public static class AttachmentEndpoints
             // Not a failure of this page: the block says so in words for the person, and the form around it never hears of it.
             return Results.Json(new {
                 owner = Owner(scope),
-                canWrite = false, purposes = scope.Block!.Purposes, maxFileSize = scope.Block.Limits.MaxFileSize, accept = scope.Block.Limits.Accept,
+                canWrite = false, canAdd = false, purposes = scope.Block!.Purposes, maxFileSize = scope.Block.Limits.MaxFileSize, accept = scope.Block.Limits.Accept,
                 items = Array.Empty<object>(),
                 storage = new { message = Plain(error), setupUrl = await SetupUrlAsync(http) },
             });
@@ -79,6 +79,7 @@ public static class AttachmentEndpoints
         return Results.Json(new {
             owner = Owner(scope),
             canWrite = scope.CanWrite,
+            canAdd = scope.CanAdd,
             purposes = scope.Block!.Purposes,
             maxFileSize = scope.Block.Limits.MaxFileSize,
             accept = scope.Block.Limits.Accept,
@@ -113,7 +114,8 @@ public static class AttachmentEndpoints
     {
         var scope = await resolving;
         if (scope.Status != 200) return Refusal(scope);
-        if (!scope.CanWrite) return Audited(http, id is null ? "upload" : "replace", scope, id, Results.Problem("You may read these files but not change them.", statusCode: 403), 403);
+        // An upload needs leave to add; a replacement changes a file that is there, which takes leave to write.
+        if (id is null ? !scope.CanAdd : !scope.CanWrite) return Audited(http, id is null ? "upload" : "replace", scope, id, Results.Problem(NoChange(scope), statusCode: 403), 403);
         try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
         catch (AntiforgeryValidationException) { return Results.BadRequest(); }
         var limits = scope.Block!.Limits;
@@ -162,7 +164,7 @@ public static class AttachmentEndpoints
     {
         var scope = await resolving;
         if (scope.Status != 200) return Refusal(scope);
-        if (!scope.CanWrite) return Audited(http, "remove", scope, id, Results.Problem("You may read these files but not change them.", statusCode: 403), 403);
+        if (!scope.CanWrite) return Audited(http, "remove", scope, id, Results.Problem(NoChange(scope), statusCode: 403), 403);
         try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
         catch (AntiforgeryValidationException) { return Results.BadRequest(); }
         var removed = await Run(() => store.RemoveAsync(scope.Owner!, id, AttachmentAccess.Actor(scope.User!), ct));
@@ -248,6 +250,11 @@ public static class AttachmentEndpoints
     private static IResult Refusal(AttachmentScope scope) => Results.Problem(scope.Problem, statusCode: scope.Status);
 
     private static string TooLarge(AttachmentLimits limits) => $"The file is larger than the {limits.MaxFileSize / (1024 * 1024)} MB this block accepts.";
+
+    /// <summary>What a caller is told who may not make a change: someone who may add hears that the files already there stay as they are.</summary>
+    private static string NoChange(AttachmentScope scope) => scope.CanAdd
+        ? "You may add files here but not change the ones already there."
+        : "You may read these files but not change them.";
 
     /// <summary>A store failure is the database's problem, answered as 503 with the detail in the log, never a crash of the page.</summary>
     private static async Task<(T? Value, IResult? Problem)> Run<T>(Func<Task<T>> work)

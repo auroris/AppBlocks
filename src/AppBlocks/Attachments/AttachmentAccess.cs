@@ -17,9 +17,11 @@ namespace AppBlocks.Attachments;
 /// caller may do with them. <see cref="Status"/> is 200 when everything resolved; otherwise the HTTP status to answer
 /// with and <see cref="Problem"/> says why, in words meant for the person.
 /// </summary>
+/// <param name="CanWrite">The caller may add files, and replace and remove the ones there.</param>
 /// <param name="SubmissionKey">The form submission whose pending files the scope holds, for a record not saved yet; null for a record's own files.</param>
+/// <param name="CanAdd">The caller may add files: everyone who may write, and whoever an <see cref="IAddOnlyAttachmentOwner"/> lets add.</param>
 public sealed record AttachmentScope(int Status, string? Problem = null, AttachmentBlock? Block = null, ClaimsPrincipal? User = null,
-    AttachmentOwner? Owner = null, bool CanWrite = false, Guid? SubmissionKey = null)
+    AttachmentOwner? Owner = null, bool CanWrite = false, Guid? SubmissionKey = null, bool CanAdd = false)
 {
     public static AttachmentScope Refused(int status, string problem) => new(status, problem);
 }
@@ -47,7 +49,10 @@ public sealed class AttachmentAccess(BlockOwnerAccess owners, IOptions<Attachmen
         var write = !block.ReadOnly && (scope.Resource is IAttachmentOwner rule
             ? await rule.MayWriteAttachmentsAsync(scope.Record!, context, ct)
             : scope.User!.Identity?.IsAuthenticated == true);
-        return new(200, null, block, scope.User, new AttachmentOwner(scope.Resource!.Alias, scope.OwnerKey), write);
+        // A resource may let a caller it does not let write add files all the same.
+        var add = write || !block.ReadOnly && scope.Resource is IAddOnlyAttachmentOwner additions
+            && await additions.MayAddAttachmentsAsync(scope.Record!, context, ct);
+        return new(200, null, block, scope.User, new AttachmentOwner(scope.Resource!.Alias, scope.OwnerKey), write, CanAdd: add);
     }
 
     /// <summary>
@@ -62,7 +67,7 @@ public sealed class AttachmentAccess(BlockOwnerAccess owners, IOptions<Attachmen
         var block = AttachmentBlock.Read(scope.Item!.Content, settings.Value);
         if (!await AllowsNewUploadsAsync(block, scope.Form!, scope.User!, pageKey, blockKey, scope.Parameters, ct))
             return AttachmentScope.Refused(404, "Save the record before adding files.");
-        return new(200, null, block, scope.User, AttachmentOwner.Pending(scope.Resource!.Alias, submissionKey, scope.User!), true, submissionKey);
+        return new(200, null, block, scope.User, AttachmentOwner.Pending(scope.Resource!.Alias, submissionKey, scope.User!), true, submissionKey, CanAdd: true);
     }
 
     /// <summary>

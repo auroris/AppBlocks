@@ -604,9 +604,11 @@ function mountAttachments(root) {
             return;
         }
         const canWrite = state.canWrite && !readOnly;
+        // Someone may be let to add files without being let to replace or remove the ones there; a server that does not say takes writing to mean both.
+        const canAdd = (state.canAdd ?? state.canWrite) && !readOnly;
         // A file sent ahead of its record's save can only be removed: the endpoint for new files neither serves nor replaces one.
         const ahead = pending();
-        if (upload) upload.hidden = !canWrite;
+        if (upload) upload.hidden = !canAdd;
         message.textContent = state.items.length ? "" : t("noFiles");
         for (const item of state.items) {
             const row = document.createElement("li");
