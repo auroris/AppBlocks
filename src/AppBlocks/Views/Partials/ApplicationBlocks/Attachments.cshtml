@@ -67,21 +67,33 @@ else
         <ul class="app-attachments-list ah-attachments__list" aria-busy="true"></ul>
         @if (!block.ReadOnly)
         {
-            <div class="app-attachments-upload ah-attachments__upload" hidden>
-                <div class="app-attachments-dashboard" data-attachment-dashboard></div>
-                @if (block.Purposes.Count > 0)
-                {
-                    <label><span>@Text["attachmentsPurpose", "Purpose"]</span>
-                        <select form="" data-attachment-purpose>
-                            <option value="">@Text["attachmentsChoosePurpose", "Choose a purpose"]</option>
-                            @foreach (var purpose in block.Purposes) { <option value="@purpose">@purpose</option> }
-                        </select>
-                    </label>
-                }
-                <label><span>@Text["attachmentsLabel", "Label"]</span> <input type="text" form="" data-attachment-label maxlength="200" autocomplete="off"></label>
-                <label><span>@Text["attachmentsNotes", "Notes"]</span> <input type="text" form="" data-attachment-notes maxlength="1000" autocomplete="off"></label>
-                <button type="button" form="" data-attachment-upload disabled>@Text["attachmentsUpload", "Upload"]</button>
-            </div>
+            <button type="button" form="" data-attachment-add hidden>
+                <span class="app-attachments-progress" aria-hidden="true" hidden></span>
+                <span data-attachment-add-label>@Text["attachmentsUpload", "Upload"]</span>
+            </button>
+            <dialog class="app-attachments-dialog" aria-labelledby="@(id + "-upload-title")">
+                <div class="app-attachments-dialog-header">
+                    <h3 id="@(id + "-upload-title")">@Text["attachmentsAdd", "Add files"]</h3>
+                    <button type="button" form="" data-attachment-close>@Text["attachmentsClose", "Close"]</button>
+                </div>
+                <div class="app-attachments-upload-errors" role="alert" hidden></div>
+                <div class="app-attachments-upload ah-attachments__upload">
+                    @if (block.Purposes.Count > 0)
+                    {
+                        <label><span>@Text["attachmentsPurpose", "Purpose"]</span>
+                            <select form="" data-attachment-purpose>
+                                <option value="">@Text["attachmentsChoosePurpose", "Choose a purpose"]</option>
+                                @foreach (var purpose in block.Purposes) { <option value="@purpose">@purpose</option> }
+                            </select>
+                        </label>
+                    }
+                    <label><span>@Text["attachmentsLabel", "Label"]</span> <input type="text" form="" data-attachment-label maxlength="200" autocomplete="off"></label>
+                    <label><span>@Text["attachmentsNotes", "Notes"]</span> <input type="text" form="" data-attachment-notes maxlength="1000" autocomplete="off"></label>
+                    <p class="app-attachments-upload-help">@Text["attachmentsUploadHelp", "Files upload as soon as you add them. These details apply to files added next."]</p>
+                    <div class="app-attachments-dashboard" data-attachment-dashboard></div>
+                    <button type="button" form="" data-attachment-retry hidden>@Text["attachmentsRetry", "Retry failed uploads"]</button>
+                </div>
+            </dialog>
         }
     </section>
 }

@@ -64,6 +64,20 @@ public sealed class AttachmentStoreTests
         Assert.Null(await store.ReplaceAsync(Order, foreign.Id, Upload("x.pdf", "application/pdf", "x"), null, null, null, "member:1", default));
         Assert.False(await store.RemoveAsync(Order, foreign.Id, "member:1", default));
 
+        // A rename changes only the filename and link's update details, under the same owner check.
+        Assert.Null(await store.RenameAsync(Order, foreign.Id, "not-mine.pdf", "member:1", default));
+        var renamed = await store.RenameAsync(Order, invoice.Id, "invoice-renamed.pdf", "member:3", default);
+        Assert.NotNull(renamed);
+        Assert.Equal(invoice.Id, renamed.Id);
+        Assert.Equal("invoice-renamed.pdf", renamed.FileName);
+        Assert.Equal((invoice.Size, invoice.Sha256, invoice.Purpose, invoice.Label, invoice.Notes, invoice.UploadedBy, invoice.UploadedAt),
+            (renamed.Size, renamed.Sha256, renamed.Purpose, renamed.Label, renamed.Notes, renamed.UploadedBy, renamed.UploadedAt));
+        Assert.Equal("member:3", renamed.UpdatedBy);
+        Assert.Empty(renamed.Revisions);
+        var renamedContent = await store.ReadAsync(Order, invoice.Id, default);
+        Assert.Equal("invoice-renamed.pdf", renamedContent!.FileName);
+        Assert.Equal("first invoice", Encoding.UTF8.GetString(renamedContent.Bytes));
+
         // A replacement is a new revision; the earlier one stays readable, and the item keeps its link's details.
         var replaced = await store.ReplaceAsync(Order, invoice.Id, Upload("invoice-v2.pdf", "application/pdf", "second invoice"), null, "October (corrected)", null, "member:3", default);
         Assert.NotNull(replaced);
@@ -76,6 +90,7 @@ public sealed class AttachmentStoreTests
         Assert.Equal("first invoice", Encoding.UTF8.GetString((await store.ReadAsync(Order, invoice.Id, default))!.Bytes));
         // The replaced id is no longer a current file, so it cannot be replaced or removed, only read.
         Assert.Null(await store.ReplaceAsync(Order, invoice.Id, null, "Receipt", null, null, "member:1", default));
+        Assert.Null(await store.RenameAsync(Order, invoice.Id, "old.pdf", "member:1", default));
         // Details alone: an empty string clears a value, null keeps it.
         var detailed = await store.ReplaceAsync(Order, replaced.Id, null, "Receipt", "", null, "member:1", default);
         Assert.Equal(replaced.Id, detailed!.Id);
@@ -88,6 +103,7 @@ public sealed class AttachmentStoreTests
         Assert.Equal([note.Id], (await store.ListAsync(Order, default)).Select(i => i.Id));
         Assert.Null(await store.ReadAsync(Order, again.Id, default));
         Assert.Null(await store.ReadAsync(Order, invoice.Id, default));
+        Assert.Null(await store.RenameAsync(Order, again.Id, "removed.pdf", "member:1", default));
         Assert.Equal(4L, await Count(connectionString, open, "SELECT COUNT(*) FROM APP_ATTACHMENT WHERE FILE_NAME LIKE 'invoice%' OR FILE_NAME = 'other.pdf'"));
         var kept = await store.PurgeAsync(DateTime.UtcNow.AddDays(-1), default);
         Assert.Equal(new AttachmentPurge(0, 0, 0), kept);

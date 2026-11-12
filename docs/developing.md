@@ -47,7 +47,7 @@ The [clean-install acceptance test](../tests/clean-install/README.md) builds act
 
 ## Uppy assets
 
-The attachment uploader's pinned dependencies and bundler are in `tools/uppy`. After updating them, run `npm ci` and `npm run build` in that directory. Commit its lockfile and the generated `uppy.js`, `uppy.css` and `uppy-LICENSE.txt` under `src/AppBlocks/wwwroot/App_Plugins/ApplicationBlocks`. The bundle contains Core, Dashboard and XHR Upload; only writable attachment blocks load it. Normal .NET builds and consuming sites use the checked-in assets and need neither Node.js nor a CDN connection. The bundle includes its dependencies' license notices alongside the assets.
+The attachment uploader's pinned dependencies and bundler are in `tools/uppy`. After updating them, run `npm ci` and `npm run build` in that directory. Commit its lockfile and the generated `uppy.js`, `uppy.css` and `uppy-LICENSE.txt` under `src/AppBlocks/wwwroot/App_Plugins/ApplicationBlocks`. The bundle contains Core, Dashboard and XHR Upload; it loads when someone opens **Upload**. Normal .NET builds and consuming sites use the checked-in assets and need neither Node.js nor a CDN connection. The bundle includes its dependencies' license notices alongside the assets.
 
 ## Who owns the definitions
 

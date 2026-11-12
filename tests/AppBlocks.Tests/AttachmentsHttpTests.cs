@@ -65,6 +65,24 @@ public sealed class AttachmentsHttpTests
         Assert.Equal(HttpStatusCode.NotFound, (await files.ReplaceAsync(id, Pdf("x.pdf", "x"), query: "id=5")).Response.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await files.RemoveAsync(id, "id=5")).StatusCode);
 
+        // Renaming needs write access and antiforgery, and keeps the same bytes and file identity.
+        using (var noToken = new HttpRequestMessage(HttpMethod.Patch, $"{site.PathBase}/api/attachments/{BlockSite.FormPageKey}/{OrdersAttachments}/{id}?id=4") { Content = JsonContent.Create(new { fileName = "renamed.pdf" }) })
+            Assert.Equal(HttpStatusCode.BadRequest, (await client.SendAsync(noToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await files.RenameAsync(id, "renamed.pdf", "id=5")).Response.StatusCode);
+        foreach (var invalid in new[] { null, "", "  ", ".", "..", "../a.pdf", @"..\a.pdf", "a\nb.pdf", "a:b.pdf", new string('a', 261) })
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, (await files.RenameAsync(id, invalid, "id=4")).Response.StatusCode);
+        var renamed = await files.RenameAsync(id, "  résumé.pdf  ", "id=4");
+        Assert.True(renamed.IsSuccess, renamed.Problem);
+        Assert.Equal(id, renamed.Id);
+        Assert.Equal("résumé.pdf", renamed.Body.GetProperty("fileName").GetString());
+        Assert.Equal(uploaded.Body.GetProperty("sha256").GetString(), renamed.Body.GetProperty("sha256").GetString());
+        Assert.Empty(renamed.Body.GetProperty("revisions").EnumerateArray());
+        using (var renamedDownload = await files.DownloadAsync(id, "id=4"))
+        {
+            Assert.Equal("résumé.pdf", renamedDownload.Content.Headers.ContentDisposition?.FileNameStar);
+            Assert.Equal("first", await renamedDownload.Content.ReadAsStringAsync());
+        }
+
         // A replacement is a new revision; the earlier one stays readable under its own id.
         var replaced = await files.ReplaceAsync(id, Pdf("invoice-v2.pdf", "second"), label: "", query: "id=4");
         Assert.True(replaced.IsSuccess, replaced.Problem);
@@ -76,11 +94,13 @@ public sealed class AttachmentsHttpTests
         Assert.Equal("first", await (await files.DownloadAsync(id, "id=4")).Content.ReadAsStringAsync());
         Assert.Equal("second", await (await files.DownloadAsync(current, "id=4")).Content.ReadAsStringAsync());
         Assert.Equal(current, (await files.ListAsync("id=4")).Items.Single().GetProperty("id").GetInt64());
+        Assert.Equal(HttpStatusCode.NotFound, (await files.RenameAsync(id, "old.pdf", "id=4")).Response.StatusCode);
 
         // Removal takes the item out of the list; the administrator's purge deletes its rows for good.
         Assert.Equal(HttpStatusCode.NoContent, (await files.RemoveAsync(current, "id=4")).StatusCode);
         Assert.Empty((await files.ListAsync("id=4")).Items);
         Assert.Equal(HttpStatusCode.NotFound, (await files.DownloadAsync(current, "id=4")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await files.RenameAsync(current, "removed.pdf", "id=4")).Response.StatusCode);
         using var administrator = await site.SignInAsAdministratorAsync();
         var purged = await Json(await administrator.PostAsJsonAsync($"{site.PathBase}/umbraco/management/api/v1/attachments/purge", new { retentionDays = 0 }));
         Assert.Equal(1, purged.GetProperty("links").GetInt32());
@@ -114,6 +134,9 @@ public sealed class AttachmentsHttpTests
         // The files belong to the record, so every block bound to it shows them.
         Assert.Single((await files.ListAsync("id=4")).Items);
         Assert.Single((await readOnly.ListAsync("id=4")).Items);
+        var smallId = (await small.ListAsync("id=4")).Items.Single().GetProperty("id").GetInt64();
+        Assert.Equal(HttpStatusCode.Forbidden, (await readOnly.RenameAsync(smallId, "renamed.txt", "id=4")).Response.StatusCode);
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, (await small.RenameAsync(smallId, "tool.exe", "id=4")).Response.StatusCode);
 
         // A later site configuration can leave a published block with no compatible types.
         var settings = site.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<AppBlocks.Attachments.AttachmentSettings>>().Value;
@@ -158,10 +181,14 @@ public sealed class AttachmentsHttpTests
         var kept = first.GetProperty("id").GetInt64();
         Assert.Equal([kept], (await mine.ListAsync()).Body.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetInt64()));
         Assert.Equal("first draft", await client.GetStringAsync($"{site.PathBase}/api/attachments/{BlockSite.FormPageKey}/{block}/new/{submission}/{kept}"));
+        var renamed = await mine.SendAsync(HttpMethod.Patch, "/" + kept, JsonContent.Create(new { fileName = "renamed-draft.pdf" }));
+        Assert.Equal(HttpStatusCode.OK, renamed.Status);
+        Assert.Equal("renamed-draft.pdf", renamed.Body.GetProperty("fileName").GetString());
 
         // Another member under the same submission key sees nothing of them, and may not adopt them to a record they can write.
         var theirs = new PendingFiles(stranger, $"{site.PathBase}/api/attachments/{BlockSite.FormPageKey}/{block}/new/{submission}");
         Assert.Empty((await theirs.ListAsync()).Body.GetProperty("items").EnumerateArray());
+        Assert.Equal(HttpStatusCode.NotFound, (await theirs.SendAsync(HttpMethod.Patch, "/" + kept, JsonContent.Create(new { fileName = "stolen.pdf" }))).Status);
         Assert.Equal(HttpStatusCode.Forbidden, (await theirs.AdoptAsync("4")).Status);
         // An anonymous visitor reaches no pending files of a class that refuses them.
         using (var anonymous = site.CreateClient())
@@ -241,6 +268,7 @@ public sealed class AttachmentsHttpTests
         Assert.Equal(HttpStatusCode.Forbidden, replaced.Response.StatusCode);
         Assert.Contains("add files", replaced.Problem);
         Assert.Equal(HttpStatusCode.Forbidden, (await files.RemoveAsync(added.Id.Value, "id=1")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await files.RenameAsync(added.Id.Value, "renamed.pdf", "id=1")).Response.StatusCode);
         Assert.Equal("asked-for.pdf", Assert.Single((await files.ListAsync("id=1")).Items).GetProperty("fileName").GetString());
     }
 

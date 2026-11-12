@@ -16,13 +16,16 @@ namespace AppBlocks.Attachments;
 /// <summary>The body of an adoption: the key of the record the form saved.</summary>
 public sealed record AttachmentAdoption(string? Key);
 
+/// <summary>A new display and download filename for an existing attachment.</summary>
+public sealed record AttachmentRename(string? FileName);
+
 /// <summary>
 /// <c>/api/attachments/{page}/{block}</c>, or the same under the configured <see cref="AppBlocksRoutes.Root"/>: the files of
 /// the record an Attachments block shows. Every call resolves the block through <see cref="AttachmentAccess"/> first, so page
 /// access and the owning record's own load decide, and a file id is only ever looked up among that owner's links. Writes
 /// carry the antiforgery token the list hands out, are refused on a read-only block, and are logged like form operations.
 /// <c>/new/{submissionKey}</c> holds the files someone uploads in a form whose record is not saved yet, under the key the
-/// runtime generates for that submission: list, upload, download and remove, then <c>/adopt</c> once the form has saved,
+/// runtime generates for that submission: list, upload, download, rename and remove, then <c>/adopt</c> once the form has saved,
 /// which gives them to the record.
 /// </summary>
 public static class AttachmentEndpoints
@@ -46,6 +49,8 @@ public static class AttachmentEndpoints
             => Write(access.ResolveAsync(pageKey, blockKey, ct), id, http, store, ct));
         group.MapDelete("/{id:long}", (Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
             => Remove(access.ResolveAsync(pageKey, blockKey, ct), id, http, store, ct));
+        group.MapPatch("/{id:long}", (Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+            => Rename(access.ResolveAsync(pageKey, blockKey, ct), id, http, store, ct));
 
         var pending = group.MapGroup("/new/{submissionKey:guid}");
         pending.MapGet("", (Guid pageKey, Guid blockKey, Guid submissionKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
@@ -56,6 +61,8 @@ public static class AttachmentEndpoints
             => Download(Pending(access.ResolveNewAsync(pageKey, blockKey, submissionKey, ct), store, ct), id, http, store, ct));
         pending.MapDelete("/{id:long}", (Guid pageKey, Guid blockKey, Guid submissionKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
             => Remove(Pending(access.ResolveNewAsync(pageKey, blockKey, submissionKey, ct), store, ct), id, http, store, ct));
+        pending.MapPatch("/{id:long}", (Guid pageKey, Guid blockKey, Guid submissionKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
+            => Rename(Pending(access.ResolveNewAsync(pageKey, blockKey, submissionKey, ct), store, ct), id, http, store, ct));
         pending.MapPost("/adopt", Adopt);
     }
 
@@ -158,6 +165,30 @@ public static class AttachmentEndpoints
         if (result.Problem is not null) return result.Problem;
         if (result.Value is null) return Audited(http, "replace", scope, id, Results.Problem("This file does not belong to the record.", statusCode: 404), 404);
         return Audited(http, id is null ? "upload" : "replace", scope, result.Value.Id, Results.Json(Item(result.Value, scope.User!), statusCode: id is null ? 201 : 200), id is null ? 201 : 200);
+    }
+
+    private static async Task<IResult> Rename(Task<AttachmentScope> resolving, long id, HttpContext http, AttachmentStore store, CancellationToken ct)
+    {
+        var scope = await resolving;
+        if (scope.Status != 200) return Refusal(scope);
+        if (!scope.CanWrite) return Audited(http, "rename", scope, id, Results.Problem(NoChange(scope), statusCode: 403), 403);
+        try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
+        catch (AntiforgeryValidationException) { return Results.BadRequest(); }
+        if (!http.Request.HasJsonContentType()) return Results.Problem("Send the filename as JSON.", statusCode: 415);
+        AttachmentRename? rename;
+        try { rename = await http.Request.ReadFromJsonAsync<AttachmentRename>(ct); }
+        catch (Exception error) when (error is JsonException or BadHttpRequestException) { return Results.BadRequest(); }
+        var name = rename?.FileName?.Trim();
+        if (name is not { Length: > 0 and <= 260 } || name.EndsWith('.') || name.Any(char.IsControl)
+            || name.IndexOfAny(['/', '\\', '<', '>', ':', '"', '|', '?', '*']) >= 0)
+            return Results.Problem("Use a filename of at most 260 characters, without path separators or special characters.", statusCode: 422);
+        if (!scope.Block!.Limits.Accepts(name)) return Results.Problem("The filename must use a file type this block accepts.", statusCode: 415);
+        var result = await Run(() => store.RenameAsync(scope.Owner!, id, name, AttachmentAccess.Actor(scope.User!), ct));
+        if (result.Problem is not null) return result.Problem;
+        http.Response.Headers.CacheControl = "no-store";
+        return result.Value is null
+            ? Audited(http, "rename", scope, id, Results.Problem("This file does not belong to the record.", statusCode: 404), 404)
+            : Audited(http, "rename", scope, id, Results.Json(Item(result.Value, scope.User!)), 200);
     }
 
     private static async Task<IResult> Remove(Task<AttachmentScope> resolving, long id, HttpContext http, AttachmentStore store, CancellationToken ct)

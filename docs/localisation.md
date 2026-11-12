@@ -63,6 +63,7 @@ The browser runtime formats dates, times and file sizes for the page's language,
 | `saving` | Saving… |
 | `deleting` | Deleting… |
 | `uploading` | Uploading… |
+| `uploadProgress` | Uploading {progress}% |
 | `removing` | Removing… |
 | `saved` | Saved. |
 | `yes` | Yes |
@@ -96,18 +97,17 @@ The browser runtime formats dates, times and file sizes for the page's language,
 | `saveRecordBeforeFiles` | Save the record before adding files. |
 | `openDatabaseSetup` | Open database setup |
 | `noFiles` | No files yet. |
-| `earlierRevision` | 1 earlier revision |
-| `earlierRevisions` | {count} earlier revisions |
-| `replaceFile` | Replace |
+| `renameFile` | Rename |
+| `newFileName` | New filename for {name}: |
+| `renaming` | Renaming… |
 | `removeFile` | Remove |
 | `confirmRemoveFile` | Remove {name}? |
 | `filesLoadFailed` | The files could not be loaded. |
 | `filesNotAttached` | The record was saved, but its files could not be attached to it. Save again to retry. |
 | `fileTooLarge` | The file is larger than the {size} MB this block accepts. |
 | `fileOperationFailed` | The operation failed. |
-| `chooseFile` | Choose a file to upload. |
 | `filesBeforeSave` | Files are still waiting to upload, uploading, or could not be uploaded. Finish uploading or remove them, then save again. |
-| `filesWorking` | Files are still being uploaded, removed or listed. Wait for that to finish, then try again. |
+| `filesWorking` | Files are still being uploaded, renamed, removed or listed. Wait for that to finish, then try again. |
 | `fileTypeNotAccepted` | Files of this type are not accepted here. Accepted: {types}. |
 | `uploaderLoadFailed` | The file uploader could not load. Reload the page to try again. |
 | `uploaderTitle` | File uploader |
@@ -194,7 +194,11 @@ The browser runtime formats dates, times and file sizes for the page's language,
 | `attachmentsNotes` | Notes |
 | `attachmentsPurpose` | Purpose |
 | `attachmentsChoosePurpose` | Choose a purpose |
+| `attachmentsAdd` | Add files |
+| `attachmentsClose` | Close |
 | `attachmentsUpload` | Upload |
+| `attachmentsRetry` | Retry failed uploads |
+| `attachmentsUploadHelp` | Files upload as soon as you add them. These details apply to files added next. |
 | `tabularSignIn` | Sign in to see the rows. |
 | `tabularNoOwner` | This Tabular form block is not inside a form and names no owner. |
 | `tabularEmpty` | No rows yet. |

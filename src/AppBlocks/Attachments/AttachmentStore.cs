@@ -140,6 +140,24 @@ public sealed partial class AttachmentStore(IApplicationConnectionFactory connec
         return item;
     });
 
+    /// <summary>Renames an owner's current file without changing its bytes, id or revisions.</summary>
+    public Task<AttachmentItem?> RenameAsync(AttachmentOwner owner, long id, string fileName, string by, CancellationToken ct) => GuardAsync<AttachmentItem?>(write: true, async () =>
+    {
+        await using var connection = await OpenAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        await using var link = Command(connection, transaction, """
+            UPDATE APP_ATTACHMENT_LINK SET UPDATED_BY = @by, UPDATED_AT = @now
+            WHERE OWNER_ALIAS = @alias AND OWNER_KEY = @key AND ATTACHMENT_ID = @id AND REMOVED_AT IS NULL
+            """, ("@by", by), ("@now", DateTime.UtcNow), ("@alias", owner.Alias), ("@key", owner.Key), ("@id", id));
+        if (await link.ExecuteNonQueryAsync(ct) != 1) return null;
+        await using var rename = Command(connection, transaction,
+            "UPDATE APP_ATTACHMENT SET FILE_NAME = @name WHERE ATTACHMENT_ID = @id", ("@name", fileName), ("@id", id));
+        await rename.ExecuteNonQueryAsync(ct);
+        var item = (await ListAsync(connection, transaction, owner, id, ct)).Single();
+        await transaction.CommitAsync(ct);
+        return item;
+    });
+
     /// <summary>Removes the link whose current file is <paramref name="id"/>: it leaves the lists, and its rows stay for the purge. False when it is not an owner's current file.</summary>
     public Task<bool> RemoveAsync(AttachmentOwner owner, long id, string by, CancellationToken ct) => GuardAsync(write: true, async () =>
     {

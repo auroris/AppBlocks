@@ -86,7 +86,7 @@
 .app-form-field [aria-invalid=true]:focus-visible, .app-tabular-table [aria-invalid=true]:focus-visible { border-color: var(--app-danger); box-shadow: var(--app-focus-danger); }
 
 /* Buttons: a filled primary action, outlined secondary actions, and a quiet danger action that only fills on hover. */
-.app-form-actions button, .app-form-actions a, .app-attachment-actions button, .app-attachments-upload > button,
+.app-form-actions button, .app-form-actions a, .app-attachment-actions button, .app-attachments-upload > button, [data-attachment-add], .app-attachments-dialog-header button,
 .app-tabular-actions button, .app-tabular-toolbar button, .app-schedule-nav a, .app-report-actions a {
     display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
     font: inherit; font-weight: 600; line-height: 1.2; text-decoration: none; white-space: nowrap;
@@ -94,21 +94,21 @@
     background: var(--app-surface); color: var(--app-accent); cursor: pointer;
     transition: background var(--app-transition), color var(--app-transition), border-color var(--app-transition), box-shadow var(--app-transition);
 }
-.app-form-actions button:hover, .app-form-actions a:hover, .app-attachment-actions button:hover, .app-attachments-upload > button:hover,
+.app-form-actions button:hover, .app-form-actions a:hover, .app-attachment-actions button:hover, .app-attachments-upload > button:hover, [data-attachment-add]:hover, .app-attachments-dialog-header button:hover,
 .app-tabular-actions button:hover, .app-tabular-toolbar button:hover, .app-schedule-nav a:hover, .app-report-actions a:hover { background: var(--app-accent-soft); }
-.app-form-actions button:focus-visible, .app-form-actions a:focus-visible, .app-attachment-actions button:focus-visible, .app-attachments-upload > button:focus-visible,
+.app-form-actions button:focus-visible, .app-form-actions a:focus-visible, .app-attachment-actions button:focus-visible, .app-attachments-upload > button:focus-visible, [data-attachment-add]:focus-visible, .app-attachments-dialog-header button:focus-visible,
 .app-tabular-actions button:focus-visible, .app-tabular-toolbar button:focus-visible, .app-schedule-nav a:focus-visible, .app-report-actions a:focus-visible {
     outline: none; box-shadow: var(--app-focus);
 }
-.app-form-actions button:disabled, .app-attachment-actions button:disabled, .app-attachments-upload > button:disabled,
+.app-form-actions button:disabled, .app-attachment-actions button:disabled, .app-attachments-upload > button:disabled, [data-attachment-add]:disabled,
 .app-tabular-actions button:disabled, .app-tabular-toolbar button:disabled { opacity: .55; cursor: default; background: var(--app-surface); }
-.app-form-actions [data-save], .app-tabular-toolbar [data-tabular-save], .app-attachments-upload [data-attachment-upload] {
+.app-form-actions [data-save], .app-tabular-toolbar [data-tabular-save], .app-attachments-upload [data-attachment-retry] {
     background: var(--app-accent); color: var(--app-on-accent); border-color: var(--app-accent);
 }
-.app-form-actions [data-save]:hover, .app-tabular-toolbar [data-tabular-save]:hover, .app-attachments-upload [data-attachment-upload]:hover {
+.app-form-actions [data-save]:hover, .app-tabular-toolbar [data-tabular-save]:hover, .app-attachments-upload [data-attachment-retry]:hover {
     background: var(--app-accent-strong); border-color: var(--app-accent-strong);
 }
-.app-form-actions [data-save]:disabled, .app-tabular-toolbar [data-tabular-save]:disabled, .app-attachments-upload [data-attachment-upload]:disabled { background: var(--app-accent); }
+.app-form-actions [data-save]:disabled, .app-tabular-toolbar [data-tabular-save]:disabled, .app-attachments-upload [data-attachment-retry]:disabled { background: var(--app-accent); }
 .app-form-actions a { border-color: transparent; color: var(--app-muted); }
 .app-form-actions a:hover { color: var(--app-text); background: var(--app-surface-3); }
 .app-form-actions [data-delete] { margin-left: auto; color: var(--app-danger); border-color: color-mix(in srgb, var(--app-danger) 45%, var(--app-border)); }
@@ -125,7 +125,7 @@
     border: 1px solid var(--app-border); border-left: 4px solid var(--app-accent); border-radius: var(--app-radius-sm);
     background: var(--app-surface-2); color: var(--app-text);
 }
-.app-form-errors, .app-attachments-errors, .app-tabular-errors, .app-schedule-problem, :where(.application-blocks) p[role=alert]:not(.app-form-field p) {
+.app-form-errors, .app-attachments-errors, .app-attachments-upload-errors, .app-tabular-errors, .app-schedule-problem, :where(.application-blocks) p[role=alert]:not(.app-form-field p) {
     margin: 0 0 1rem; padding: .85rem 1rem; border: 1px solid color-mix(in srgb, var(--app-danger) 35%, var(--app-border));
     border-left: 4px solid var(--app-danger); border-radius: var(--app-radius-sm); background: var(--app-danger-soft); color: var(--app-danger-strong);
 }
@@ -241,17 +241,30 @@
 .app-attachment-name:focus-visible { outline: none; box-shadow: var(--app-focus); border-radius: .2rem; }
 .app-attachment-meta { color: var(--app-muted); font-size: .875rem; }
 .app-attachment-notes { flex-basis: 100%; margin: 0; color: var(--app-text); font-size: .9375rem; }
-.app-attachment-revisions { flex-basis: 100%; font-size: .875rem; color: var(--app-muted); }
-.app-attachment-revisions summary { cursor: pointer; color: var(--app-accent); font-weight: 500; width: max-content; }
-.app-attachment-revisions ul { margin: .35rem 0 0 1rem; padding: 0; }
-.app-attachment-revisions a { color: var(--app-accent); }
 .app-attachment-actions { margin-left: auto; display: flex; gap: .4rem; align-self: center; }
+[data-attachment-add] { margin-top: .85rem; }
+.app-attachments-progress {
+    display: inline-grid; place-items: center; position: relative; flex: none; width: 1.15rem; height: 1.15rem; border-radius: 50%;
+    background: conic-gradient(currentColor var(--upload-progress, 0%), var(--app-border) 0);
+}
+.app-attachments-progress::after { content: ""; position: absolute; inset: .2rem; border-radius: 50%; background: var(--app-surface); }
+[data-attachment-add]:hover .app-attachments-progress::after { background: var(--app-accent-soft); }
+.app-attachments-progress[data-state=failed] { background: var(--app-danger); color: var(--app-on-accent); font-size: .8rem; }
+.app-attachments-progress[data-state=failed]::after { display: none; }
+.app-attachments-dialog {
+    width: min(44rem, calc(100% - 2rem)); max-height: calc(100% - 2rem); padding: 1rem;
+    border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-surface); color: var(--app-text);
+}
+.app-attachments-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.app-attachments-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
+.app-attachments-dialog-header h3 { margin: 0; font-size: 1.15rem; }
 .app-attachments-upload {
     display: flex; flex-wrap: wrap; align-items: end; gap: .75rem 1rem; margin-top: .85rem; padding: .9rem 1rem;
     border: 1px dashed var(--app-border-strong); border-radius: var(--app-radius-sm); background: var(--app-surface-2);
 }
 .app-attachments-upload > label { display: flex; flex-direction: column; gap: .35rem; min-width: 0; font-weight: 600; font-size: .9375rem; }
 .app-attachments-upload > label input[type=text], .app-attachments-upload > label select { min-width: 11rem; font-weight: 400; }
+.app-attachments-upload-help { flex-basis: 100%; margin: 0; color: var(--app-muted); font-size: .875rem; }
 .app-attachments-dashboard { flex: 1 0 100%; min-width: 0; width: 100%; }
 .app-attachments-dashboard .uppy-Root { font-family: inherit; }
 .app-attachments-upload > button { margin-left: auto; }
@@ -473,7 +486,7 @@
 }
 @media print {
     .app-form { border: 0; box-shadow: none; padding: 0; }
-    .app-form-actions, .app-attachments-upload, .app-attachment-actions, .app-tabular-toolbar, .app-tabular-actions, .app-tabular-actions-head,
+    .app-form-actions, .app-attachments-upload, .app-attachments-dialog, [data-attachment-add], .app-attachment-actions, .app-tabular-toolbar, .app-tabular-actions, .app-tabular-actions-head,
     .app-schedule-nav, .app-schedule-jump, .app-report-actions, .app-schedule-tooltip, .app-schedule-popover { display: none !important; }
     .app-schedule-scroll { max-height: none; overflow: visible; }
 }

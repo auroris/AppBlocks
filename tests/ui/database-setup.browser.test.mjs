@@ -140,7 +140,7 @@ async function mountBlock(answer) {
         const path = new URL(route.request().url()).pathname;
         if (path === '/page') return route.fulfill({contentType:'text/html', body:`<section data-app-attachments data-api="/api/attachments/p/b" data-owner="page" data-read-only="false" data-max-size="1000">
             <div class="app-attachments-message" role="status"></div><div class="app-attachments-errors" role="alert" hidden></div><ul class="app-attachments-list" aria-busy="true"></ul>
-            <div class="app-attachments-upload" hidden><input type="file" data-attachment-file><button type="button" data-attachment-upload>Upload</button></div></section>
+            <button type="button" data-attachment-add hidden>Add files</button></section>
             <script type="module" src="/App_Plugins/ApplicationBlocks/runtime.js"></script>`});
         const asset = await runtimeAsset(path); if (asset) return route.fulfill(asset);
         if (path.startsWith('/api/attachments')) return route.fulfill({contentType:'application/json', body:JSON.stringify(answer)});
@@ -156,7 +156,7 @@ test('without file storage a visitor gets a plain notice, no controls and no poi
     const {page, errors} = await mountBlock({ owner:{alias:'a', key:'1'}, canWrite:false, purposes:[], maxFileSize:1000, accept:null, items:[], storage:{ message, setupUrl:null } });
     await page.getByRole('status').getByText(message, {exact:true}).waitFor();
     assert.equal(await page.locator('.app-attachments-errors').isVisible(), false, 'It is a notice, not an error');
-    assert.equal(await page.locator('.app-attachments-upload').isVisible(), false);
+    assert.equal(await page.locator('[data-attachment-add]').isVisible(), false);
     assert.equal(await page.locator('[data-app-attachments] a').count(), 0);
     assert.deepEqual(errors, []);
     await page.close();
@@ -176,7 +176,7 @@ test('without file storage an administrator also gets the way to the setup scree
 test('with file storage the block is what it always was', async () => {
     const {page, errors} = await mountBlock({ owner:{alias:'a', key:'1'}, canWrite:true, purposes:[], maxFileSize:1000, accept:null, items:[], antiforgeryToken:'t' });
     await page.getByRole('status').getByText('No files yet.', {exact:true}).waitFor();
-    assert.equal(await page.locator('.app-attachments-upload').isVisible(), true);
+    assert.equal(await page.locator('[data-attachment-add]').isVisible(), true);
     assert.deepEqual(errors, []);
     await page.close();
 });

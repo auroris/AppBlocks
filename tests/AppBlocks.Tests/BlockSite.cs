@@ -436,6 +436,13 @@ internal sealed class AttachmentsClient(HttpClient client, string pathBase, Guid
     public Task<AttachmentsResponse> ReplaceAsync(long id, AttachmentFile? file = null, string? purpose = null, string? label = null, string? notes = null, string? query = null)
         => WriteAsync(HttpMethod.Put, Item(id), query, file, purpose, label, notes);
 
+    public Task<AttachmentsResponse> RenameAsync(long id, string? fileName, string? query = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, Http.WithQuery(Item(id), query)) { Content = JsonContent.Create(new { fileName }) };
+        request.Headers.Add("RequestVerificationToken", Token());
+        return SendAsync(request);
+    }
+
     public Task<HttpResponseMessage> DownloadAsync(long id, string? query = null) => client.GetAsync(Http.WithQuery(Item(id), query));
 
     public async Task<HttpResponseMessage> RemoveAsync(long id, string? query = null)
