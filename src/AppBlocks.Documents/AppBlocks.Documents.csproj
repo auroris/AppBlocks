@@ -15,7 +15,7 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../AppBlocks/AppBlocks.csproj" />
     <PackageReference Include="HtmlAgilityPack" Version="1.13.1" />
-    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.15" />
     <ProjectReference Include="$(PressroomRoot)/src/Pressroom.Client/Pressroom.Client.csproj" Condition="'$(UsePressroomSource)' == 'true'" />
     <PackageReference Include="AurorisNet.Pressroom.Client" Version="1.1.0" Condition="'$(UsePressroomSource)' != 'true'" />
     <Using Include="Microsoft.AspNetCore.Builder" />
@@ -33,8 +33,7 @@
     <Content Update="Schema/**/*.config;appsettings-schema*.json;umbraco-package-schema.json" Pack="false" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
   </ItemGroup>
   <!-- UsePressroomSource stays empty only when nobody chose and the checkout was not found. -->
-  <Target Name="WarnPressroomFromPackage" BeforeTargets="CollectPackageReferences;ResolveProjectReferences"
-          Condition="'$(UsePressroomSource)' == '' and '$(DesignTimeBuild)' != 'true'">
+  <Target Name="WarnPressroomFromPackage" BeforeTargets="CollectPackageReferences;ResolveProjectReferences" Condition="'$(UsePressroomSource)' == '' and '$(DesignTimeBuild)' != 'true'">
     <Warning Code="APPBLOCKS002" Text="No Pressroom checkout at '$(PressroomRoot)', so AppBlocks.Documents uses the AurorisNet.Pressroom.Client NuGet package instead of source. Set PressroomRoot to the checkout, or UsePressroomSource=false to choose the package." />
   </Target>
 </Project>

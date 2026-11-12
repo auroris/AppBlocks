@@ -29,12 +29,11 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../AppBlocks/AppBlocks.csproj" />
-    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.15" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseInteractiveReportsSource)' == 'true'">
     <ProjectReference Include="$(InteractiveReportsRoot)/src/InteractiveReport.AspNetCore/InteractiveReport.AspNetCore.csproj" />
-    <ProjectReference Include="$(InteractiveReportsRoot)/src/InteractiveReport.Client.Json/InteractiveReport.Client.Json.csproj"
-                      AdditionalProperties="CustomAfterMicrosoftCommonTargets=$(MSBuildThisFileDirectory)InteractiveReports.targets" />
+    <ProjectReference Include="$(InteractiveReportsRoot)/src/InteractiveReport.Client.Json/InteractiveReport.Client.Json.csproj" AdditionalProperties="CustomAfterMicrosoftCommonTargets=$(MSBuildThisFileDirectory)InteractiveReports.targets" />
     <ProjectReference Include="$(InteractiveReportsRoot)/src/InteractiveReport.Client.FileDownload/InteractiveReport.Client.FileDownload.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseInteractiveReportsSource)' != 'true'">
@@ -51,8 +50,7 @@
     <Content Update="Schema/**/*.config;Reports/umbraco-reports.json;appsettings-schema*.json;umbraco-package-schema.json" Pack="false" />
   </ItemGroup>
   <!-- UseInteractiveReportsSource stays empty only when nobody chose and the checkout was not found. -->
-  <Target Name="WarnInteractiveReportsFromPackages" BeforeTargets="CollectPackageReferences;ResolveProjectReferences"
-          Condition="'$(UseInteractiveReportsSource)' == '' and '$(DesignTimeBuild)' != 'true'">
+  <Target Name="WarnInteractiveReportsFromPackages" BeforeTargets="CollectPackageReferences;ResolveProjectReferences" Condition="'$(UseInteractiveReportsSource)' == '' and '$(DesignTimeBuild)' != 'true'">
     <Warning Code="APPBLOCKS001" Text="No Interactive-Reports checkout at '$(InteractiveReportsRoot)', so AppBlocks.InteractiveReports uses the InteractiveReport NuGet packages instead of source. Set InteractiveReportsRoot to the checkout, or UseInteractiveReportsSource=false to choose the packages." />
   </Target>
 </Project>

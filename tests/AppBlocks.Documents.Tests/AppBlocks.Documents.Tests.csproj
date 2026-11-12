@@ -6,7 +6,7 @@
     <NoWarn>$(NoWarn);xUnit1051</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="xunit.v3" Version="4.0.2" />
+    <PackageReference Include="xunit.v3" Version="4.0.3" />
     <ProjectReference Include="../../src/AppBlocks.Documents/AppBlocks.Documents.csproj" />
     <Using Include="Xunit" />
     <Content Update="Views/**/*.cshtml" CopyToOutputDirectory="PreserveNewest" />
