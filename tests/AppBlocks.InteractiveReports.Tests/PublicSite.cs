@@ -45,6 +45,7 @@ using Umbraco.Cms.Core.Sync;
 using Umbraco.Cms.Core.Web;
 using Umbraco.Cms.Web.Common.Controllers;
 using Umbraco.Extensions;
+using AppBlocks.InteractiveReports.Blocks;
 
 namespace AppBlocks.InteractiveReports.Tests;
 
@@ -205,7 +206,7 @@ internal sealed class PublicSite : IAsyncDisposable
 
     public static string FormUrl(Guid page, Guid form) => $"/api/forms/{page}/{form}";
     public static string FilesUrl(Guid page, Guid block) => $"/api/attachments/{page}/{block}";
-    public static string ReportName(Guid page, Guid block) => AppBlockContent.ReportName(page, block);
+    public static string ReportName(Guid page, Guid block) => ReportBlocks.Name(page, block);
 
     private async Task PublishAsync()
     {

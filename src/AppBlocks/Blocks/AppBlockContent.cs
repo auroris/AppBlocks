@@ -77,8 +77,4 @@ public sealed class AppBlockContent(IUmbracoContextFactory contexts, IHttpContex
         var block = Flatten(Blocks(page, culture), culture).FirstOrDefault(b => b.ContentKey == blockKey && b.Content.ContentType.Alias == alias);
         return block is null ? null : (page, block, culture);
     }
-    // Existing hosts use these names. New companions use the generic block operations above.
-    public static string ReportName(Guid page, Guid block) => BlockName(page, block);
-    public static bool ParseReportName(string name, out Guid page, out Guid block) => ParseBlockName(name, out page, out block);
-    public Task<(IPublishedContent Page, BlockGridItem Block, string? Culture)?> ReportAsync(string name) => BlockAsync(name, "appReport");
 }

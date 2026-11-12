@@ -36,11 +36,11 @@ public sealed class FormsTests
     public void Instance_names_distinguish_copied_pages_and_blocks()
     {
         var page = Guid.NewGuid(); var block = Guid.NewGuid();
-        var name = AppBlockContent.ReportName(page, block);
-        Assert.True(AppBlockContent.ParseReportName(name, out var parsedPage, out var parsedBlock));
+        var name = AppBlockContent.BlockName(page, block);
+        Assert.True(AppBlockContent.ParseBlockName(name, out var parsedPage, out var parsedBlock));
         Assert.Equal(page, parsedPage); Assert.Equal(block, parsedBlock);
-        Assert.NotEqual(name, AppBlockContent.ReportName(Guid.NewGuid(), block));
-        Assert.False(AppBlockContent.ParseReportName("page-orders", out _, out _));
+        Assert.NotEqual(name, AppBlockContent.BlockName(Guid.NewGuid(), block));
+        Assert.False(AppBlockContent.ParseBlockName("page-orders", out _, out _));
     }
 }
 

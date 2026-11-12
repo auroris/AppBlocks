@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Models.Membership;
 using Umbraco.Cms.Core.Services;
+using AppBlocks.InteractiveReports.Blocks;
 
 namespace AppBlocks.InteractiveReports.Tests;
 
@@ -81,7 +82,7 @@ public sealed class ReportAccessPolicyTests
     [InlineData("orders", InteractiveReportAction.Export, false)]
     public async Task An_anonymous_visitor_may_read_a_report_block_and_nothing_else(string report, InteractiveReportAction action, bool allowed)
     {
-        var name = report == "block" ? AppBlocks.Blocks.AppBlockContent.ReportName(Guid.NewGuid(), Guid.NewGuid()) : report;
+        var name = report == "block" ? ReportBlocks.Name(Guid.NewGuid(), Guid.NewGuid()) : report;
         var policy = new DefaultReportAccessPolicy(null!, Options.Create(new AppBlocksOptions()), null!, Monitor());
         var request = new InteractiveReportAuthorizationRequest {
             User = new ClaimsPrincipal(new ClaimsIdentity()), Action = action,

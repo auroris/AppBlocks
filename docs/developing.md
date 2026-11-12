@@ -57,7 +57,7 @@ The core package and each companion own their implementation and assets. The sta
 - `FormEndpoints` handles HTTP admission, antiforgery and serialization. `FormSubmissionService` validates and saves records and their detail rows, using `TabularOperations` for shared row validation and presentation. `FormRequestValues` owns bounded request-value parsing.
 - Companions use public core operations. `DataSourceReadQuery` supplies read SQL and bindings without exposing the execution plan; callers still authorize through `DataSourceQueries.AuthorizeAsync`. Connection registration and schema migrations have their own public operations. Production companions have no friend-assembly access to core internals.
 - `runtime.js` mounts the browser features. Forms, attachments, tabular rows, anti-spam and field controls have separate modules; `form-coordination.js` owns their registration and submission-key exchange. Keep the existing runtime entry URL and form events when changing these modules.
-- Razor views, static assets and Umbraco schema files retain their framework-specific locations. `AppBlockContent`'s report-named helpers forward to its generic block operations for sites that already call them; new code uses the feature contracts directly, and the companion uses `ReportBlocks`.
+- Razor views, static assets and Umbraco schema files retain their framework-specific locations. Core addresses page-owned blocks generically through `AppBlockContent`; the Interactive Reports companion names and resolves its report blocks through `ReportBlocks`, which hosts use too.
 
 ## Who owns the definitions
 

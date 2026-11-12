@@ -20,6 +20,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using AppBlocks.InteractiveReports.Blocks;
 
 namespace AppBlocks.InteractiveReports.Tests;
 
@@ -158,7 +159,7 @@ public sealed class SavedViewStoreTests
     {
         var file = Path.Combine(Directory.CreateTempSubdirectory("saved-views-").FullName, "views.db");
         await using var site = Site($"Data Source={file};Pooling=False", text => new SqliteConnection(text));
-        var block = AppBlocks.Blocks.AppBlockContent.ReportName(Guid.NewGuid(), Guid.NewGuid());
+        var block = ReportBlocks.Name(Guid.NewGuid(), Guid.NewGuid());
         var http = new HttpContextAccessor { HttpContext = new DefaultHttpContext() };
         var store = new SavedViewStore(new SharedViews(block), site.Catalog, site.Connections, site.Provider.GetRequiredService<ILogger<SavedViewStore>>(), http);
 

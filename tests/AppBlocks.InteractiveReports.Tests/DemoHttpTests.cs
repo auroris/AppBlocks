@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using AppBlocks.Blocks;
+using AppBlocks.InteractiveReports.Blocks;
 
 namespace AppBlocks.InteractiveReports.Tests;
 
@@ -25,7 +26,7 @@ public sealed class DemoHttpTests
         // The page has no Public Access, so its report is public; its form's class still asks for a sign-in.
         Assert.Contains("Sign in to use this form", html);
         Assert.Contains("data-app-report", html);
-        var firstReport = AppBlockContent.ReportName(Key("page"), Key("main-report"));
+        var firstReport = ReportBlocks.Name(Key("page"), Key("main-report"));
         Assert.Equal(HttpStatusCode.OK, (await anonymous.GetAsync($"/api/reports/{firstReport}/default")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await anonymous.GetAsync($"/api/forms/{Key("page")}/{Key("main-form")}?mainId=1")).StatusCode);
         using var client = await Administrator();
@@ -41,7 +42,7 @@ public sealed class DemoHttpTests
             using var form = await client.GetAsync($"/api/forms/{Key("page")}/{Key(prefix + "-form")}?{prefix}Id=1");
             Assert.True(form.IsSuccessStatusCode, await form.Content.ReadAsStringAsync());
             Assert.Contains("A task from a normal content page", await form.Content.ReadAsStringAsync());
-            using var report = await client.GetAsync($"/api/reports/{AppBlockContent.ReportName(Key("page"), Key(prefix + "-report"))}/default");
+            using var report = await client.GetAsync($"/api/reports/{ReportBlocks.Name(Key("page"), Key(prefix + "-report"))}/default");
             var body = await report.Content.ReadAsStringAsync(); Assert.True(report.IsSuccessStatusCode, body);
             using var json = JsonDocument.Parse(body);
             Assert.Single(json.RootElement.GetProperty("result").GetProperty("rows").EnumerateArray());

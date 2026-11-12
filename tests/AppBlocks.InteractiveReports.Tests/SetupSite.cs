@@ -33,6 +33,7 @@ using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Core.Strings;
 using Umbraco.Cms.Core.Sync;
 using Umbraco.Extensions;
+using AppBlocks.InteractiveReports.Blocks;
 
 namespace AppBlocks.InteractiveReports.Tests;
 
@@ -50,7 +51,7 @@ internal sealed class SetupSite : IAsyncDisposable
     public const string TasksResource = "setup.tasks";
     public const string AdminEmail = "setup.admin@example.test";
     public const string EditorEmail = "setup.editor@example.test";
-    public static string ReportName => AppBlockContent.ReportName(PageKey, ReportKey);
+    public static string ReportName => ReportBlocks.Name(PageKey, ReportKey);
 
     private readonly WebApplication app;
     private readonly string password;
