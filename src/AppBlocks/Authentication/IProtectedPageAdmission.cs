@@ -8,8 +8,10 @@ namespace AppBlocks.Authentication;
 /// Member session the page admits. Answer the authenticated principal to treat as the request's person, or null to let
 /// Umbraco's refusal stand. The same answer governs the page itself and every block endpoint on it, so a page a host shows
 /// also works. AppBlocks registers no rule of its own, and a request with a Member session Umbraco refused is never asked
-/// about: a refused Member is not replaced by another account. A host might, for example, admit a backoffice User who may edit
-/// the page. Register as many as the site needs; the first one that answers decides.
+/// about: a refused Member is not replaced by another account. A route that carries only the backoffice User, such as the
+/// reports companion's backoffice routes, never asks about the Member, so there a Member cookie on the request does not stop
+/// the question. A host might, for example, admit a backoffice User who may edit the page. Register as many as the site needs;
+/// the first one that answers decides.
 /// </summary>
 public interface IProtectedPageAdmission
 {

@@ -174,9 +174,17 @@ public sealed partial class AttachmentStore(IApplicationConnectionFactory connec
     });
 
     /// <summary>
-    /// Adopts files on the caller's open attachment database connection and transaction. The caller ensures
-    /// the attachment schema before opening its transaction and authorizes both owners. Neither connection
-    /// nor transaction is disposed or committed here, so record creation and adoption can commit together.
+    /// Opens the attachments database, its tables ensured as every store operation ensures them, for a resource that adopts
+    /// pending files in its own create transaction with <see cref="AdoptAsync(DbConnection, DbTransaction?, AttachmentOwner, AttachmentOwner, string, CancellationToken)"/>.
+    /// The record's tables must be in this database, so the record and the adoption commit together. The caller begins and
+    /// commits the transaction and disposes the connection. A database that cannot be used throws an <see cref="AttachmentStoreException"/>.
+    /// </summary>
+    public Task<DbConnection> OpenConnectionAsync(CancellationToken ct) => GuardAsync(write: false, () => OpenAsync(ct));
+
+    /// <summary>
+    /// Adopts files on the caller's open attachment database connection and transaction, opened with
+    /// <see cref="OpenConnectionAsync"/> so the attachment tables are there before the transaction begins. The caller authorizes
+    /// both owners. Neither connection nor transaction is disposed or committed here, so record creation and adoption can commit together.
     /// </summary>
     public static async Task<int> AdoptAsync(DbConnection connection, DbTransaction? transaction,
         AttachmentOwner pending, AttachmentOwner owner, string by, CancellationToken ct)
@@ -204,12 +212,13 @@ public sealed partial class AttachmentStore(IApplicationConnectionFactory connec
 
     /// <summary>
     /// Deletes the pending files uploaded more than <see cref="AttachmentSettings.PendingLifetimeHours"/> ago, whose form was never
-    /// saved, with their rows. The pending endpoints call it before each operation, so no background service is needed.
+    /// saved, with their rows. The hourly cleanup job and the pending endpoints call this.
     /// </summary>
     public Task<int> ExpirePendingAsync(CancellationToken ct) => GuardAsync(write: true, async () =>
     {
         await using var connection = await OpenAsync(ct);
-        await using var transaction = await connection.BeginTransactionAsync(ct);
+        // Keep adoption from changing a selected file's owner before the cleanup deletes it.
+        await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var expired = await DeleteLinksAsync(connection, transaction, "SELECT LINK_ID, ATTACHMENT_ID FROM APP_ATTACHMENT_LINK WHERE OWNER_ALIAS LIKE @pending AND CREATED_AT < @before", ct,
             ("@pending", AttachmentOwner.PendingPrefix + "%"),
             ("@before", DateTime.UtcNow.AddHours(-Math.Max(0, settings.Value.PendingLifetimeHours))));

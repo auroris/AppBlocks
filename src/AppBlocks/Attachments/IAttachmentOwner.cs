@@ -17,7 +17,8 @@ public interface IAttachmentOwner
 /// <summary>
 /// A resource that lets some callers add files they may not then replace or remove: the record's filed documents stay as
 /// filed, and someone asked for a missing one can still send it. It is asked only for a saved record, and only about a
-/// caller its write rule refuses; whoever may write may add. A block set to read only takes no files from anyone.
+/// caller its write rule refuses; whoever may write may add. Adopting the files a caller sent ahead of the record's first save
+/// takes this leave too, since it adds files and changes none. A block set to read only takes no files from anyone.
 /// </summary>
 public interface IAddOnlyAttachmentOwner
 {

@@ -1,15 +1,16 @@
 import { UmbLitElement } from "@umbraco-cms/backoffice/lit-element";
 import { html, css } from "@umbraco-cms/backoffice/external/lit";
+import { UMB_AUTH_CONTEXT } from "@umbraco-cms/backoffice/auth";
 import { UMB_DOCUMENT_WORKSPACE_CONTEXT } from "@umbraco-cms/backoffice/document";
 import { UMB_PARENT_ENTITY_CONTEXT } from "@umbraco-cms/backoffice/entity";
-import { managementRequest } from "../AppBlocks/api.js";
+import { isAdministrator, managementRequest, testNeedsAdministrator } from "../AppBlocks/api.js";
 import { routeParameters } from "./api-route.js";
 
 const queryParameters = text => (text ?? "").split(/[\s,]+/).map(name => name.replace(/^:PARAM\./i, "")).filter(name => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name));
 
 /** Calls the endpoint being edited as the signed-in User, with sample parameter values, and shows its JSON. Nothing is saved. */
 export default class ApiEndpointTest extends UmbLitElement {
-    static properties = { busy: { state: true }, error: { state: true }, result: { state: true }, values: { state: true } };
+    static properties = { busy: { state: true }, error: { state: true }, result: { state: true }, values: { state: true }, allowed: { state: true } };
     static styles = css`
         :host { display:block; } label { display:block; margin:8px 0 4px; font-weight:600; }
         input { box-sizing:border-box; width:100%; max-width:420px; padding:8px; font:13px monospace; color:inherit; background:var(--uui-color-surface); border:1px solid var(--uui-color-border); border-radius:3px; }
@@ -23,6 +24,8 @@ export default class ApiEndpointTest extends UmbLitElement {
             if (workspace?.data) this.observe(workspace.data, data => this.values = Object.fromEntries((data?.values ?? []).map(property => [property.alias, property.value])));
         });
         this.consumeContext(UMB_PARENT_ENTITY_CONTEXT, context => this.parent = context);
+        // Testing is for AppBlocks administrators; anyone else is told so in place of the button.
+        this.consumeContext(UMB_AUTH_CONTEXT, context => { if (context) isAdministrator().then(allowed => this.allowed = allowed); });
     }
     sample(kind, name) { return this.samples[`${kind}:${name}`] ?? ""; }
     async test() {
@@ -47,6 +50,7 @@ export default class ApiEndpointTest extends UmbLitElement {
             <input id=${id} spellcheck="false" .value=${this.sample(kind, name)} @input=${event => { this.samples = { ...this.samples, [`${kind}:${name}`]: event.target.value }; }}>`;
     }
     render() {
+        if (this.allowed === false) return html`<p data-testid="test-needs-administrator">${testNeedsAdministrator}</p>`;
         const route = routeParameters(this.values.route);
         const query = queryParameters(this.values.queryParameters);
         return html`

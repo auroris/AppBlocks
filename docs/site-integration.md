@@ -148,7 +148,7 @@ AppBlocks works with no configuration. Each setting below keeps the behaviour de
 | `Attachments:Connection` | `AppBlocksDb` | The upload store; see [Connections](connections.md). |
 | `Attachments:MaxFileSize`, `AllowedExtensions` | 25 MB, any | The largest file and the extensions every Attachments block is limited to. |
 | `Attachments:RetentionDays` | `30` | How long a removed file stays before an administrator's purge deletes it. |
-| `Attachments:PendingLifetimeHours` | `24` | How long a file uploaded to a record not saved yet waits for the save. |
+| `Attachments:PendingLifetimeHours` | `24` | How long a file uploaded to a record not saved yet waits for the save. An hourly Umbraco job deletes expired pending uploads, even without visits to the site. |
 
 The companions add their own: `AppBlocks:ReportAdministratorGroups`, `AppBlocks:IncludeBackOfficeReports` and `AppBlocks:InteractiveReports:PaperSizes` in the [Interactive Reports companion](../src/AppBlocks.InteractiveReports/README.md), and `AppBlocks:Documents:*` in the [Documents companion](../src/AppBlocks.Documents/README.md).
 
@@ -245,7 +245,7 @@ public sealed class NoticeSettingsController(NoticeSettings settings) : Manageme
 
 AppBlocks' connection list, database types, table list and guide stay open to every backoffice user, because the data source and report pickers read them.
 
-Data source and API endpoint **Test** actions also require this administrator policy, because they execute the current SQL even before it is saved or published. They still require Content section access and permission to update the existing node or create under the parent of a new node. The Backing Classes editor uses the same administrator rule and still requires Settings section access and the development compilation setup for editing. Sites that used `AppBlocks:CodeEditorGroups` must move those aliases into `AppBlocks:AdministratorGroups`; the former setting no longer grants access.
+Data source and API endpoint **Test** actions also require this administrator policy, because they execute the current SQL even before it is saved or published. They still require Content section access and permission to update the existing node or create under the parent of a new node. An editor who is not an AppBlocks administrator sees a note in place of the Test button; `GET /umbraco/management/api/v1/appblocks/administrator` answers `{ "allowed": true }` or `false` for the signed-in User, for a companion's screen that does the same. The Backing Classes editor uses the same administrator rule and still requires Settings section access and the development compilation setup for editing. Sites that used `AppBlocks:CodeEditorGroups` must move those aliases into `AppBlocks:AdministratorGroups`; the former setting no longer grants access.
 
 ### Names a companion owns
 

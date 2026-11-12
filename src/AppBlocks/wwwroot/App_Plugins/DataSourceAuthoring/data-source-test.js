@@ -4,9 +4,9 @@ import { UMB_AUTH_CONTEXT } from "@umbraco-cms/backoffice/auth";
 import { UMB_DOCUMENT_WORKSPACE_CONTEXT } from "@umbraco-cms/backoffice/document";
 import { UMB_PARENT_ENTITY_CONTEXT } from "@umbraco-cms/backoffice/entity";
 
-import { managementRequest } from "../AppBlocks/api.js";
+import { isAdministrator, managementRequest, testNeedsAdministrator } from "../AppBlocks/api.js";
 export default class DataSourceTest extends UmbLitElement {
-    static properties = { busy: { state: true }, error: { state: true }, result: { state: true } };
+    static properties = { busy: { state: true }, error: { state: true }, result: { state: true }, allowed: { state: true } };
     static styles = css`
         :host { display:block; } textarea { width:100%; box-sizing:border-box; min-height:100px; padding:10px; font:13px monospace; }
         button { margin:12px 0; padding:8px 16px; cursor:pointer; } .error { color:var(--uui-color-danger); } .warning { color:var(--uui-color-warning-emphasis, var(--uui-color-text)); }
@@ -15,7 +15,11 @@ export default class DataSourceTest extends UmbLitElement {
     `;
     constructor() {
         super(); this.samples = "{}";
-        this.consumeContext(UMB_AUTH_CONTEXT, context => this.auth = context);
+        this.consumeContext(UMB_AUTH_CONTEXT, context => {
+            this.auth = context;
+            // Testing is for AppBlocks administrators; anyone else is told so in place of the button.
+            if (context) isAdministrator().then(allowed => this.allowed = allowed);
+        });
         this.consumeContext(UMB_DOCUMENT_WORKSPACE_CONTEXT, context => this.workspace = context);
         this.consumeContext(UMB_PARENT_ENTITY_CONTEXT, context => this.parent = context);
     }
@@ -34,6 +38,7 @@ export default class DataSourceTest extends UmbLitElement {
         finally { this.busy = false; }
     }
     render() {
+        if (this.allowed === false) return html`<p data-testid="test-needs-administrator">${testNeedsAdministrator}</p>`;
         return html`
             <label for="samples">Sample bind values (JSON)</label>
             <p>For example: {"PARAM.id":"1", "USER_SID":"S-1-5-21-123"}. Unspecified user values come from your account.</p>

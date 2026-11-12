@@ -12,7 +12,8 @@ namespace AppBlocks.Management;
 
 /// <summary>
 /// The Settings screens' connections and database setup. The guide, the connection list, the database types and the table list are open
-/// to every backoffice user, because the data source and report pickers read them; everything else is for administrators.
+/// to every backoffice user, because the data source and report pickers read them, as is whether the User is an AppBlocks administrator;
+/// everything else is for administrators.
 /// </summary>
 [ApiVersion("1.0")]
 [VersionedApiBackOfficeRoute("appblocks")]
@@ -33,6 +34,17 @@ public sealed class AppBlocksSettingsController(ConnectionCatalog connections, C
     {
         Response.Headers.CacheControl = "no-store";
         return Ok(connections.List());
+    }
+
+    /// <summary>
+    /// Whether the signed-in User passes AppBlocks administration (<see cref="AppBlocksAuthorization.AdministratorPolicy"/>), so an
+    /// editor screen can leave out what only administrators may use, such as a data source's Test. Every such endpoint still checks.
+    /// </summary>
+    [HttpGet("administrator")]
+    public async Task<IActionResult> Administrator([FromServices] ApplicationAccessPolicy access)
+    {
+        Response.Headers.CacheControl = "no-store";
+        return Ok(new { allowed = await access.IsBackOfficeAdministratorAsync(User) });
     }
 
     /// <summary>The database types a connection can have, in the order the connection form offers them.</summary>

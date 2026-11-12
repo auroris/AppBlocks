@@ -164,6 +164,9 @@ public sealed class DataSourceAuthoringHttpTests
             await ExpectPreviews(client, HttpStatusCode.Forbidden);
             const string codePath = "/umbraco/management/api/v1/appblocks/code";
             Assert.False((await client.GetFromJsonAsync<JsonElement>(codePath + "/access")).GetProperty("allowed").GetBoolean());
+            // The Test editors ask the same question first, so this editor sees why there is no Test button.
+            const string administratorPath = "/umbraco/management/api/v1/appblocks/administrator";
+            Assert.False((await client.GetFromJsonAsync<JsonElement>(administratorPath)).GetProperty("allowed").GetBoolean());
             Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(codePath)).StatusCode);
             var codeFile = new { path = "PreviewAccessProbe.cs", content = "public sealed class PreviewAccessProbe { }" };
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(codePath + "/file/new", codeFile)).StatusCode);
@@ -175,6 +178,7 @@ public sealed class DataSourceAuthoringHttpTests
             Assert.DoesNotContain(editor.Groups, group => group.Alias == Constants.Security.AdminGroupAlias);
             await ExpectPreviews(client, HttpStatusCode.OK);
             Assert.True((await client.GetFromJsonAsync<JsonElement>(codePath + "/access")).GetProperty("allowed").GetBoolean());
+            Assert.True((await client.GetFromJsonAsync<JsonElement>(administratorPath)).GetProperty("allowed").GetBoolean());
             var codeState = await client.GetFromJsonAsync<JsonElement>(codePath);
             var canCompile = codeState.GetProperty("canEdit").GetBoolean();
             Assert.Equal(canCompile ? HttpStatusCode.OK : HttpStatusCode.Conflict,
@@ -227,6 +231,8 @@ public sealed class DataSourceAuthoringHttpTests
             using (var contentOnly = await SignInAsync(address, editor.Username, password))
             {
                 await ExpectPreviews(contentOnly, HttpStatusCode.OK);
+                // Without Settings the code section's own question is refused, but the Test editors' is answered: this administrator tests.
+                Assert.True((await contentOnly.GetFromJsonAsync<JsonElement>(administratorPath)).GetProperty("allowed").GetBoolean());
                 Assert.Equal(HttpStatusCode.Forbidden, (await contentOnly.GetAsync(codePath + "/access")).StatusCode);
                 Assert.Equal(HttpStatusCode.Forbidden, (await contentOnly.GetAsync(codePath)).StatusCode);
             }

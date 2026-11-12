@@ -18,7 +18,7 @@ Create an **API endpoint** and publish it. Where it sits in the content tree is 
 | **Maximum rows** | The most rows a collection returns; 1000 by default. |
 | **Access**, **Read groups**, **Row restriction** | Only with the endpoint's own SQL, on the Access tab, with the same choices and checks as a SQL data source. |
 
-**Test** calls the endpoint as you, signed in to the backoffice, with sample values for its route and query parameters, and shows the status and JSON it answers. It uses your current edits; nothing is saved or published. Testing requires Umbraco's Administrators group or a group listed in `AppBlocks:AdministratorGroups`, as well as Content section access and permission to edit the node (or create under its parent for an unsaved node).
+**Test** calls the endpoint as you, signed in to the backoffice, with sample values for its route and query parameters, and shows the status and JSON it answers. It uses your current edits; nothing is saved or published. Testing requires Umbraco's Administrators group or a group listed in `AppBlocks:AdministratorGroups`, as well as Content section access and permission to edit the node (or create under its parent for an unsaved node). Anyone else sees a note saying so in place of the Test button.
 
 Publishing checks the endpoint as a request would read it, against its source's schema: the route must be well formed and answer no request another published endpoint answers, Order by must name columns of the source, and every `:PARAM.` the SQL uses must be a route parameter or listed under **Query parameters**, so a typo is refused rather than bound as NULL. With a data source selected, the endpoint's own connection, SQL, access, read groups and row restriction must stay empty.
 

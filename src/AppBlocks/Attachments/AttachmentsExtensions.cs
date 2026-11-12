@@ -12,6 +12,7 @@ public static class AttachmentsExtensions
     {
         builder.Services.AddOptions<AttachmentSettings>().Bind(configuration.GetSection(AttachmentSettings.Section));
         builder.Services.AddScoped<AttachmentStore>();
+        builder.Services.AddRecurringBackgroundJob<AttachmentCleanupJob>();
         // Shared with the Tabular form block, so either feature works without the other.
         builder.Services.TryAddScoped<BlockOwnerAccess>();
         builder.Services.AddScoped<AttachmentAccess>();

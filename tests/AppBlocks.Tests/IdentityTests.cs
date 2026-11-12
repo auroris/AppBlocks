@@ -297,9 +297,11 @@ public sealed class IdentityTests
     }
 
     [Theory]
-    [InlineData(PublicAccessStatus.AccessAccepted)]
-    [InlineData(PublicAccessStatus.AccessDenied)]
-    public async Task The_page_policy_admits_a_backoffice_only_caller_when_the_Member_cookie_is_also_on_the_request(PublicAccessStatus memberAccess)
+    [InlineData(PublicAccessStatus.AccessAccepted, false)]
+    [InlineData(PublicAccessStatus.AccessDenied, false)]
+    [InlineData(PublicAccessStatus.AccessAccepted, true)]
+    [InlineData(PublicAccessStatus.AccessDenied, true)]
+    public async Task The_page_policy_admits_a_backoffice_only_caller_when_the_Member_cookie_is_also_on_the_request(PublicAccessStatus memberAccess, bool protectedPage)
     {
         var pageKey = Guid.NewGuid(); var userKey = Guid.NewGuid();
         var member = Principal(IdentityConstants.ApplicationScheme, "7");
@@ -324,7 +326,13 @@ public sealed class IdentityTests
             ? new Umbraco.Cms.Core.UmbracoContextReference(umbraco, false, Stub<Umbraco.Cms.Core.Web.IUmbracoContextAccessor>(Never)) : throw new NotImplementedException(method.Name));
         var checker = Stub<IPublicAccessChecker>((method, _) => method.Name == "HasMemberAccessToContentAsync" ? Task.FromResult(memberAccess) : throw new NotImplementedException(method.Name));
         var http = new HttpContextAccessor();
-        var access = new AppPageAccess(new AppBlockContent(factory, http), checker, http, new ApplicationAccessPolicy(users), Stub<IPublicAccessService>((method, _) => method.Name == "IsProtected" ? Attempt<PublicAccessEntry>.Fail() : throw new NotImplementedException(method.Name)), []);
+        var publicAccess = Stub<IPublicAccessService>((method, _) => method.Name == "IsProtected"
+            ? protectedPage ? Attempt<PublicAccessEntry>.Succeed(null!) : Attempt<PublicAccessEntry>.Fail() : throw new NotImplementedException(method.Name));
+        // On a protected page the User is the host's to admit, as a rule that admits a page's editors does.
+        IProtectedPageAdmission[] admissions = protectedPage
+            ? [Stub<IProtectedPageAdmission>((method, _) => method.Name == "AdmitAsync" ? Task.FromResult<ClaimsPrincipal?>(backOffice) : throw new NotImplementedException(method.Name))]
+            : [];
+        var access = new AppPageAccess(new AppBlockContent(factory, http), checker, http, new ApplicationAccessPolicy(users), publicAccess, admissions);
         using var services = new ServiceCollection().AddSingleton(authentication).AddSingleton(access).BuildServiceProvider();
         http.HttpContext = new DefaultHttpContext { RequestServices = services };
         var handler = new AppPageAuthorizationHandler(http);
@@ -335,7 +343,8 @@ public sealed class IdentityTests
             return context.HasSucceeded;
         }
         var accepted = memberAccess == PublicAccessStatus.AccessAccepted;
-        // A backoffice-only route strips the Member on purpose, so the Member cookie is not the caller there: the page answers for the User alone, whatever Public Access would say about the Member.
+        // A backoffice-only route strips the Member on purpose, so the Member cookie is not the caller there: the page answers for the User alone, whatever Public Access would say about the Member,
+        // and on a protected page the Member cookie does not stop the host's rule from admitting the User.
         Assert.True(await Admits(backOffice));
         Assert.Equal(accepted, await Admits(new ClaimsPrincipal(member.Identities.Concat(backOffice.Identities))));
         Assert.Equal(accepted, await Admits(member));

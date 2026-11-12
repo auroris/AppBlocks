@@ -20,8 +20,11 @@ namespace AppBlocks.Attachments;
 /// <param name="CanWrite">The caller may add files, and replace and remove the ones there.</param>
 /// <param name="SubmissionKey">The form submission whose pending files the scope holds, for a record not saved yet; null for a record's own files.</param>
 /// <param name="CanAdd">The caller may add files: everyone who may write, and whoever an <see cref="IAddOnlyAttachmentOwner"/> lets add.</param>
+/// <param name="Resource">The form resource whose record owns the files, as the owner resolution found it.</param>
+/// <param name="Parameters">The page parameters the owner was resolved with, which the resource's rules are given too.</param>
 public sealed record AttachmentScope(int Status, string? Problem = null, AttachmentBlock? Block = null, ClaimsPrincipal? User = null,
-    AttachmentOwner? Owner = null, bool CanWrite = false, Guid? SubmissionKey = null, bool CanAdd = false)
+    AttachmentOwner? Owner = null, bool CanWrite = false, Guid? SubmissionKey = null, bool CanAdd = false,
+    IFormResource? Resource = null, IReadOnlyDictionary<string, string>? Parameters = null)
 {
     public static AttachmentScope Refused(int status, string problem) => new(status, problem);
 }
@@ -35,8 +38,8 @@ public sealed record AttachmentScope(int Status, string? Problem = null, Attachm
 /// </summary>
 public sealed class AttachmentAccess(BlockOwnerAccess owners, IOptions<AttachmentSettings> settings)
 {
-    /// <summary>The revision string the owner's record is loaded under; attachments never compare it with a form's.</summary>
-    private const string Definition = "attachments";
+    /// <summary>The revision string the owner's record is loaded under, and the resource's rules are asked under; attachments never compare it with a form's.</summary>
+    internal const string Definition = "attachments";
 
     private static readonly BlockOwnerWords Words = new("Attachments", "these files", "files");
 
@@ -52,7 +55,8 @@ public sealed class AttachmentAccess(BlockOwnerAccess owners, IOptions<Attachmen
         // A resource may let a caller it does not let write add files all the same.
         var add = write || !block.ReadOnly && scope.Resource is IAddOnlyAttachmentOwner additions
             && await additions.MayAddAttachmentsAsync(scope.Record!, context, ct);
-        return new(200, null, block, scope.User, new AttachmentOwner(scope.Resource!.Alias, scope.OwnerKey), write, CanAdd: add);
+        return new(200, null, block, scope.User, new AttachmentOwner(scope.Resource!.Alias, scope.OwnerKey), write, CanAdd: add,
+            Resource: scope.Resource, Parameters: scope.Parameters);
     }
 
     /// <summary>
@@ -67,7 +71,8 @@ public sealed class AttachmentAccess(BlockOwnerAccess owners, IOptions<Attachmen
         var block = AttachmentBlock.Read(scope.Item!.Content, settings.Value);
         if (!await AllowsNewUploadsAsync(block, scope.Form!, scope.User!, pageKey, blockKey, scope.Parameters, ct))
             return AttachmentScope.Refused(404, "Save the record before adding files.");
-        return new(200, null, block, scope.User, AttachmentOwner.Pending(scope.Resource!.Alias, submissionKey, scope.User!), true, submissionKey, CanAdd: true);
+        return new(200, null, block, scope.User, AttachmentOwner.Pending(scope.Resource!.Alias, submissionKey, scope.User!), true, submissionKey, CanAdd: true,
+            Resource: scope.Resource, Parameters: scope.Parameters);
     }
 
     /// <summary>

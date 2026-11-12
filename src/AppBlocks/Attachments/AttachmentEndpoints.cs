@@ -176,9 +176,12 @@ public static class AttachmentEndpoints
 
     /// <summary>
     /// Gives the caller's pending files of one submission to the record its form has just saved, then answers with that
-    /// record's list. The caller must be able to write the record's files, as for an upload to it; the files they reach are
+    /// record's list. The caller must be able to add files to the record, as for an upload to it, which an
+    /// <see cref="IAddOnlyAttachmentOwner"/> may allow a caller it does not let write; the files they reach are
     /// only their own, since the pending owner carries their account. When none are theirs but someone else has files pending
-    /// under the same submission key, the adoption is refused rather than answered as if there were nothing to adopt.
+    /// under the same submission key, the adoption is refused rather than answered as if there were nothing to adopt. A resource
+    /// that is an <see cref="ISubmittedAttachmentOwner"/> adopted the files itself when it created the record, so for it the
+    /// adoption only asks it to confirm the submission and answers with the list.
     /// </summary>
     private static async Task<IResult> Adopt(Guid pageKey, Guid blockKey, Guid submissionKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
     {
@@ -190,17 +193,19 @@ public static class AttachmentEndpoints
         if (adoption?.Key?.Trim() is not { Length: > 0 and <= 200 } key) return Results.Problem("Name the record the files now belong to.", statusCode: 422);
         var scope = await Pending(access.ResolveSavedAsync(http, pageKey, blockKey, key, ct), store, ct);
         if (scope.Status != 200) return Refusal(scope);
-        var resource = await http.RequestServices.GetRequiredService<FormResourceRegistry>().FindAsync(scope.Owner!.Alias);
-        if (resource is ISubmittedAttachmentOwner submitted)
+        // A resource that adopted the files in its own create transaction only confirms the submission here; nothing moves.
+        if (scope.Resource is ISubmittedAttachmentOwner submitted)
         {
             try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
             catch (AntiforgeryValidationException) { return Results.BadRequest(); }
-            var context = new FormExecutionContext(scope.User!, pageKey, blockKey, "attachments");
+            var context = new FormExecutionContext(scope.User!, pageKey, blockKey, AttachmentAccess.Definition, Parameters: scope.Parameters);
             if (!await submitted.ConfirmSubmissionAsync(key, submissionKey, context, ct))
                 return Audited(http, "adopt", scope, null, Results.Problem("This submission does not belong to the record.", statusCode: 403), 403);
+            Audited(http, "adopt", scope, null, Results.Empty, 200);
             return await List(Task.FromResult(scope), http, store, ct);
         }
-        if (!scope.CanWrite) return Audited(http, "adopt", scope, null, Results.Problem("You may read these files but not change them.", statusCode: 403), 403);
+        // Adopting adds files to the record and changes none there, so leave to add is enough.
+        if (!scope.CanAdd) return Audited(http, "adopt", scope, null, Results.Problem(NoChange(scope), statusCode: 403), 403);
         try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
         catch (AntiforgeryValidationException) { return Results.BadRequest(); }
         var pending = AttachmentOwner.Pending(scope.Owner!.Alias, submissionKey, scope.User!);
@@ -218,7 +223,7 @@ public static class AttachmentEndpoints
 
     /// <summary>
     /// A pending scope, after the pending files past <see cref="AttachmentSettings.PendingLifetimeHours"/> are deleted: every
-    /// pending operation does that first, so no background service is needed.
+    /// pending operation does that first, in addition to the hourly cleanup job.
     /// </summary>
     private static async Task<AttachmentScope> Pending(Task<AttachmentScope> resolving, AttachmentStore store, CancellationToken ct)
     {

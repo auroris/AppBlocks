@@ -62,8 +62,11 @@ const values = {
     sql: 'SELECT LINE_ID, ITEM, QUANTITY FROM ORDER_LINES WHERE ORDER_ID = :PARAM.id AND (:PARAM.item IS NULL OR ITEM = :PARAM.item)',
 };
 
-/** The endpoint's editors in a page of the site's own origin, around a workspace that holds the document's values. */
-async function open(document) {
+/**
+ * The endpoint's editors in a page of the site's own origin, around a workspace that holds the document's values. With
+ * administrator false, the site answers that the User is not an AppBlocks administrator, as it does for an ordinary editor.
+ */
+async function open(document, { administrator = true } = {}) {
     const context = await browser.newContext();
     // The backoffice's cookies, as a browser signed in to it holds them; the endpoint itself is called without them.
     await context.addCookies(settings.cookies.map(cookie => ({ name: cookie.name, value: cookie.value, url: settings.address + cookie.path, httpOnly: cookie.httpOnly })));
@@ -102,6 +105,8 @@ async function open(document) {
             }
             export class UmbChangeEvent extends Event { constructor() { super('change', { bubbles: true }); } }`);
         if (path.startsWith('/App_Plugins/')) return js(await readFile(resolve(pluginRoot, path.slice(1)), 'utf8'));
+        if (!administrator && path.endsWith('/management/api/v1/appblocks/administrator'))
+            return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ allowed: false }) });
         return route.continue();
     });
     await page.goto(`${settings.address}/__endpoint-editor`);
@@ -158,6 +163,16 @@ test('an endpoint created and published in the backoffice answers its route, and
         return { status: response.status, type: response.headers.get('content-type'), cache: response.headers.get('cache-control'), body: await response.json() };
     });
     assert.deepEqual(answer, { status: 200, type: 'application/json; charset=utf-8', cache: 'no-store', body: { items: [{ lineId: 4, item: 'Oil', quantity: 1 }, { lineId: 3, item: 'Chain', quantity: 4 }] } });
+    assert.deepEqual(errors, []);
+    await page.context().close();
+});
+
+test('an editor who is not an AppBlocks administrator is told why there is no Test button', { skip: skipSite }, async () => {
+    await startSite();
+    const { page, errors } = await open({ unique: crypto.randomUUID(), values: { ...values, route: 'orders/:id/lines' } }, { administrator: false });
+    await page.getByTestId('test-needs-administrator').waitFor();
+    assert.match(await page.getByTestId('test-needs-administrator').textContent(), /AppBlocks administrators/);
+    assert.equal(await page.getByRole('button', { name: 'Test endpoint' }).count(), 0);
     assert.deepEqual(errors, []);
     await page.context().close();
 });

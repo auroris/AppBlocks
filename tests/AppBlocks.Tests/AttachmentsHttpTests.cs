@@ -244,6 +244,92 @@ public sealed class AttachmentsHttpTests
         Assert.Equal("asked-for.pdf", Assert.Single((await files.ListAsync("id=1")).Items).GetProperty("fileName").GetString());
     }
 
+    [Fact]
+    public async Task Files_sent_ahead_of_the_first_save_join_a_record_their_sender_may_only_add_to()
+    {
+        // Both classes let the visitor write a new record's files, and neither once it is saved; only the first lets them add then.
+        await using var site = await BlockSite.BootAsync(configure: builder => {
+            builder.Services.AddSingleton<IFormResource>(new FilesResource("files.asked", requireMember: false, add: true, writeNewOnly: true));
+            builder.Services.AddSingleton<IFormResource>(new FilesResource("files.filed", requireMember: false, writeNewOnly: true));
+        });
+        await site.PublishAsync();
+        var (askedPage, askedFiles, _) = await PublishFilesFormAsync(site, "Asked files", "files.asked", insideForm: true);
+        var (filedPage, filedFiles, _) = await PublishFilesFormAsync(site, "Filed files", "files.filed", insideForm: true);
+        using var anonymous = site.CreateClient();
+
+        // While the record is new the visitor writes its files, a mistake included, which they may remove.
+        var asked = new PendingFiles(anonymous, $"{site.PathBase}/api/attachments/{askedPage}/{askedFiles}/new/{Guid.NewGuid()}");
+        Assert.Equal(HttpStatusCode.OK, (await asked.ListAsync()).Status);
+        var (mistakeStatus, mistake) = await asked.UploadAsync("wrong.pdf", "not this one");
+        Assert.Equal(HttpStatusCode.Created, mistakeStatus);
+        Assert.Equal(HttpStatusCode.NoContent, await asked.RemoveAsync(mistake.GetProperty("id").GetInt64()));
+        var (created, file) = await asked.UploadAsync("form.pdf", "filled in");
+        Assert.Equal(HttpStatusCode.Created, created);
+        // Adopting adds the files to the saved record and changes none there, so leave to add is enough.
+        var (status, adopted) = await asked.AdoptAsync("1");
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.False(adopted.GetProperty("canWrite").GetBoolean());
+        Assert.True(adopted.GetProperty("canAdd").GetBoolean());
+        Assert.Equal(file.GetProperty("id").GetInt64(), adopted.GetProperty("items").EnumerateArray().Single().GetProperty("id").GetInt64());
+
+        // A class that lets nobody add to the saved record keeps the files out of it, and they stay where they were sent.
+        var filed = new PendingFiles(anonymous, $"{site.PathBase}/api/attachments/{filedPage}/{filedFiles}/new/{Guid.NewGuid()}");
+        Assert.Equal(HttpStatusCode.OK, (await filed.ListAsync()).Status);
+        Assert.Equal(HttpStatusCode.Created, (await filed.UploadAsync("form.pdf", "filled in")).Status);
+        var (refused, problem) = await filed.AdoptAsync("1");
+        Assert.Equal(HttpStatusCode.Forbidden, refused);
+        Assert.Contains("may read these files", problem.GetProperty("detail").GetString());
+        Assert.Single((await filed.ListAsync()).Body.GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task A_class_that_adopts_files_as_it_creates_the_record_only_confirms_the_submission_afterwards()
+    {
+        var ledger = new SubmissionLedger();
+        await using var site = await BlockSite.BootAsync(configure: builder => {
+            builder.Services.AddSingleton(ledger);
+            builder.Services.AddScoped<IFormResource, SubmittedFiles>();
+        });
+        await site.PublishAsync();
+        var (page, block, _) = await PublishFilesFormAsync(site, "Submitted files", SubmittedFiles.Name, insideForm: true);
+        using var anonymous = site.CreateClient();
+        var html = await anonymous.GetStringAsync(site.PathBase + "/submitted-files/");
+        var formApi = System.Text.RegularExpressions.Regex.Match(html, "data-app-form data-api=\"([^\"]+)\"").Groups[1].Value;
+        var state = await anonymous.GetFromJsonAsync<JsonElement>(formApi);
+
+        // The visitor attaches a file to the new record, and the class adopts it in the transaction that creates the record.
+        var submission = Guid.NewGuid();
+        var pending = new PendingFiles(anonymous, $"{site.PathBase}/api/attachments/{page}/{block}/new/{submission}");
+        Assert.Equal(HttpStatusCode.OK, (await pending.ListAsync()).Status);
+        var (uploaded, file) = await pending.UploadAsync("application.pdf", "filled in");
+        Assert.Equal(HttpStatusCode.Created, uploaded);
+        using var create = new HttpRequestMessage(HttpMethod.Post, formApi) { Content = JsonContent.Create(new {
+            values = new { title = "Application" }, definitionVersion = state.GetProperty("definitionVersion").GetString(), checksum = (string?)null,
+            submissionKey = submission.ToString(),
+        }) };
+        create.Headers.Add("RequestVerificationToken", state.GetProperty("antiforgeryToken").GetString());
+        using var created = await anonymous.SendAsync(create);
+        Assert.True(created.StatusCode == HttpStatusCode.OK, await created.Content.ReadAsStringAsync());
+        Assert.Empty((await pending.ListAsync()).Body.GetProperty("items").EnumerateArray());
+
+        // A file sent under the same key after the record was created stays where it was: the adoption moves nothing.
+        Assert.Equal(HttpStatusCode.Created, (await pending.UploadAsync("late.pdf", "after the fact")).Status);
+        var (status, adopted) = await pending.AdoptAsync("1", "?region=north");
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.False(adopted.GetProperty("canWrite").GetBoolean());
+        Assert.Equal(file.GetProperty("id").GetInt64(), Assert.Single(adopted.GetProperty("items").EnumerateArray()).GetProperty("id").GetInt64());
+        Assert.Equal("late.pdf", Assert.Single((await pending.ListAsync()).Body.GetProperty("items").EnumerateArray()).GetProperty("fileName").GetString());
+        // The class is asked with the page's parameters, as its other rules are.
+        Assert.Equal("north", ledger.Parameters?["region"]);
+
+        // Another submission is not this record's, which the class says, and nothing is listed.
+        var other = new PendingFiles(anonymous, $"{site.PathBase}/api/attachments/{page}/{block}/new/{Guid.NewGuid()}");
+        Assert.Equal(HttpStatusCode.OK, (await other.ListAsync()).Status);
+        var (refused, problem) = await other.AdoptAsync("1");
+        Assert.Equal(HttpStatusCode.Forbidden, refused);
+        Assert.Contains("does not belong", problem.GetProperty("detail").GetString());
+    }
+
     /// <summary>A page with an Attachments block and a Tabular form block whose records are <paramref name="resource"/>'s: inside a form over it with a title field, or on the page naming it as their owner with the key from the address.</summary>
     private static async Task<(Guid Page, Guid Files, Guid Rows)> PublishFilesFormAsync(BlockSite site, string name, string resource, bool insideForm)
     {
@@ -266,8 +352,11 @@ public sealed class AttachmentsHttpTests
         return (page.Key, Guid.Parse(files["contentKey"]!.GetValue<string>()), Guid.Parse(rows["contentKey"]!.GetValue<string>()));
     }
 
-    /// <summary>A form class whose records anyone it admits may load and create, and attach files to as <paramref name="write"/> and <paramref name="add"/> say.</summary>
-    private sealed class FilesResource(string alias, bool requireMember, bool write = true, bool add = false)
+    /// <summary>
+    /// A form class whose records anyone it admits may load and create, and attach files to as <paramref name="write"/> and <paramref name="add"/>
+    /// say; with <paramref name="writeNewOnly"/>, writing is only for a record not saved yet.
+    /// </summary>
+    private sealed class FilesResource(string alias, bool requireMember, bool write = true, bool add = false, bool writeNewOnly = false)
         : IFormResource, AppBlocks.Attachments.IAttachmentOwner, AppBlocks.Attachments.IAddOnlyAttachmentOwner
     {
         public string Alias => alias;
@@ -280,8 +369,52 @@ public sealed class AttachmentsHttpTests
         public Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct) => Answer("1");
         public Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct) => Answer(key);
         public Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct) => Answer(key);
-        public ValueTask<bool> MayWriteAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct) => ValueTask.FromResult(write);
+        public ValueTask<bool> MayWriteAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct)
+            => ValueTask.FromResult(write && (!writeNewOnly || record.Key is null));
         public ValueTask<bool> MayAddAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct) => ValueTask.FromResult(add);
+    }
+
+    /// <summary>What <see cref="SubmittedFiles"/> keeps between requests: the submission each record was created from, and the parameters it was last asked with.</summary>
+    private sealed class SubmissionLedger
+    {
+        public System.Collections.Concurrent.ConcurrentDictionary<string, Guid> Submissions { get; } = new();
+        public IReadOnlyDictionary<string, string>? Parameters { get; set; }
+    }
+
+    /// <summary>
+    /// An application whose files are filed when it is submitted: it adopts the visitor's pending files in the transaction that
+    /// creates the record, lets nobody change them afterwards, and confirms a later adoption against the submission it recorded.
+    /// </summary>
+    private sealed class SubmittedFiles(AppBlocks.Attachments.AttachmentStore store, SubmissionLedger ledger)
+        : IFormResource, AppBlocks.Attachments.IAttachmentOwner, AppBlocks.Attachments.ISubmittedAttachmentOwner
+    {
+        public const string Name = "files.submitted";
+        public string Alias => Name;
+        public string ContractVersion => "1";
+        public IReadOnlyList<FormField> Fields => [new("title", "Title", "text")];
+        private static Task<FormResult> Answer(string? key) => Task.FromResult(FormResult.Ok(new(key, "1", new Dictionary<string, object?> { ["title"] = null }, new(Create: key is null))));
+        public Task<FormResult> InitializeAsync(FormExecutionContext context, CancellationToken ct) => Answer(null);
+        public Task<FormResult> LoadAsync(string key, FormExecutionContext context, CancellationToken ct) => Answer(key);
+        public async Task<FormResult> CreateAsync(JsonElement input, FormExecutionContext context, CancellationToken ct)
+        {
+            var submission = Guid.Parse(context.SubmissionKey!);
+            await using var connection = await store.OpenConnectionAsync(ct);
+            await using var transaction = await connection.BeginTransactionAsync(ct);
+            // The application's own row would be written here, on the same connection and transaction.
+            await AppBlocks.Attachments.AttachmentStore.AdoptAsync(connection, transaction, AppBlocks.Attachments.AttachmentOwner.Pending(Name, submission, context.Member),
+                new AppBlocks.Attachments.AttachmentOwner(Name, "1"), "applicant", ct);
+            await transaction.CommitAsync(ct);
+            ledger.Submissions["1"] = submission;
+            return await Answer("1");
+        }
+        public Task<FormResult> UpdateAsync(string key, JsonElement input, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+        public Task<FormResult> DeleteAsync(string key, string? checksum, FormExecutionContext context, CancellationToken ct) => Task.FromResult(FormResult.Denied());
+        public ValueTask<bool> MayWriteAttachmentsAsync(FormRecord record, FormExecutionContext context, CancellationToken ct) => ValueTask.FromResult(record.Key is null);
+        public ValueTask<bool> ConfirmSubmissionAsync(string key, Guid submissionKey, FormExecutionContext context, CancellationToken ct)
+        {
+            ledger.Parameters = context.Parameters;
+            return ValueTask.FromResult(ledger.Submissions.TryGetValue(key, out var saved) && saved == submissionKey);
+        }
     }
 
     /// <summary>A site's own words for one text, as a dictionary-backed source would give them.</summary>

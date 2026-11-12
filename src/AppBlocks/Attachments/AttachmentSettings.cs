@@ -30,8 +30,8 @@ public sealed class AttachmentSettings
     public int RetentionDays { get; set; } = 30;
 
     /// <summary>
-    /// How many hours a file uploaded before its form's record was saved waits for that save. The next upload, list or
-    /// adoption of pending files deletes those older than this. 24 unless configured.
+    /// How many hours a file uploaded before its form's record was saved waits for that save. An hourly Umbraco job and
+    /// pending-file requests delete those older than this. 24 unless configured.
     /// </summary>
     public int PendingLifetimeHours { get; set; } = 24;
 

@@ -23,6 +23,13 @@ export async function managementRequest(path, { method = "GET", body, text = fal
 
 export const request = (path, body, text = false) => managementRequest(`appblocks/${path}`, { method: body === undefined ? "GET" : "POST", body, text });
 
+// Whether the signed-in User is an AppBlocks administrator, for leaving out what only administrators may use. The server checks
+// every such request itself, so an answer that does not arrive counts as no.
+export const isAdministrator = () => request("administrator").then(answer => answer?.allowed === true, () => false);
+
+// What an editor who is not an AppBlocks administrator is told in place of a Test that runs SQL.
+export const testNeedsAdministrator = "Testing runs this SQL against the database, so it is for AppBlocks administrators: Umbraco's Administrators group, or a group listed in AppBlocks:AdministratorGroups.";
+
 export function download(text, name, type = "text/plain") {
     const url = URL.createObjectURL(new Blob([text], { type }));
     const link = document.createElement("a"); link.href = url; link.download = name; link.click();

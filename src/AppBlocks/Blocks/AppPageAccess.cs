@@ -39,18 +39,20 @@ public sealed class AppPageAccess(AppBlockContent content, IPublicAccessChecker 
         }
         // Umbraco Public Access protects pages for Members. Without a Member session, Umbraco refuses the page, and only a rule
         // the host registers admits anyone else; a backoffice User is never looked up in the Member store using a coincidentally matching identifier.
-        if (publicAccess.IsProtected(page.Path).Success) return await AdmittedAsync(context, page);
+        if (publicAccess.IsProtected(page.Path).Success) return await AdmittedAsync(context, page, includeMember);
         return await applicationAccess.BackOfficeUserAsync(context);
     }
 
     /// <summary>
     /// Who the host's <see cref="IProtectedPageAdmission"/> rules admit to a page Umbraco's Public Access refuses: the first
     /// authenticated answer, or null when there is none or when a Member session is present, since Umbraco itself decides for a Member.
+    /// A route that carries no Member passes false for <paramref name="includeMember"/>: a Member cookie on its request is not its caller,
+    /// so it neither stops the rules from being asked nor stands in for the User they judge.
     /// </summary>
-    public async Task<ClaimsPrincipal?> AdmittedAsync(HttpContext context, IPublishedContent page)
+    public async Task<ClaimsPrincipal?> AdmittedAsync(HttpContext context, IPublishedContent page, bool includeMember = true)
     {
-        var member = await context.AuthenticateAsync(IdentityConstants.ApplicationScheme);
-        if (member.Succeeded && member.Principal?.Identity?.IsAuthenticated == true) return null;
+        if (includeMember && await context.AuthenticateAsync(IdentityConstants.ApplicationScheme) is { Succeeded: true } member
+            && member.Principal?.Identity?.IsAuthenticated == true) return null;
         foreach (var admission in admissions)
             if (await admission.AdmitAsync(context, page, context.RequestAborted) is { Identity.IsAuthenticated: true } admitted) return admitted;
         return null;
