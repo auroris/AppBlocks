@@ -156,8 +156,7 @@ public sealed partial class AttachmentStore(IApplicationConnectionFactory connec
     {
         await using var connection = await OpenAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
-        var purge = await DeleteLinksAsync(connection, transaction,
-            "SELECT LINK_ID, ATTACHMENT_ID FROM APP_ATTACHMENT_LINK WHERE REMOVED_AT IS NOT NULL AND REMOVED_AT < @before", ct, ("@before", removedBefore));
+        var purge = await DeleteLinksAsync(connection, transaction, "REMOVED_AT IS NOT NULL AND REMOVED_AT < @before", ct, ("@before", removedBefore));
         await transaction.CommitAsync(ct);
         if (purge.Links > 0) logger.LogInformation("Purged {Links} removed attachment link(s) and {Files} file(s), {Bytes} bytes.", purge.Links, purge.Files, purge.Bytes);
         return purge;
@@ -217,26 +216,33 @@ public sealed partial class AttachmentStore(IApplicationConnectionFactory connec
     public Task<int> ExpirePendingAsync(CancellationToken ct) => GuardAsync(write: true, async () =>
     {
         await using var connection = await OpenAsync(ct);
-        // Keep adoption from changing a selected file's owner before the cleanup deletes it.
-        await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
-        var expired = await DeleteLinksAsync(connection, transaction, "SELECT LINK_ID, ATTACHMENT_ID FROM APP_ATTACHMENT_LINK WHERE OWNER_ALIAS LIKE @pending AND CREATED_AT < @before", ct,
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        // A file adopted after it was selected no longer matches when its link is deleted, so it keeps its record.
+        var expired = await DeleteLinksAsync(connection, transaction, "OWNER_ALIAS LIKE @pending AND CREATED_AT < @before", ct,
             ("@pending", AttachmentOwner.PendingPrefix + "%"),
             ("@before", DateTime.UtcNow.AddHours(-Math.Max(0, settings.Value.PendingLifetimeHours))));
         await transaction.CommitAsync(ct);
         return expired.Links;
     });
 
-    /// <summary>Deletes the links a query selects, each with every revision behind it.</summary>
-    private static async Task<AttachmentPurge> DeleteLinksAsync(DbConnection connection, DbTransaction transaction, string select, CancellationToken ct, params (string Name, object? Value)[] values)
+    /// <summary>
+    /// Deletes the links that <paramref name="where"/>, a condition on <c>APP_ATTACHMENT_LINK</c>, selects, each with every revision
+    /// behind it. Each link is deleted only while it still meets the condition, so one another request changed after it was selected,
+    /// such as a pending file adopted meanwhile, keeps its files. The database's own write locking decides that race, at any isolation level.
+    /// </summary>
+    private static async Task<AttachmentPurge> DeleteLinksAsync(DbConnection connection, DbTransaction transaction, string where, CancellationToken ct, params (string Name, object? Value)[] values)
     {
         var links = new List<(long Link, long Attachment)>();
-        await using (var selected = Command(connection, transaction, select, values))
+        await using (var selected = Command(connection, transaction, "SELECT LINK_ID, ATTACHMENT_ID FROM APP_ATTACHMENT_LINK WHERE " + where, values))
         await using (var reader = await selected.ExecuteReaderAsync(ct))
             while (await reader.ReadAsync(ct)) links.Add((reader.GetInt64(0), reader.GetInt64(1)));
-        var files = 0; var bytes = 0L;
+        var deleted = 0; var files = 0; var bytes = 0L;
         foreach (var (link, attachment) in links)
         {
             // The link references the current file and each file the one it replaced, so delete the link, then the files newest first.
+            await using (var delete = Command(connection, transaction, "DELETE FROM APP_ATTACHMENT_LINK WHERE LINK_ID = @link AND " + where, [("@link", link), .. values]))
+                if (await delete.ExecuteNonQueryAsync(ct) == 0) continue;
+            deleted++;
             var chain = new List<(long Id, long Size)>();
             await using (var revisions = Command(connection, transaction, """
                 WITH chain (ATTACHMENT_ID, DEPTH) AS (
@@ -247,8 +253,6 @@ public sealed partial class AttachmentStore(IApplicationConnectionFactory connec
                 """ + Recursion(connection), ("@id", attachment)))
             await using (var reader = await revisions.ExecuteReaderAsync(ct))
                 while (await reader.ReadAsync(ct)) chain.Add((reader.GetInt64(0), reader.GetInt64(1)));
-            await using (var delete = Command(connection, transaction, "DELETE FROM APP_ATTACHMENT_LINK WHERE LINK_ID = @link", ("@link", link)))
-                await delete.ExecuteNonQueryAsync(ct);
             foreach (var (id, size) in chain)
             {
                 await using var delete = Command(connection, transaction, "DELETE FROM APP_ATTACHMENT WHERE ATTACHMENT_ID = @id", ("@id", id));
@@ -256,7 +260,7 @@ public sealed partial class AttachmentStore(IApplicationConnectionFactory connec
                 bytes += size;
             }
         }
-        return new AttachmentPurge(links.Count, files, bytes);
+        return new AttachmentPurge(deleted, files, bytes);
     }
 
     /// <summary>The owner's items (one when <paramref name="current"/> names a current file), newest first, each with its revisions.</summary>

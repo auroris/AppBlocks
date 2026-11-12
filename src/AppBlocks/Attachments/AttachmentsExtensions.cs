@@ -16,7 +16,9 @@ public static class AttachmentsExtensions
         // Shared with the Tabular form block, so either feature works without the other.
         builder.Services.TryAddScoped<BlockOwnerAccess>();
         builder.Services.AddScoped<AttachmentAccess>();
-        builder.Services.AddSingleton<IDatabaseSetupFeature, AttachmentDatabaseSetup>();
+        // The cleanup job looks at the tables through the setup screen's own check before it touches the store.
+        builder.Services.AddSingleton<AttachmentDatabaseSetup>();
+        builder.Services.AddSingleton<IDatabaseSetupFeature>(services => services.GetRequiredService<AttachmentDatabaseSetup>());
         return builder;
     }
 

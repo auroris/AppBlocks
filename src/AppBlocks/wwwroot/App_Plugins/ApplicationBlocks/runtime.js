@@ -53,7 +53,43 @@ const strings = {
     fileOperationFailed: "The operation failed.",
     chooseFile: "Choose a file to upload.",
     filesBeforeSave: "Files are still waiting to upload, uploading, or could not be uploaded. Finish uploading or remove them, then save again.",
+    filesWorking: "Files are still being uploaded, removed or listed. Wait for that to finish, then try again.",
+    fileTypeNotAccepted: "Files of this type are not accepted here. Accepted: {types}.",
     uploaderLoadFailed: "The file uploader could not load. Reload the page to try again.",
+    // The uploader's own texts. Uppy fills in {count}, {name} and the others when it shows them.
+    uploaderTitle: "File uploader",
+    uploaderDropOrBrowse: "Drop files here or {browse}",
+    uploaderBrowse: "browse files",
+    uploaderDropHint: "Drop your files here",
+    uploaderAddMore: "Add more",
+    uploaderAddMoreFiles: "Add more files",
+    uploaderAddingMoreFiles: "Adding more files",
+    uploaderBack: "Back",
+    uploaderFileSelected: "{count} file selected",
+    uploaderFilesSelected: "{count} files selected",
+    uploaderFileAdded: "{count} more file added",
+    uploaderFilesAdded: "{count} more files added",
+    uploaderRemoveFile: "Remove file",
+    uploaderCancel: "Cancel",
+    uploaderCancelUpload: "Cancel upload",
+    uploaderUploadingFile: "Uploading {count} file",
+    uploaderUploadingFiles: "Uploading {count} files",
+    uploaderFileProgress: "{complete} of {count} file uploaded",
+    uploaderFilesProgress: "{complete} of {count} files uploaded",
+    uploaderDataProgress: "{complete} of {total}",
+    uploaderDataProgressUnknown: "{complete} of unknown",
+    uploaderTimeLeft: "{time} left",
+    uploaderComplete: "Complete",
+    uploaderUploadComplete: "Upload complete",
+    uploaderUploadFailed: "Upload failed",
+    uploaderError: "Error",
+    uploaderErrorDetails: "Show error details",
+    uploaderDone: "Done",
+    uploaderDuplicate: "{name} is already in the list.",
+    uploaderFileFailed: "{name} could not be uploaded.",
+    uploaderStalled: "The upload has made no progress for {seconds} seconds.",
+    uploaderOffline: "No internet connection.",
+    uploaderOnline: "Connected to the internet again.",
     sizeBytes: "{size} B",
     sizeKilobytes: "{size} KB",
     sizeMegabytes: "{size} MB",
@@ -366,7 +402,8 @@ function mountColor(root) {
 const formDetails = new WeakMap();
 // Each form's current submission key, which an Attachments block inside it sends a new record's files under: see mountAttachments.
 const formSubmissions = new WeakMap();
-// Attachment operations must finish before saving. The caller retries Save after the dialog; it is never queued.
+// Each form's Attachments blocks, which say whether an operation is under way or files wait in the queue. Saving and deleting
+// wait for them; the caller tries again after the dialog, and nothing is queued.
 const formAttachments = new WeakMap();
 
 function mountForm(form) {
@@ -463,7 +500,11 @@ function mountForm(form) {
     async function submit(remove = false) {
         if (!state || busy) return;
         const attachments = formAttachments.get(form) ?? [];
-        if (attachments.some(block => block.pending())) { window.alert(t("filesBeforeSave")); return; }
+        // A save waits for every queued file to be uploaded or removed. A deletion waits only for operations under way: the
+        // files still queued would have belonged to the record it deletes.
+        const files = attachments.map(block => block.standing());
+        if (files.includes("working")) { window.alert(t("filesWorking")); return; }
+        if (!remove && files.includes("queued")) { window.alert(t("filesBeforeSave")); return; }
         if (!remove && !form.reportValidity()) return;
         if (remove && !window.confirm(t("confirmDelete"))) return;
         const values = {};
@@ -597,6 +638,10 @@ function mountAttachments(root) {
     let uploader = null;
     let uploaderReady = null;
     let uploadProblem = null;
+    // The current batch's successes, announced once its files are listed.
+    const uploaded = [];
+    // The purpose, label and notes a batch is uploaded with.
+    const details = () => upload?.querySelectorAll("[data-attachment-purpose], [data-attachment-label], [data-attachment-notes]") ?? [];
     const unfinished = () => uploader?.getFiles().some(file => !file.progress.uploadComplete) ?? false;
     const transferring = () => Object.keys(uploader?.getState().currentUploads ?? {}).length > 0;
     function syncBusy() {
@@ -620,62 +665,118 @@ function mountAttachments(root) {
         if (root.dataset.accept) input.accept = root.dataset.accept;
         input.addEventListener("change", async () => {
             if (!input.files[0]) return;
+            await prepareUploader();
+            if (!uploader) { fail(t("uploaderLoadFailed")); return; }
             try {
-                await prepareUploader();
                 const file = input.files[0];
                 uploader.addFile({ name: file.name, type: file.type, data: file, meta: { replaces: id } });
             } catch (error) { fail(error.message || t("fileOperationFailed")); }
         });
         input.click();
     }
+    // Uppy's texts from the runtime's ids, so a site translates the uploader as it does every other text. Uppy fills in
+    // %{name} itself; a text with a count has a singular id and a plural one, as earlierRevision and earlierRevisions do.
+    function uploaderStrings(limit) {
+        const counted = (one, many, values) => ({ 0: t(one, values), 1: t(many, values) });
+        return {
+            dashboardTitle: t("uploaderTitle"),
+            dropPasteFiles: t("uploaderDropOrBrowse", { browse: "%{browseFiles}" }),
+            browseFiles: t("uploaderBrowse"),
+            dropHint: t("uploaderDropHint"),
+            addMore: t("uploaderAddMore"),
+            addMoreFiles: t("uploaderAddMoreFiles"),
+            addingMoreFiles: t("uploaderAddingMoreFiles"),
+            back: t("uploaderBack"),
+            xFilesSelected: counted("uploaderFileSelected", "uploaderFilesSelected", { count: "%{smart_count}" }),
+            xMoreFilesAdded: counted("uploaderFileAdded", "uploaderFilesAdded", { count: "%{smart_count}" }),
+            removeFile: t("uploaderRemoveFile"),
+            cancel: t("uploaderCancel"),
+            cancelUpload: t("uploaderCancelUpload"),
+            uploading: t("uploading"),
+            uploadingXFiles: counted("uploaderUploadingFile", "uploaderUploadingFiles", { count: "%{smart_count}" }),
+            filesUploadedOfTotal: counted("uploaderFileProgress", "uploaderFilesProgress", { complete: "%{complete}", count: "%{smart_count}" }),
+            dataUploadedOfTotal: t("uploaderDataProgress", { complete: "%{complete}", total: "%{total}" }),
+            dataUploadedOfUnknown: t("uploaderDataProgressUnknown", { complete: "%{complete}" }),
+            xTimeLeft: t("uploaderTimeLeft", { time: "%{time}" }),
+            complete: t("uploaderComplete"),
+            uploadComplete: t("uploaderUploadComplete"),
+            uploadFailed: t("uploaderUploadFailed"),
+            error: t("uploaderError"),
+            showErrorDetails: t("uploaderErrorDetails"),
+            done: t("uploaderDone"),
+            // The block's own limit in its own words, as the server refuses a file over it.
+            ...(limit ? { exceedsSize: t("fileTooLarge", { size: numberText(Math.round(limit / 1048576)) }) } : {}),
+            youCanOnlyUploadFileTypes: t("fileTypeNotAccepted", { types: "%{types}" }),
+            noDuplicates: t("uploaderDuplicate", { name: "%{fileName}" }),
+            failedToUpload: t("uploaderFileFailed", { name: "%{file}" }),
+            uploadStalled: t("uploaderStalled", { seconds: "%{seconds}" }),
+            noInternetConnection: t("uploaderOffline"),
+            connectedToInternet: t("uploaderOnline"),
+        };
+    }
+    // What a refused or failed upload tells the reader: the server's own words for a refusal, as every other request shows them.
+    function uploadFailure(xhr) {
+        if (!xhr?.status) return t("requestFailed");
+        let problem = {};
+        try { problem = JSON.parse(xhr.responseText || "{}"); } catch { /* A proxy can answer without JSON. */ }
+        if (problem === null || typeof problem !== "object") problem = {};
+        const refusal = new ApiError(xhr.status, problem);
+        if (signInNeeded(refusal, anonymous)) return t("signInThenRetry");
+        return errorText(refusal, t(xhr.status === 429 ? "tooManyRequests" : "fileOperationFailed"));
+    }
     function prepareUploader() {
         if (!upload) return Promise.resolve();
         return uploaderReady ??= loadUppy().then(({ Uppy, Dashboard, XHRUpload }) => {
+            const limit = state?.maxFileSize || maxSize || null;
             uploader = new Uppy({
                 id: root.id || api, autoProceed: false,
-                restrictions: { maxFileSize: state.maxFileSize || maxSize || null, allowedFileTypes: (state.accept || root.dataset.accept)?.split(",").filter(Boolean) || null },
-                onBeforeFileAdded(file, files) {
+                locale: { strings: uploaderStrings(limit), pluralize: count => count === 1 ? 0 : 1 },
+                restrictions: { maxFileSize: limit, allowedFileTypes: (state?.accept || root.dataset.accept)?.split(",").filter(Boolean) || null },
+                // Uppy refuses a file already in the list before it asks this.
+                onBeforeFileAdded(file) {
                     const allowed = file.meta.replaces != null ? state?.canWrite : (state?.canAdd ?? state?.canWrite);
-                    return !readOnly && allowed && !saving && !busy && !Object.hasOwn(files, file.id);
+                    return !readOnly && !!allowed && !saving && !busy;
                 },
             }).use(Dashboard, {
                 target: upload.querySelector("[data-attachment-dashboard]"), inline: true, height: 280, width: "100%",
                 // The block's Upload button starts and retries a batch, with its current metadata.
                 hideUploadButton: true, hideRetryButton: true, proudlyDisplayPoweredByUppy: false, showProgressDetails: true,
             }).use(XHRUpload, {
-                endpoint(file) {
-                    const allowed = file.meta.replaces != null ? state?.canWrite : (state?.canAdd ?? state?.canWrite);
-                    if (saving || busy || readOnly || !allowed) throw new Error(t("operationForbidden"));
-                    return requestUrl(file.meta.replaces ?? null).toString();
-                },
+                // A file is only ever sent from the Upload button, which checks the block can take it.
+                endpoint: file => requestUrl(file.meta.replaces ?? null).toString(),
                 fieldName: "file", formData: true, bundle: false, limit: 1,
                 allowedMetaFields: ["purpose", "label", "notes"],
                 headers: () => ({ RequestVerificationToken: state?.antiforgeryToken, Accept: "application/json" }),
                 // A lost response may follow a committed insert: never silently repeat that POST.
                 shouldRetry: () => false,
+                // A refusal fails with the block's words for it, which Uppy then shows on the file and in its notice.
+                onAfterResponse(xhr) { if (xhr.status < 200 || xhr.status > 299) throw new Error(uploadFailure(xhr)); },
             });
             uploader.on("file-added", file => {
                 if (file.meta.replaces != null) uploader.setFileState(file.id, { xhrUpload: { method: "PUT", allowedMetaFields: [] } });
             });
-            uploader.on("upload", () => { uploadProblem = null; clear(); queueMicrotask(syncBusy); });
-            uploader.on("upload-success", () => { if (pending()) pendingFiles = true; });
-            uploader.on("upload-error", (_file, error, response) => {
-                let problem = {};
-                try { problem = JSON.parse(response?.responseText || "{}"); } catch { /* A proxy can answer without JSON. */ }
-                if (problem === null || typeof problem !== "object") problem = {};
-                const refusal = new ApiError(response?.status || 0, problem);
-                uploadProblem = signInNeeded(refusal, anonymous) ? t("signInThenRetry") : errorText(refusal, error.message || t("fileOperationFailed"));
+            // The Upload button can start two uploads, the failed files' retry and then the new files, and only the last
+            // ends in complete. So the batch's successes and its problem are kept from the button's click to complete.
+            uploader.on("upload", () => queueMicrotask(syncBusy));
+            uploader.on("upload-success", file => {
+                if (pending()) pendingFiles = true;
+                uploaded.push({ id: file.meta.replaces ?? null, operation: file.meta.replaces != null ? "replace" : "upload" });
+            });
+            uploader.on("upload-error", (file, _error, response) => {
+                uploadProblem = uploadFailure(response);
+                // A request that never got an answer carries Uppy's own English on the file; it takes the block's words too.
+                if (file && uploader.getFile(file.id)) uploader.setFileState(file.id, { error: uploadProblem });
                 fail(uploadProblem);
             });
-            uploader.on("complete", async result => {
+            uploader.on("complete", async () => {
                 busy = true; syncBusy();
                 try {
                     await load();
-                    for (const file of result?.successful ?? []) if (uploader.getFile(file.id)) uploader.removeFile(file.id);
+                    for (const file of uploader.getFiles()) if (file.progress.uploadComplete && !file.error) uploader.removeFile(file.id);
                     if (uploadProblem) fail(uploadProblem);
-                    for (const file of result?.successful ?? []) root.dispatchEvent(new CustomEvent("app-attachments:changed", {
-                        bubbles: true, detail: { id: file.meta.replaces ?? null, operation: file.meta.replaces != null ? "replace" : "upload" },
-                    }));
+                    // An empty queue starts the next batch with fresh details; failed or new files keep these for their retry.
+                    if (!unfinished()) for (const field of details()) field.value = "";
+                    for (const detail of uploaded.splice(0)) root.dispatchEvent(new CustomEvent("app-attachments:changed", { bubbles: true, detail }));
                 } finally { busy = false; syncBusy(); }
             });
             syncBusy();
@@ -791,11 +892,16 @@ function mountAttachments(root) {
         for (const file of uploader.getFiles()) if (file.meta.replaces == null && !file.progress.uploadComplete) {
             uploader.setFileMeta(file.id, Object.fromEntries(["purpose", "label", "notes"].map(name => [name, upload.querySelector(`[data-attachment-${name}]`)?.value ?? ""])));
         }
+        uploadProblem = null; uploaded.length = 0; clear();
         try { await uploader.upload(); } catch (error) { fail(error.message || t("fileOperationFailed")); }
     });
     if (form) {
         if (!formAttachments.has(form)) formAttachments.set(form, []);
-        formAttachments.get(form).push({ pending: () => root.isConnected && (busy || transferring() || unfinished()), saving(value) { saving = value; syncBusy(); } });
+        formAttachments.get(form).push({
+            // "working" while a request is under way, "queued" while files wait to upload or failed to; nothing once the block is gone.
+            standing: () => !root.isConnected ? null : busy || transferring() ? "working" : unfinished() ? "queued" : null,
+            saving(value) { saving = value; syncBusy(); },
+        });
         const follow = async event => {
             busy = true; syncBusy();
             try {

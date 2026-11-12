@@ -67,7 +67,7 @@ public sealed class NoticeRules(NoticeQueries notices) : IDataSourceHandler
 }
 ```
 
-AppBlocks shapes the rows as it shapes the row source's: a column the class leaves out is `null`, a key that is not a column of the row source is dropped, **Order by** sorts them, **Maximum rows** holds a collection to its limit, and **Single** answers with the first. Returning `null` reads the row source as usual, so a class can answer some requests and leave others to SQL. `operation.Context.Parameters` holds the route and query parameters, and `operation.Sql` runs the class's own SQL on the endpoint's connection with the same bind variables.
+AppBlocks shapes the rows as it shapes the row source's: a column the class leaves out is `null`, a key that is not a column of the row source is dropped, **Order by** sorts them, **Maximum rows** holds a collection to its limit, and **Single** answers with the first. Returning `null` reads the row source as usual, so a class can answer some requests and leave others to SQL. `operation.Context.Parameters` holds the route parameters and the query parameters listed under **Query parameters**; the query string's other parameters never reach it, and `operation.Sql` runs the class's own SQL on the endpoint's connection with the same bind variables.
 
 The row restriction is SQL, so it cannot filter rows from code; the class applies the same rule itself. Lists of values, schedules and paper reports read through the same path and get the class's rows too. An Interactive Report runs the row source's SQL itself and does not ask the class.
 

@@ -469,6 +469,121 @@ test('Uppy honours upload limits and add-only permissions and fits mobile and de
     } finally { await readOnly.page.close(); }
 });
 
+test('one Upload retries failed files with new ones, keeps the failure\'s reason and announces every file it stored', async () => {
+    for (const retrySucceeds of [false, true]) {
+        const stored = [];
+        const { page, requests, errors } = await mount(form(attachments('form')) + runtime(''), ({ method, path, raw }) => {
+            if (path.startsWith('/api/forms/')) return formAnswer(record('7'));
+            if (method === 'POST') {
+                const name = raw.includes('second.pdf') ? 'second' : 'third';
+                const attempts = requests.filter(r => r.method === 'POST' && r.raw.includes('second.pdf')).length;
+                if (name === 'second' && (attempts === 1 || !retrySucceeds)) return json({ detail: 'The document was refused.' }, 422);
+                const item = file(name, 8); stored.push(item); return json(item, 201);
+            }
+            return json(files(stored));
+        });
+        try {
+            await page.evaluate(() => { window.changed = []; document.addEventListener('app-attachments:changed', event => window.changed.push(event.detail)); });
+            const ready = () => page.waitForFunction(() => !document.querySelector('[data-attachment-upload]').disabled);
+            await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'second.pdf', mimeType: 'application/pdf', buffer: Buffer.from('second') });
+            await page.locator('[data-attachment-label]').fill('Evidence');
+            await page.getByRole('button', { name: 'Upload', exact: true }).click();
+            await page.locator('.app-attachments-errors').getByText('The document was refused.').waitFor();
+            await ready();
+            // A new file joins the failed one, and the one Upload sends the retry and then the new file.
+            await page.locator('.uppy-DashboardContent-addMore').click();
+            await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'third.pdf', mimeType: 'application/pdf', buffer: Buffer.from('third') });
+            await page.getByRole('button', { name: 'Upload', exact: true }).click();
+            await page.locator('.app-attachment', { hasText: 'third.pdf' }).waitFor();
+            await ready();
+            assert.equal(requests.filter(r => r.method === 'POST').length, 3);
+            const shown = await page.locator('.app-attachments-errors').evaluate(element => ({ hidden: element.hidden, text: element.textContent }));
+            const changed = await page.evaluate(() => window.changed);
+            if (retrySucceeds) {
+                assert.deepEqual(shown, { hidden: true, text: '' });
+                assert.equal(await page.locator('.uppy-Dashboard-Item').count(), 0, 'every stored file leaves the queue');
+                assert.deepEqual(changed, [{ id: null, operation: 'upload' }, { id: null, operation: 'upload' }]);
+                assert.equal(await page.locator('[data-attachment-label]').inputValue(), '', 'an empty queue starts the next batch afresh');
+            } else {
+                assert.deepEqual(shown, { hidden: false, text: 'The document was refused.' });
+                assert.equal(await page.locator('.uppy-Dashboard-Item').count(), 1, 'only the file refused again stays queued');
+                assert.ok(await page.locator('.uppy-Dashboard-Item [aria-label="The document was refused."]').count() > 0, 'the queued file says why, in place of Uppy\'s network error');
+                assert.deepEqual(changed, [{ id: null, operation: 'upload' }]);
+                assert.equal(await page.locator('[data-attachment-label]').inputValue(), 'Evidence', 'a retry keeps its details');
+            }
+            assert.deepEqual(errors, []);
+        } finally { await page.close(); }
+    }
+});
+
+test('the uploader shows the page\'s translations and the block\'s own size limit', async () => {
+    const strings = {
+        uploaderDropOrBrowse: 'Déposez des fichiers ici ou {browse}', uploaderBrowse: 'parcourez', uploaderRemoveFile: 'Retirer le fichier',
+        uploaderFileSelected: '{count} fichier choisi', fileTooLarge: 'Le fichier dépasse les {size} Mo de ce bloc.',
+    };
+    const { page, errors } = await mount(attachments('page') + runtime(''), () => json({ ...files([]), maxFileSize: 2 * 1048576 }),
+        { lang: 'fr-CA', head: `<script type="application/json" data-appblocks-strings>${JSON.stringify(strings)}</script>` });
+    try {
+        const title = page.locator('.uppy-Dashboard-AddFiles-title');
+        await title.waitFor();
+        assert.equal((await title.textContent()).replace(/\s+/g, ' ').trim(), 'Déposez des fichiers ici ou parcourez');
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'large.pdf', mimeType: 'application/pdf', buffer: Buffer.alloc(3 * 1048576) });
+        await page.getByText('Le fichier dépasse les 2 Mo de ce bloc.').first().waitFor();
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'small.pdf', mimeType: 'application/pdf', buffer: Buffer.from('file') });
+        await page.getByText('1 fichier choisi').waitFor();
+        assert.equal(await page.getByRole('button', { name: 'Retirer le fichier' }).count(), 1);
+        assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+});
+
+test('a record can be deleted with files queued, but not while an upload is under way', async () => {
+    let finishUpload;
+    const held = new Promise(resolve => { finishUpload = resolve; });
+    const { page, requests, errors } = await mount(form(attachments('form')) + runtime(''), async ({ method, path }) => {
+        if (path.startsWith('/api/forms/')) return method === 'DELETE' ? { status: 204 } : formAnswer(record('7'));
+        if (method === 'POST') { await held; return json(file('sent', 8), 201); }
+        return json(files(requests.some(r => r.method === 'POST' && r.path.includes('/attachments/')) ? [file('sent', 8)] : []));
+    });
+    const dialogs = [];
+    page.on('dialog', dialog => dialogs.push(dialog.message()));
+    try {
+        const deletes = () => requests.filter(r => r.method === 'DELETE');
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'sent.pdf', mimeType: 'application/pdf', buffer: Buffer.from('sent') });
+        const sent = page.waitForRequest(r => r.method() === 'POST' && r.url().includes('/attachments/'));
+        await page.getByRole('button', { name: 'Upload', exact: true }).click();
+        await sent;
+        const working = page.waitForEvent('dialog');
+        await page.getByRole('button', { name: 'Delete', exact: true }).click();
+        assert.match((await working).message(), /Wait for that to finish/);
+        assert.equal(deletes().length, 0);
+        finishUpload();
+        await page.locator('.app-attachment', { hasText: 'sent.pdf' }).waitFor();
+        await page.waitForFunction(() => !document.querySelector('[data-attachment-upload]').disabled);
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'queued.pdf', mimeType: 'application/pdf', buffer: Buffer.from('queued') });
+        await page.getByRole('button', { name: 'Delete', exact: true }).click();
+        await page.getByText('Done', { exact: true }).waitFor();
+        assert.equal(deletes().length, 1, 'files only queued go with the deleted record');
+        assert.equal(dialogs.length, 2, 'the wait, then the deletion\'s own confirmation');
+        assert.deepEqual(errors, []);
+    } finally { finishUpload(); await page.close(); }
+});
+
+test('Replace says the uploader could not load when it could not', async () => {
+    const map = { imports: { 'http://localhost/App_Plugins/ApplicationBlocks/uppy.js': 'http://localhost/missing/uppy.js' } };
+    const { page, errors } = await mount(attachments('page') + runtime(''), ({ path }) => path.startsWith('/missing/') ? { status: 404, body: '' } : json(files([file('existing', 8)])),
+        { head: `<script type="importmap">${JSON.stringify(map)}</script>` });
+    try {
+        const problem = page.locator('.app-attachments-errors');
+        await problem.getByText('The file uploader could not load. Reload the page to try again.').waitFor();
+        const chooser = page.waitForEvent('filechooser');
+        await page.getByRole('button', { name: 'Replace' }).click();
+        await (await chooser).setFiles({ name: 'new.pdf', mimeType: 'application/pdf', buffer: Buffer.from('new') });
+        await page.waitForTimeout(200);
+        assert.equal(await problem.textContent(), 'The file uploader could not load. Reload the page to try again.');
+        assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+});
+
 test('the API root comes from the page, and a Member\'s changes carry the antiforgery token fetched once', async () => {
     for (const [head, expected] of [['<meta name="appblocks-api-root" content="/site/services/">', '/site/services'], ['', '/site/api']]) {
         const { page, requests } = await mount(`<script type="module">import * as api from "/site/App_Plugins/ApplicationBlocks/data-api.js"; window.api = api;</script>`,

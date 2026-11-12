@@ -49,11 +49,11 @@ The runtime takes the ids it knows from it and keeps its English for the rest. A
 
 ## Placeholders
 
-Some texts carry values. The browser runtime's texts name them in braces, such as `{count}` and `{name}`, and a replacement writes the same names wherever its language puts them. The schedule's server-rendered texts number them, `{0}` and `{1}`, as .NET composite formatting does; a replacement whose placeholders do not match falls back to the English, so a typo never breaks the page.
+Some texts carry values. The browser runtime's texts name them in braces, such as `{count}` and `{name}`, and a replacement writes the same names wherever its language puts them. In `uploaderDropOrBrowse`, `{browse}` is where the `uploaderBrowse` link goes. A text with a count has one id for one and another for any other number, such as `uploaderFileSelected` and `uploaderFilesSelected`. The schedule's server-rendered texts number them, `{0}` and `{1}`, as .NET composite formatting does; a replacement whose placeholders do not match falls back to the English, so a typo never breaks the page.
 
 ## Dates, times and sizes
 
-The browser runtime formats dates, times and file sizes for the page's language, `document.documentElement.lang`, so a layout that writes `<html lang="fr-CA">` gets French dates. A page that names no language, or one the browser does not know, gets the browser's own. Server-rendered dates, such as the schedule's column headings and window, follow the culture Umbraco serves the page in.
+The browser runtime formats dates, times and file sizes for the page's language, `document.documentElement.lang`, so a layout that writes `<html lang="fr-CA">` gets French dates. A page that names no language, or one the browser does not know, gets the browser's own. The attachment uploader is the exception: it writes its queued files' sizes and the time an upload has left in its own short English units, such as `2.4 MB` and `1m 5s`. Server-rendered dates, such as the schedule's column headings and window, follow the culture Umbraco serves the page in.
 
 ## Browser runtime texts
 
@@ -107,7 +107,42 @@ The browser runtime formats dates, times and file sizes for the page's language,
 | `fileOperationFailed` | The operation failed. |
 | `chooseFile` | Choose a file to upload. |
 | `filesBeforeSave` | Files are still waiting to upload, uploading, or could not be uploaded. Finish uploading or remove them, then save again. |
+| `filesWorking` | Files are still being uploaded, removed or listed. Wait for that to finish, then try again. |
+| `fileTypeNotAccepted` | Files of this type are not accepted here. Accepted: {types}. |
 | `uploaderLoadFailed` | The file uploader could not load. Reload the page to try again. |
+| `uploaderTitle` | File uploader |
+| `uploaderDropOrBrowse` | Drop files here or {browse} |
+| `uploaderBrowse` | browse files |
+| `uploaderDropHint` | Drop your files here |
+| `uploaderAddMore` | Add more |
+| `uploaderAddMoreFiles` | Add more files |
+| `uploaderAddingMoreFiles` | Adding more files |
+| `uploaderBack` | Back |
+| `uploaderFileSelected` | {count} file selected |
+| `uploaderFilesSelected` | {count} files selected |
+| `uploaderFileAdded` | {count} more file added |
+| `uploaderFilesAdded` | {count} more files added |
+| `uploaderRemoveFile` | Remove file |
+| `uploaderCancel` | Cancel |
+| `uploaderCancelUpload` | Cancel upload |
+| `uploaderUploadingFile` | Uploading {count} file |
+| `uploaderUploadingFiles` | Uploading {count} files |
+| `uploaderFileProgress` | {complete} of {count} file uploaded |
+| `uploaderFilesProgress` | {complete} of {count} files uploaded |
+| `uploaderDataProgress` | {complete} of {total} |
+| `uploaderDataProgressUnknown` | {complete} of unknown |
+| `uploaderTimeLeft` | {time} left |
+| `uploaderComplete` | Complete |
+| `uploaderUploadComplete` | Upload complete |
+| `uploaderUploadFailed` | Upload failed |
+| `uploaderError` | Error |
+| `uploaderErrorDetails` | Show error details |
+| `uploaderDone` | Done |
+| `uploaderDuplicate` | {name} is already in the list. |
+| `uploaderFileFailed` | {name} could not be uploaded. |
+| `uploaderStalled` | The upload has made no progress for {seconds} seconds. |
+| `uploaderOffline` | No internet connection. |
+| `uploaderOnline` | Connected to the internet again. |
 | `sizeBytes` | {size} B |
 | `sizeKilobytes` | {size} KB |
 | `sizeMegabytes` | {size} MB |
@@ -155,7 +190,6 @@ The browser runtime formats dates, times and file sizes for the page's language,
 | `shuttleBottom` | Bottom |
 | `attachmentsSignIn` | Sign in to see the files. |
 | `attachmentsNoOwner` | This Attachments block is not inside a form and names no owner. |
-| `attachmentsFile` | File |
 | `attachmentsLabel` | Label |
 | `attachmentsNotes` | Notes |
 | `attachmentsPurpose` | Purpose |
