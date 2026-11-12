@@ -105,7 +105,7 @@ public sealed class ReportAdministrationController(IReportAccessPolicy access, P
                 var cultures = page.Cultures.Count > 0 ? page.Cultures.Keys.Cast<string?>() : [null];
                 foreach (var culture in cultures)
                 foreach (var block in AppBlockContent.Flatten(AppBlockContent.Blocks(page, culture), culture)
-                    .Where(block => block.Content.ContentType.Alias == "appReport"))
+                    .Where(block => block.Content.ContentType.Alias == ReportBlocks.Alias))
                 {
                     var heading = block.Content.Value<string>("heading", culture: culture);
                     sources.Add(new(ReportBlocks.Name(page.Key, block.Content.Key),

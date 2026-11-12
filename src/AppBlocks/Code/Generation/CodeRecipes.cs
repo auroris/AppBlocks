@@ -33,9 +33,6 @@ public sealed record CodeRecipe
     public string? DataSource { get; init; }
 }
 
-/// <summary>A data source field as a backing class sees it: its alias, the column behind it and its kind.</summary>
-public sealed record CodeRecipeField(string Field, string Column, string Kind);
-
 /// <summary>A table or choice a recipe cannot be made from, with the reason the wizard shows.</summary>
 public sealed class CodeRecipeException(string message) : InvalidOperationException(message);
 
@@ -546,11 +543,11 @@ public static partial class CodeRecipes
     private static string Lines(StringBuilder code) => code.ToString().ReplaceLineEndings("\n");
 
     /// <summary>A backing class for a SQL data source on <paramref name="table"/>, checking the caller in every hook.</summary>
-    public static string BackingClass(CodeRecipe recipe, TableSchema table, SqlDialect dialect, IReadOnlyList<CodeRecipeField>? fields = null)
+    public static string BackingClass(CodeRecipe recipe, TableSchema table, SqlDialect dialect, IReadOnlyList<DataSourceFieldColumn>? fields = null)
     {
         if (Validate(recipe) is [var first, ..]) throw new CodeRecipeException(first);
         var listed = fields ?? table.Columns.Where(c => dialect.KindOf(c.StoreType) is not null && !c.RowVersion)
-            .Select(c => new CodeRecipeField("", c.Name, dialect.KindOf(c.StoreType)!)).ToArray();
+            .Select(c => new DataSourceFieldColumn("", c.Name, dialect.KindOf(c.StoreType)!)).ToArray();
         var code = new StringBuilder();
         AppendHeader(code, recipe, table, dialect, "A backing class");
         code.AppendLine(recipe.DataSource is { Length: > 0 } source

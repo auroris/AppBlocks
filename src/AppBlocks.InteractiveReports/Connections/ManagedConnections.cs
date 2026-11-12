@@ -17,14 +17,13 @@ internal static class ManagedReportCompiler
 {
     public static ReportDefinition CompileManaged(this ReportDefinitionCompiler compiler, string name, ReportDefinition definition, ConnectionCatalog? catalog)
     {
-        using var connection = catalog?.ForCompilation(definition.Connection ?? "");
-        if (connection is null) return compiler.Compile(name, definition);
+        if (catalog?.ForCompilation(definition.Connection ?? "") is not { } connection) return compiler.Compile(name, definition);
         var detached = JsonSerializer.Deserialize<ReportDefinition>(JsonSerializer.Serialize(definition, IrJson.Options), IrJson.Options)!;
         detached.Connection = "";
         detached.DataSource = connection.ConnectionString;
         // Interactive Reports uses one Oracle driver token and a separate legacy SQL dialect.
-        var legacyOracle = catalog!.ConfiguredDialect(definition.Connection!) == DatabaseDialect.Oracle11g;
-        detached.Provider = legacyOracle ? DatabaseDialect.Oracle.ProviderName() : DatabaseKinds.Of(connection).ProviderName();
+        var legacyOracle = connection.Provider == DatabaseDialect.Oracle11g.ProviderName();
+        detached.Provider = legacyOracle ? DatabaseDialect.Oracle.ProviderName() : connection.Provider;
         var compiled = compiler.Compile(name, detached);
         if (legacyOracle) compiled.Dialect = ReportDialect.Oracle11g;
         // The engine stores connection material privately under a content-addressed identifier.
@@ -32,7 +31,7 @@ internal static class ManagedReportCompiler
         compiled.DataSource = null;
         compiled.Provider = null;
         // The engine opens what this name resolves to, and only the managed factory knows an application database's schema.
-        if (catalog!.IsApplicationDatabase(definition.Connection!)) compiled.Connection = definition.Connection!;
+        if (catalog.IsApplicationDatabase(definition.Connection!)) compiled.Connection = definition.Connection!;
         return compiled;
     }
 }

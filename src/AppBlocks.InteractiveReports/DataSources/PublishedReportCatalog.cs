@@ -26,7 +26,7 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
     public const string ReportAlias = "reportDefinition";
     /// <summary>The Access choice of a report definition that admits only the Member groups it picks.</summary>
     public const string SpecificGroups = "Specific groups";
-    private const string RowRestrictionMarker = "{{RowRestriction}}";
+    internal const string RowRestrictionMarker = "{{RowRestriction}}";
     private Dictionary<string, PublishedReport>? nodes;
     private Dictionary<string, ReportDefinition>? reports;
     private readonly HashSet<string> unavailableReports = new(StringComparer.OrdinalIgnoreCase);

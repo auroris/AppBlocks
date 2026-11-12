@@ -26,9 +26,6 @@ public static class TabularEndpoints
         group.MapPost("", Save);
     }
 
-    /// <summary>The revision a block's rows are listed under, which a save with its form sends back, so a changed data source is noticed.</summary>
-    public static string Revision(SqlDataSource source) => TabularOperations.Revision(source);
-
     private static async Task<IResult> List(Guid pageKey, Guid blockKey, HttpContext http, TabularAccess access, CancellationToken ct)
     {
         var scope = await access.ResolveAsync(pageKey, blockKey, ct);
@@ -79,7 +76,7 @@ public static class TabularEndpoints
         => TabularOperations.Answer(scope.Block!, scope.Source!, scope.User!, scope.OwnerAlias, scope.Scope?.Value, rows, () => http.RequestServices.GetRequiredService<IAntiforgery>().GetAndStoreTokens(http).RequestToken, ct);
 
     private static FormExecutionContext Context(TabularScope scope, Guid pageKey, Guid blockKey, string? submissionKey)
-        => new(scope.User!, pageKey, blockKey, Revision(scope.Source!), submissionKey, scope.Parameters);
+        => new(scope.User!, pageKey, blockKey, TabularOperations.Revision(scope.Source!), submissionKey, scope.Parameters);
 
     private static IResult Failure(DataSourceRowsResult result)
         => Results.Json(new { status = result.Status, index = result.Index, errors = result.Errors ?? new Dictionary<string, string[]>() }, statusCode: result.Status);

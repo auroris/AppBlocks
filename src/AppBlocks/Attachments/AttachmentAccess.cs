@@ -79,14 +79,10 @@ public sealed class AttachmentAccess(BlockOwnerAccess owners, IOptions<Attachmen
 
     /// <summary>
     /// The record a form has just saved, named by <paramref name="key"/> instead of the page's address, as an adoption names it.
-    /// The explicit key enters the owner-resolution contract without changing the request. The record's own load for this caller decides.
+    /// The key takes the place of the page's address in the owner's resolution, and the request is left as it came. The record's own load for this caller decides.
     /// </summary>
     public Task<AttachmentScope> ResolveSavedAsync(Guid pageKey, Guid blockKey, string key, CancellationToken ct)
         => ResolveOwnerAsync(pageKey, blockKey, key, ct);
-
-    /// <summary>Compatibility overload; the request is not modified.</summary>
-    public Task<AttachmentScope> ResolveSavedAsync(HttpContext http, Guid pageKey, Guid blockKey, string key, CancellationToken ct)
-        => ResolveSavedAsync(pageKey, blockKey, key, ct);
 
     /// <summary>
     /// Whether <paramref name="user"/> may add files to the record <paramref name="form"/> would create, before it is saved.

@@ -3,11 +3,8 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Configuration.Models;
-using Umbraco.Cms.Core.PropertyEditors;
 using Umbraco.Cms.Core.Scoping;
-using Umbraco.Cms.Core.Serialization;
 using Umbraco.Cms.Core.Services;
-using Umbraco.Cms.Core.Strings;
 using Umbraco.Cms.Infrastructure.Migrations;
 using AppBlocks.InteractiveReports.Blocks;
 using AppBlocks.Setup;
@@ -22,8 +19,7 @@ namespace AppBlocks.InteractiveReports.Setup;
 /// where a block still holds the earlier Record links choice: that choice becomes Hidden on the link it left out, in every stored
 /// version, drafts and published values alike.
 /// </summary>
-public sealed class AddReportLinkVisibility(IMigrationContext context, IContentTypeService contentTypes, IDataTypeService dataTypes,
-    IDataTypeContainerService dataFolders, PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer, IShortStringHelper strings,
+public sealed class AddReportLinkVisibility(IMigrationContext context, IContentTypeService contentTypes, SchemaMigration schemaMigration,
     IOptions<PackageMigrationSettings> settings, IKeyValueService keyValues, ICoreScopeProvider scopes)
     : AsyncMigrationBase(context)
 {
@@ -47,11 +43,11 @@ public sealed class AddReportLinkVisibility(IMigrationContext context, IContentT
     {
         if (!settings.Value.RunSchemaAndContentMigrations || keyValues.GetValue(SchemaInstaller.UninstalledKey) == "true") return;
         var schema = new AppBlocksSchema(typeof(AddReportLinkVisibility).Assembly);
-        var definition = schema.Definitions("ContentTypes").Single(d => d.Attribute("Alias")!.Value == "appReport");
+        var definition = schema.Definitions("ContentTypes").Single(d => d.Attribute("Alias")!.Value == ReportBlocks.Alias);
         // The package's type, by key: a site's own type that took the alias is not the package's to change.
         if (contentTypes.Get(Guid.Parse(definition.Attribute("Key")!.Value)) is not { } type) return;
         // The member group pickers use the base package's data type.
-        await new CompanionSchemaProperties(contentTypes, dataTypes, dataFolders, editors, serializer, strings).AddMissingAsync(type, definition, Properties);
+        await schemaMigration.AddMissingAsync(type, definition, Properties);
 
         // Block values live inside the pages' block editor values; only those that mention the earlier property can hold its choice.
         var mapped = false;

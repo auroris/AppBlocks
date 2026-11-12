@@ -9,6 +9,7 @@ namespace AppBlocks.Tabular;
 /// <summary>Shared validation and presentation of tabular rows, independent of the endpoint serving them.</summary>
 internal static class TabularOperations
 {
+    /// <summary>The revision a block's rows are listed under, which a save with its form sends back, so a changed data source is noticed.</summary>
     internal static string Revision(SqlDataSource source) => $"{TabularAccess.Definition}:{source.ContractVersion}";
     /// <summary>A change the block refuses before the engine sees it: its status, its position in the batch and the message, against a field or "".</summary>
     internal sealed record TabularRefusal(int Status, int Index, string Message, string Field = "");

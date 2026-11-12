@@ -43,14 +43,6 @@ public static class FormEndpoints
 
     private static IResult Result(FormResult result) => result.Status == 204 ? Results.NoContent() : Results.Json(result, statusCode: result.Status);
 
-    // Compatibility helpers for sites compiled against the original endpoint API. New code uses FormRequestValues and FormAccess.
-    public static IReadOnlyDictionary<string, string> Parameters(IQueryCollection query, params string[] reserved) => FormRequestValues.Parameters(query, reserved);
-    public const int MaxFormDataNames = FormRequestValues.MaxFormDataNames;
-    public const int MaxFormDataValueLength = FormRequestValues.MaxFormDataValueLength;
-    public static readonly IReadOnlyDictionary<string, string> NoFormData = FormRequestValues.NoFormData;
-    public static IReadOnlyDictionary<string, string> FormData(JsonElement? submitted, params string[] reserved) => FormRequestValues.FormData(submitted, reserved);
-    public static Task<bool> RefusesAnonymousAsync(FormDefinition form, Guid pageKey, HttpContext http) => FormAccess.RefusesAnonymousAsync(form, pageKey, http);
-
     private static async Task<IResult> Load(Guid pageKey, Guid formKey, HttpContext http, CancellationToken ct)
     {
         var (form, member) = await Resolve(pageKey, formKey, http);
@@ -59,7 +51,7 @@ public static class FormEndpoints
         if (FormResourceAccess.Refusal(form.Resource, member) is { } refused) return Results.StatusCode(refused);
         var query = http.Request.Query[form.KeyParameter];
         if (query.Count > 1 || query.Count == 1 && string.IsNullOrWhiteSpace(query[0])) return Results.BadRequest();
-        var context = new FormExecutionContext(member, pageKey, formKey, form.Revision, Parameters: Parameters(http.Request.Query));
+        var context = new FormExecutionContext(member, pageKey, formKey, form.Revision, Parameters: FormRequestValues.Parameters(http.Request.Query));
         var result = query.Count == 0 ? await form.Resource.InitializeAsync(context, ct) : await form.Resource.LoadAsync(query[0]!, context, ct);
         if (result.Record is null) return Result(result);
         var record = form.Project(result.Record);
@@ -98,8 +90,8 @@ public static class FormEndpoints
         catch (AntiforgeryValidationException) { return Results.BadRequest(); }
         if (submission.DefinitionVersion != form.Revision)
             return Result(new FormResult(409, Errors: new Dictionary<string, string[]> { [""] = ["This form has changed. Reload the page before saving."] }));
-        var context = new FormExecutionContext(member, pageKey, formKey, form.Revision, submission.SubmissionKey, Parameters(http.Request.Query)) {
-            FormData = FormData(submission.FormData, http.RequestServices.GetRequiredService<IOptions<AntiforgeryOptions>>().Value.FormFieldName),
+        var context = new FormExecutionContext(member, pageKey, formKey, form.Revision, submission.SubmissionKey, FormRequestValues.Parameters(http.Request.Query)) {
+            FormData = FormRequestValues.FormData(submission.FormData, http.RequestServices.GetRequiredService<IOptions<AntiforgeryOptions>>().Value.FormFieldName),
         };
         http.Response.Headers.CacheControl = "no-store";
         var result = await http.RequestServices.GetRequiredService<FormSubmissionService>().SubmitAsync(form, key, submission, operation, context,

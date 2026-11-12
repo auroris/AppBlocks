@@ -36,7 +36,7 @@ public sealed class DataSourceReportBindings(DataSourceRuntime runtime, IDataSou
     /// <param name="page">The page a block report renders on, and <paramref name="block"/> its block, for the providers of <c>:APP.</c> values; a configured or previewed report has neither, and its providers see empty keys.</param>
     public async Task<ReportDefinition> BindAsync(ReportDefinition report, DataSourceDefinition source, CancellationToken ct, Guid page = default, Guid block = default)
     {
-        var prepared = runtime.PrepareQuery(source, "{{RowRestriction}}") ?? throw new DataSourceException("The report's data source is not available.");
+        var prepared = runtime.PrepareQuery(source, PublishedReportCatalog.RowRestrictionMarker) ?? throw new DataSourceException("The report's data source is not available.");
         var principal = http.HttpContext?.User ?? new ClaimsPrincipal();
         var user = await users.ResolveAsync(principal, ct) ?? DataSourceUser.Anonymous;
         var query = DataSourceReportParameters.From(http.HttpContext);

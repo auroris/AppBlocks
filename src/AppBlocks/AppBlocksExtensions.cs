@@ -48,6 +48,7 @@ public static class AppBlocksExtensions
         services.AddScoped<Samples.FormInventory>();
         // Also resolvable on its own, so a site's import tool can install the definitions before it imports what uses them.
         services.AddTransient<Setup.SchemaInstaller>();
+        services.AddTransient<Setup.SchemaMigration>();
         services.AddTransient<Setup.SchemaUsage>();
         // For packages that generate content nodes from code, such as their API endpoints and lists of values.
         services.AddTransient<Setup.OwnedNodeInstaller>();

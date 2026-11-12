@@ -8,15 +8,18 @@ using Umbraco.Cms.Core.Strings;
 
 namespace AppBlocks.Setup;
 
-/// <summary>Adds a package's schema properties through Umbraco services, preserving properties already on the type.</summary>
+/// <summary>
+/// Adds a package's schema properties to a site's existing type through Umbraco services, preserving properties already on the type.
+/// A companion's package migration step takes it from dependency injection.
+/// </summary>
 public sealed class SchemaMigration(IContentTypeService contentTypes, IDataTypeService dataTypes, IDataTypeContainerService dataFolders,
-    PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer, IShortStringHelper strings)
+    PropertyEditorCollection editors, IConfigurationEditorJsonSerializer serializer, IShortStringHelper strings, IEnumerable<AppBlocksSchema> schemas)
 {
     /// <summary>
     /// Adds the properties of <paramref name="aliases"/> that <paramref name="type"/> lacks, as <paramref name="definition"/> declares
-    /// them, with their tabs and with the data types the site lacks, from the companion's schema or the base package's.
+    /// them, with their tabs and with the data types the site lacks, from the schema of AppBlocks or of any companion that registers one.
     /// </summary>
-    public async Task AddMissingAsync(IContentType type, XElement definition, IEnumerable<string> aliases, IEnumerable<AppBlocksSchema> schemas)
+    public async Task AddMissingAsync(IContentType type, XElement definition, IEnumerable<string> aliases)
     {
         var missing = aliases.Where(alias => !type.PropertyTypeExists(alias)).ToArray();
         if (missing.Length == 0) return;

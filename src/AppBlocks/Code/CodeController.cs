@@ -119,11 +119,11 @@ public sealed class CodeController(CodeCompilation compilation, ApplicationAcces
         if (CodeRecipes.Validate(recipe) is { Count: > 0 } errors) return Problem(string.Join(" ", errors), statusCode: 422);
         var path = CodeFolder.Normalize(CodeRecipes.FilePath(recipe, request.Folder), file: true);
         var (schema, dialect) = await TableAsync(recipe.Connection, recipe.Table, ct);
-        IReadOnlyList<CodeRecipeField>? fields = null;
+        IReadOnlyList<DataSourceFieldColumn>? fields = null;
         if (recipe.Kind == CodeRecipeKind.BackingClass && recipe.DataSource is { Length: > 0 } alias)
         {
             await catalog.LoadAsync();
-            fields = catalog.DataSources.FirstOrDefault(source => source.Alias == alias)?.FieldColumns is { Count: > 0 } known ? known.Select(field => new CodeRecipeField(field.Field, field.Column, field.Kind)).ToArray() : null;
+            fields = catalog.DataSources.FirstOrDefault(source => source.Alias == alias)?.FieldColumns is { Count: > 0 } known ? known : null;
         }
         var content = recipe.Kind == CodeRecipeKind.FormClass ? CodeRecipes.FormClass(recipe, schema, dialect) : CodeRecipes.BackingClass(recipe, schema, dialect, fields);
         return Ok(new { path, content });

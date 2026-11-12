@@ -13,7 +13,7 @@ namespace AppBlocks.InteractiveReports;
 public sealed class InteractiveReportBlock(ReportDefinitionCompiler compiler,
     PublishedReportCatalog definitions, IContentService contents, AppBlocks.Connections.ConnectionCatalog managed) : IAppBlockPlugin
 {
-    public string Alias => "appReport";
+    public string Alias => ReportBlocks.Alias;
     public string ViewPath => "~/Views/Partials/ApplicationBlocks/InteractiveReport.cshtml";
     /// <summary>The page resolves who is calling for this block, as for a form. An anonymous visitor may then use it where the page and its source allow.</summary>
     public bool RequiresUser => true;

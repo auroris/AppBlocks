@@ -15,8 +15,8 @@ public sealed class AnonymousAccessTests
     [Fact]
     public void Form_data_keeps_the_named_text_values_and_nothing_else()
     {
-        var token = new string('t', FormEndpoints.MaxFormDataValueLength);
-        var data = FormEndpoints.FormData(Json(JsonSerializer.Serialize(new Dictionary<string, object?> {
+        var token = new string('t', FormRequestValues.MaxFormDataValueLength);
+        var data = FormRequestValues.FormData(Json(JsonSerializer.Serialize(new Dictionary<string, object?> {
             ["g-recaptcha-response"] = token, ["h-captcha.response:1"] = "ok", ["_hp"] = "", ["number"] = 1, ["none"] = null, ["list"] = new[] { "a", "b" },
             ["too-long"] = token + "t", ["has space"] = "no", ["<script>"] = "no", ["__RequestVerificationToken"] = "secret", [new string('n', 65)] = "no",
         })), "__RequestVerificationToken");
@@ -29,7 +29,7 @@ public sealed class AnonymousAccessTests
     [Fact]
     public void A_repeated_form_data_name_is_left_out_rather_than_guessed()
     {
-        var data = FormEndpoints.FormData(Json("""{ "a": "1", "b": "2", "A": "3", "c": "4", "c": "5", "c": "6", "d": ["7"], "d": "8" }"""));
+        var data = FormRequestValues.FormData(Json("""{ "a": "1", "b": "2", "A": "3", "c": "4", "c": "5", "c": "6", "d": ["7"], "d": "8" }"""));
         Assert.Equal(new Dictionary<string, string> { ["b"] = "2" }, data);
     }
 
@@ -37,8 +37,8 @@ public sealed class AnonymousAccessTests
     public void Form_data_stops_at_its_name_limit_and_a_later_repeat_still_removes()
     {
         var names = Enumerable.Range(0, 60).Select(i => $"\"n{i}\": \"v\"").Append("\"n0\": \"again\"");
-        var data = FormEndpoints.FormData(Json("{" + string.Join(",", names) + "}"));
-        Assert.Equal(FormEndpoints.MaxFormDataNames - 1, data.Count);
+        var data = FormRequestValues.FormData(Json("{" + string.Join(",", names) + "}"));
+        Assert.Equal(FormRequestValues.MaxFormDataNames - 1, data.Count);
         Assert.False(data.ContainsKey("n0"));
         Assert.True(data.ContainsKey("n49"));
         Assert.False(data.ContainsKey("n50"));
@@ -49,12 +49,12 @@ public sealed class AnonymousAccessTests
     [InlineData("[]")]
     [InlineData("\"text\"")]
     [InlineData("{}")]
-    public void Form_data_that_is_not_a_set_of_controls_is_empty(string json) => Assert.Empty(FormEndpoints.FormData(Json(json)));
+    public void Form_data_that_is_not_a_set_of_controls_is_empty(string json) => Assert.Empty(FormRequestValues.FormData(Json(json)));
 
     [Fact]
     public void A_submission_without_form_data_and_existing_callers_still_work()
     {
-        Assert.Empty(FormEndpoints.FormData(null));
+        Assert.Empty(FormRequestValues.FormData(null));
         var submission = JsonSerializer.Deserialize<FormSubmission>("""{ "definitionVersion": "1", "values": {} }""", JsonSerializerOptions.Web)!;
         Assert.Null(submission.FormData);
         Assert.Equal("t", JsonSerializer.Deserialize<FormSubmission>("""{ "definitionVersion": "1", "values": {}, "formData": { "a": "t" } }""", JsonSerializerOptions.Web)!.FormData!.Value.GetProperty("a").GetString());

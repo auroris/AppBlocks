@@ -145,7 +145,7 @@ public sealed class AntiSpamSiteTests
             Assert.Equal(AntiSpamGate.RefusedMessage, Message(await refused.Content.ReadAsStringAsync()));
         }
         // A token too long to be real is left out of the form's controls, so it is no token at all.
-        Assert.Equal(AntiSpamGate.RefusedMessage, await RefusedAsync(visitor, Standin, form, new Dictionary<string, object> { [StandInService.Field] = new string('t', FormEndpoints.MaxFormDataValueLength + 1) }));
+        Assert.Equal(AntiSpamGate.RefusedMessage, await RefusedAsync(visitor, Standin, form, new Dictionary<string, object> { [StandInService.Field] = new string('t', FormRequestValues.MaxFormDataValueLength + 1) }));
         Assert.Equal(askedBefore, site.StandIn.Asked.Count);
         Assert.Equal(creates + 1, site.Calls.Count("create"));
 

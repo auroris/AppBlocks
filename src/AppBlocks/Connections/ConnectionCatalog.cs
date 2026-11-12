@@ -23,6 +23,12 @@ public sealed record SaveConnection(string Name, string Provider, string? Connec
     /// <summary>Without the connection string: MVC writes an action's arguments to the log when tracing is on, and this is what it writes.</summary>
     public override string ToString() => $"{nameof(SaveConnection)} {{ {nameof(Name)} = {Name}, {nameof(Provider)} = {Provider} }}";
 }
+/// <summary>A connection as <see cref="ConnectionCatalog.ForCompilation"/> gives it: its provider name, <c>oracle11g</c> included, and its connection string.</summary>
+public sealed record CompilableConnection(string Provider, string ConnectionString)
+{
+    /// <summary>Without the connection string, as <see cref="SaveConnection"/> leaves it out, so a log never carries it.</summary>
+    public override string ToString() => $"{nameof(CompilableConnection)} {{ {nameof(Provider)} = {Provider} }}";
+}
 internal sealed record StoredConnection(string Name, string Provider, string ProtectedValue, string Revision);
 /// <summary>What a name opens. <paramref name="Problem"/> says why it cannot be opened, and <see cref="ConnectionCatalog.Create(ConnectionMaterial)"/> throws it.</summary>
 internal sealed record ConnectionMaterial(string Provider, string Value, string Revision, bool LocalDefault = false, string? Problem = null);
@@ -116,15 +122,13 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     public bool Contains(string name) => Find(name) is not null;
 
     /// <summary>
-    /// A closed connection whose provider and connection string an external engine can compile. Null for an unknown name
-    /// or a package-owned local default, which the engine must open through its registered factory instead.
-    /// Dispose the connection after compilation and never return its connection string to a client.
+    /// What an external engine, such as Interactive Reports, compiles a name to, from one reading of the catalog. Null for a name the
+    /// catalog does not supply, and for a package-owned local default, whose registered factory must create its directory and
+    /// initialize SQLite, so the engine opens it through that factory instead. A saved connection this installation can no longer
+    /// decrypt has an empty connection string, which fails when the engine opens it. Never return the connection string to a client.
     /// </summary>
-    public DbConnection? ForCompilation(string name)
-        => Find(name) is { LocalDefault: false } material ? Create(material) : null;
-
-    /// <summary>The configured SQL dialect, including Oracle's legacy mode; null for a name supplied only by a factory.</summary>
-    public DatabaseDialect? ConfiguredDialect(string name) => Find(name) is { } material ? DatabaseKinds.FromProvider(material.Provider) : null;
+    public CompilableConnection? ForCompilation(string name)
+        => Find(name) is { LocalDefault: false } material ? new(material.Provider, material.Value) : null;
 
     internal ConnectionMaterial? Find(string name)
     {
@@ -171,9 +175,6 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     /// <exception cref="ConnectionNotRegisteredException">No connection by the name is configured, saved or registered.</exception>
     public DbConnection Openable(string name) => registered is not null ? registered.CreateConnection(name, this, services!)
         : Find(name) is { } material ? Create(material) : throw AppBlocksBuilder.NotRegistered(name);
-
-    internal DbConnection ForUse(string name, ConnectionMaterial material)
-        => registered is null ? Create(material) : registered.Create(name, () => Create(material), services!);
 
     /// <summary>
     /// A connection for looking only: it ensures no schema and prepares no file when it opens, as <see cref="TestAsync"/>'s does not.
