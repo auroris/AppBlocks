@@ -12,6 +12,7 @@ using Umbraco.Cms.Core.Security;
 using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Web.Common.Authorization;
 
+// Public namespace retained for source compatibility; the file lives with its owning feature.
 namespace AppBlocks.Management;
 
 public sealed record CodeFileRequest(string Path, string? Content = null);
@@ -122,7 +123,7 @@ public sealed class CodeController(CodeCompilation compilation, ApplicationAcces
         if (recipe.Kind == CodeRecipeKind.BackingClass && recipe.DataSource is { Length: > 0 } alias)
         {
             await catalog.LoadAsync();
-            fields = catalog.DataSources.FirstOrDefault(source => source.Alias == alias)?.FieldColumns is { Count: > 0 } known ? known : null;
+            fields = catalog.DataSources.FirstOrDefault(source => source.Alias == alias)?.FieldColumns is { Count: > 0 } known ? known.Select(field => new CodeRecipeField(field.Field, field.Column, field.Kind)).ToArray() : null;
         }
         var content = recipe.Kind == CodeRecipeKind.FormClass ? CodeRecipes.FormClass(recipe, schema, dialect) : CodeRecipes.BackingClass(recipe, schema, dialect, fields);
         return Ok(new { path, content });

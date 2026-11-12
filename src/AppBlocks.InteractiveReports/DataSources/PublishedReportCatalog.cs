@@ -31,7 +31,7 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
     private Dictionary<string, ReportDefinition>? reports;
     private readonly HashSet<string> unavailableReports = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Guid> reportOwners = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, DataSourceRuntime.PlanEntry> plans = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DataSourceReadQuery?> queries = new(StringComparer.Ordinal);
 
     public IReadOnlyDictionary<string, ReportDefinition> Reports => reports ?? throw new InvalidOperationException("Call LoadAsync before reading reports.");
     private Task? loading;
@@ -46,7 +46,7 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
 
     /// <summary>Whether access requires an account, the source binds the caller, or its schema cannot be read to tell.</summary>
     public bool RequiresSignedInReader(DataSourceDefinition source) => !DataSourceQueries.CanRead(source, DataSourceUser.Anonymous)
-        || PlanOf(source).Entry.Plan is not { BindsUser: false };
+        || QueryOf(source).Query is not { BindsUser: false };
 
     /// <summary>Builds a report from a block-owned table or SQL query.</summary>
     public PublishedReport? ReadBlockReport(Guid key, Func<string, object?> value, ICollection<string> errors)
@@ -66,8 +66,8 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
     public IReadOnlyList<string>? ReportColumns(string alias) => ReportNodes.TryGetValue(alias, out var node) && node.DataSource is { } source
         ? SourceColumns(source) : null;
 
-    public IReadOnlyList<string>? SourceColumns(DataSourceDefinition source) => PlanOf(source).Entry.Plan is { } plan
-        ? plan.Columns.Select(column => column.Column).ToArray() : null;
+    public IReadOnlyList<string>? SourceColumns(DataSourceDefinition source) => QueryOf(source).Query is { } plan
+        ? plan.Columns : null;
 
     public PublishedReport? ReadReport(Guid key, string name, Func<string, object?> value, ICollection<string> errors,
         DataSourceDefinition? blockSource = null)
@@ -101,14 +101,13 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
         {
             source = blockSource ?? data.ResolveSource(selection);
             if (source is null) errors.Add("Select a published SQL data source.");
-            else if (PlanOf(source).Entry.Plan is not { } plan) errors.Add("The selected data source cannot read its database schema.");
+            else if (QueryOf(source).Query is not { } plan) errors.Add("The selected data source cannot read its database schema.");
             else
             {
                 report.Connection = source.Connection;
-                var parameters = plan.Parameters();
-                report.Sql = plan.Dialect.Select(plan.From(parameters, _ => null), plan.Columns.Select(c => c.Column), [],
-                    "{{RowRestriction}}" + (plan.Restriction is null ? "" : " AND (" + plan.Restriction.Render(parameters, _ => null) + ")"));
-                report.ContextParams = parameters.Bindings.ToDictionary(p => p.Name, _ => new ContextParamSpec { Claim = "appblocks-preview" });
+                var command = plan.Preview();
+                report.Sql = command.Sql;
+                report.ContextParams = command.Parameters.ToDictionary(p => p.Key, _ => new ContextParamSpec { Claim = "appblocks-preview" });
             }
         }
         else
@@ -155,15 +154,15 @@ public sealed class PublishedReportCatalog(IUmbracoContextFactory contexts, IDoc
     private string SourceVersion(DataSourceDefinition? source)
     {
         if (source is null) return "";
-        var (fingerprint, entry) = PlanOf(source);
-        return entry.Plan is null ? fingerprint + ":unavailable" : fingerprint;
+        var (fingerprint, entry) = QueryOf(source);
+        return entry is null ? fingerprint + ":unavailable" : fingerprint;
     }
 
-    /// <summary>One look at a source's plan per scope, so a cached definition and the version it is cached under agree.</summary>
-    private (string Fingerprint, DataSourceRuntime.PlanEntry Entry) PlanOf(DataSourceDefinition source)
+    /// <summary>One prepared query per source and scope, so a cached definition and the version it is cached under agree.</summary>
+    private (string Fingerprint, DataSourceReadQuery? Query) QueryOf(DataSourceDefinition source)
     {
         var fingerprint = source.ComputeFingerprint() + ":" + (managed?.Revision(source.Connection) ?? "");
-        if (!plans.TryGetValue(fingerprint, out var entry)) plans[fingerprint] = entry = runtime.Plan(source);
+        if (!queries.TryGetValue(fingerprint, out var entry)) queries[fingerprint] = entry = runtime.PrepareQuery(source, RowRestrictionMarker);
         return (fingerprint, entry);
     }
 

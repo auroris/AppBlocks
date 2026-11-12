@@ -1,3 +1,4 @@
+using AppBlocks.InteractiveReports.Blocks;
 using AppBlocks.Blocks;
 using AppBlocks.InteractiveReports.DataSources;
 using Asp.Versioning;
@@ -107,7 +108,7 @@ public sealed class ReportAdministrationController(IReportAccessPolicy access, P
                     .Where(block => block.Content.ContentType.Alias == "appReport"))
                 {
                     var heading = block.Content.Value<string>("heading", culture: culture);
-                    sources.Add(new(AppBlockContent.ReportName(page.Key, block.Content.Key),
+                    sources.Add(new(ReportBlocks.Name(page.Key, block.Content.Key),
                         $"{page.Name(culture)} / {(string.IsNullOrWhiteSpace(heading) ? "Report" : heading)}", culture));
                 }
             }

@@ -214,7 +214,7 @@ public static class AttachmentEndpoints
         try { adoption = await http.Request.ReadFromJsonAsync<AttachmentAdoption>(ct); }
         catch (Exception error) when (error is JsonException or BadHttpRequestException) { return Results.BadRequest(); }
         if (adoption?.Key?.Trim() is not { Length: > 0 and <= 200 } key) return Results.Problem("Name the record the files now belong to.", statusCode: 422);
-        var scope = await Pending(access.ResolveSavedAsync(http, pageKey, blockKey, key, ct), store, ct);
+        var scope = await Pending(access.ResolveSavedAsync(pageKey, blockKey, key, ct), store, ct);
         if (scope.Status != 200) return Refusal(scope);
         // A resource that adopted the files in its own create transaction only confirms the submission here; nothing moves.
         if (scope.Resource is ISubmittedAttachmentOwner submitted)

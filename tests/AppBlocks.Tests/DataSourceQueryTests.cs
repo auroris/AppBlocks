@@ -36,6 +36,37 @@ public sealed class DataSourceQueryTests : IDisposable
     private static FormExecutionContext Context => new(new ClaimsPrincipal(new ClaimsIdentity([new(ClaimTypes.NameIdentifier, "42")], IdentityConstants.ApplicationScheme)), Guid.NewGuid(), Guid.NewGuid(), "1");
 
     [Fact]
+    public async Task External_queries_keep_restrictions_and_request_values_bound_without_exposing_the_plan()
+    {
+        var definition = Definition with { Source = "SELECT ID, LABEL, OWNER FROM CHOICES WHERE LABEL = :PARAM.label" };
+        var query = Assert.IsType<DataSourceReadQuery>(runtime.PrepareQuery(definition, "{{Access}}"));
+        Assert.True(query.BindsUser);
+        Assert.Equal(["ID", "LABEL", "OWNER"], query.Columns);
+        Assert.Contains(query.FieldColumns, column => column.Column == "LABEL" && column.Field == "label" && column.Kind == "text");
+        Assert.All(query.Preview().Parameters.Values, value => Assert.Null(value));
+
+        await new DataSourceQueries(runtime, new Users(User), []).AuthorizeAsync(definition, Context, default);
+        await using var connection = new SqliteConnection($"Data Source={file};Pooling=False");
+        await connection.OpenAsync();
+        async Task<int> Count(string label)
+        {
+            var bound = query.Bind(User, new Dictionary<string, string> { ["label"] = label });
+            Assert.DoesNotContain("owner-sid", bound.Sql);
+            Assert.Contains("{{Access}}", bound.Sql);
+            await using var command = connection.CreateCommand();
+            command.CommandText = bound.Sql.Replace("{{Access}}", "1=1");
+            foreach (var parameter in bound.Parameters) command.Parameters.AddWithValue(parameter.Key, parameter.Value ?? DBNull.Value);
+            await using var rows = await command.ExecuteReaderAsync();
+            var count = 0;
+            while (await rows.ReadAsync()) count++;
+            return count;
+        }
+        Assert.Equal(1, await Count("One"));
+        Assert.Equal(0, await Count("Two")); // Another owner's row stays excluded.
+        Assert.Equal(0, await Count("One' OR 1=1 --"));
+    }
+
+    [Fact]
     public async Task Lists_and_paper_reports_read_many_rows_with_identity_restrictions_and_column_metadata()
     {
         var result = await new DataSourceQueries(runtime, new Users(User), []).QueryAsync(Definition, Context);

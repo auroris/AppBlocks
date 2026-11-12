@@ -48,7 +48,7 @@ else if (alias == "appForm")
     {
         <p role="alert">@Text["formInvalid", "This form has an invalid resource or field configuration."]</p>
     }
-    else if (Model.Anonymous && await FormEndpoints.RefusesAnonymousAsync(definition, Model.Page.Key, Context))
+    else if (Model.Anonymous && await FormAccess.RefusesAnonymousAsync(definition, Model.Page.Key, Context))
     {
         @* The class said no before the runtime asked, so there is no form to show and nothing to flash. *@
         <p class="app-block-signin" role="status">@Text["signInToUseForm", "Sign in to use this form."]</p>
@@ -199,7 +199,7 @@ else if (Model.Form is not null && AppBlockSchema.FieldAliases.Contains(alias))
                     {
                         try {
                             // Bounded as the form endpoints bound them, so the page and the runtime's requests bind the same :PARAM values.
-                            var parameters = FormEndpoints.Parameters(Context.Request.Query);
+                            var parameters = FormRequestValues.Parameters(Context.Request.Query);
                             choices = await Lists.ChoicesAsync(selected, new FormExecutionContext(Context.User, Model.Page.Key, Model.Form.Block.ContentKey, Model.Form.Revision, Parameters: parameters), Context.RequestAborted);
                         }
                         catch (Exception error) when (error is not OperationCanceledException) { choices = []; listProblem = Text["choicesUnavailable", "The choices for this field are not available. Try reloading the page."]; }

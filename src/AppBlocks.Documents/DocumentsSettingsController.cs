@@ -6,6 +6,7 @@ using Umbraco.Cms.Api.Management.Routing;
 using AppBlocks.Authentication;
 using Umbraco.Cms.Web.Common.Authorization;
 
+// Public namespace retained for source compatibility; the file lives with its owning feature.
 namespace AppBlocks.Documents.Management;
 
 [ApiVersion("1.0")]

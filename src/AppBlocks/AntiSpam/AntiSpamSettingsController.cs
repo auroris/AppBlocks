@@ -7,6 +7,7 @@ using Umbraco.Cms.Api.Management.Routing;
 using AppBlocks.Authentication;
 using Umbraco.Cms.Web.Common.Authorization;
 
+// Public namespace retained for source compatibility; the file lives with its owning feature.
 namespace AppBlocks.Management;
 
 /// <summary>One row of the Anti-spam settings: where the secret key comes from, never what it is.</summary>

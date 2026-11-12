@@ -31,10 +31,10 @@ public sealed record FormExecutionContext(ClaimsPrincipal Member, Guid PageKey, 
     /// The form's other named controls as the browser submitted them: anything inside the form that is not bound to a
     /// field, such as a captcha token or a honeypot. Never null, and empty on anything but a submission. It comes from the
     /// browser like any other input, and AppBlocks neither stores nor validates it, so verify what matters in the resource.
-    /// See <see cref="FormEndpoints.FormData"/> for its limits. On a form with an Anti-spam block, AppBlocks has already made
+    /// See <see cref="FormRequestValues.FormData"/> for its limits. On a form with an Anti-spam block, AppBlocks has already made
     /// that block's check, and the check's own control is left out of this.
     /// </summary>
-    public IReadOnlyDictionary<string, string> FormData { get; init; } = FormEndpoints.NoFormData;
+    public IReadOnlyDictionary<string, string> FormData { get; init; } = FormRequestValues.NoFormData;
 }
 
 public sealed record FormResult(int Status, FormRecord? Record = null, IReadOnlyDictionary<string, string[]>? Errors = null)

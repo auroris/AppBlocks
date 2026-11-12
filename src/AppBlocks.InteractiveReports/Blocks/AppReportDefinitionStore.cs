@@ -46,7 +46,7 @@ public sealed class AppReportDefinitionStore(
         if (name.StartsWith(ReportSourcePreviews.Prefix, StringComparison.Ordinal))
             return previews?.Find(name, http?.HttpContext?.User) is null ? null
                 : new(name, new ReportAuthorization { Policy = ReportAdministratorRequirement.Policy });
-        if (!AppBlockContent.ParseReportName(name, out _, out _))
+        if (!ReportBlocks.ParseName(name, out _, out _))
         {
             await catalog.LoadAsync();
             if (catalog.IsUnavailableReport(name)) return null;
@@ -55,7 +55,7 @@ public sealed class AppReportDefinitionStore(
                 ? await authorization.FindAuthorization(name, ct)
                 : await configured.Value.Find(name, ct) is { } normal ? new(normal.Name, normal.Authorization) : null;
         }
-        if (await content.ReportAsync(name) is not { } instance) return null;
+        if (await ReportBlocks.ResolveAsync(content, name) is not { } instance) return null;
         if (instance.Block.Content.Value<string>("dataSource", culture: instance.Culture) is { Length: > 0 } selection)
             return catalog.ResolveBlockSource(instance.Block.Content.Key, selection, new List<string>()) is { } source
                 ? new(name, BlockAuthorization(instance.Page, source)) : null;
@@ -74,7 +74,7 @@ public sealed class AppReportDefinitionStore(
         // has needed the store. Give an empty site's store the same opportunity to initialize it.
         if (name.Equals("__saved-reports", StringComparison.OrdinalIgnoreCase) && savedViews is not null)
             await savedViews.ReadyAsync(ct);
-        if (CallerIsAnonymous && AppBlockContent.ParseReportName(name, out _, out _)
+        if (CallerIsAnonymous && ReportBlocks.ParseName(name, out _, out _)
             || savedViews is not null && !name.StartsWith("__", StringComparison.Ordinal) && !await savedViews.ReadyAsync(ct))
             definition.Features = ReportFeatures.Resolve(definition).Where(feature => feature != ReportFeatures.SavedReports).ToList();
         return definition;
@@ -91,7 +91,7 @@ public sealed class AppReportDefinitionStore(
             definition.Authorization = new ReportAuthorization { Policy = ReportAdministratorRequirement.Policy };
             return compiler.CompileManaged(name, definition, managed);
         }
-        if (!AppBlockContent.ParseReportName(name, out var pageKey, out var blockKey))
+        if (!ReportBlocks.ParseName(name, out var pageKey, out var blockKey))
         {
             await catalog.LoadAsync();
             if (catalog.IsUnavailableReport(name)) return null;
@@ -100,7 +100,7 @@ public sealed class AppReportDefinitionStore(
             if (node.DataSource is { } nodeSource) await bindings.BindAsync(definition, nodeSource, ct);
             return compiler.CompileManaged(node.Alias, definition, managed);
         }
-        if (await content.ReportAsync(name) is not { } instance) return null;
+        if (await ReportBlocks.ResolveAsync(content, name) is not { } instance) return null;
         var block = instance.Block.Content;
         var authored = ReadBlock(block.Key, property => block.GetProperty(property)?.GetValue(instance.Culture));
         if (authored?.DataSource is null) return null;

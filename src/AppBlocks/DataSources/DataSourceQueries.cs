@@ -114,8 +114,8 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
         };
     }
 
-    /// <summary>The check a report request makes before its own query, which has no connection to offer the policies.</summary>
-    internal Task<DataSourceUser> AuthorizeAsync(DataSourceDefinition definition, FormExecutionContext context, CancellationToken ct)
+    /// <summary>Authorizes a read performed by an external query engine, which has no connection to offer the policies.</summary>
+    public Task<DataSourceUser> AuthorizeAsync(DataSourceDefinition definition, FormExecutionContext context, CancellationToken ct)
         => AuthorizeAsync(definition, context, null, ct);
 
     internal async Task<DataSourceUser> AuthorizeAsync(DataSourceDefinition definition, FormExecutionContext context, DbConnection? connection, CancellationToken ct)
@@ -148,10 +148,10 @@ public sealed class DataSourceQueries(DataSourceRuntime runtime, IDataSourceUser
     /// Resolve the account, or an anonymous visitor. An authenticated identity that failed resolution must not become
     /// anonymous: it may represent a disabled account. Page endpoints also enforce Umbraco Public Access.
     /// </summary>
-    internal static async Task<DataSourceUser?> ResolveReaderAsync(IDataSourceUserResolver users, FormExecutionContext context, CancellationToken ct)
+    public static async Task<DataSourceUser?> ResolveReaderAsync(IDataSourceUserResolver users, FormExecutionContext context, CancellationToken ct)
         => Reader(await users.ResolveAsync(context, ct), context.Member);
 
-    internal static async Task<DataSourceUser?> ResolveReaderAsync(IDataSourceUserResolver users, System.Security.Claims.ClaimsPrincipal principal, CancellationToken ct)
+    public static async Task<DataSourceUser?> ResolveReaderAsync(IDataSourceUserResolver users, System.Security.Claims.ClaimsPrincipal principal, CancellationToken ct)
         => Reader(await users.ResolveAsync(principal, ct), principal);
 
     private static DataSourceUser? Reader(DataSourceUser? user, System.Security.Claims.ClaimsPrincipal principal)

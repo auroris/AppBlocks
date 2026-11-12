@@ -31,7 +31,7 @@ internal static class ReportBlockSource
             }
             else if (kind == "sql")
             {
-                SqlTemplate.Parse(source, SqlUse.RowSource, "The report SQL query", errors);
+                DataSourceDefinition.ValidateQuery(source, "The report SQL query", errors);
             }
             else errors.Add("Choose Table or SQL query for the report source.");
             return errors.Count == start ? new DataSourceDefinition {

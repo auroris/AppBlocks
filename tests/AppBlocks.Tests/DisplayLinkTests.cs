@@ -159,7 +159,7 @@ public sealed class DisplayLinkSiteTests
         // A Display value without a template is the read-only control it always was.
         Assert.Contains("data-field=\"name\" data-kind=\"text\" data-readonly=\"true\"", html);
         Assert.DoesNotContain("data-display-link=\"name\"", html);
-        Assert.Contains("[data-display-link]", await client.GetStringAsync("/App_Plugins/ApplicationBlocks/runtime.js"));
+        Assert.Contains("[data-display-link]", await client.GetStringAsync("/App_Plugins/ApplicationBlocks/forms.js"));
         Assert.Contains(".app-display-link", await client.GetStringAsync("/App_Plugins/ApplicationBlocks/runtime.css"));
     }
 }

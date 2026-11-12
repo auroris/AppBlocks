@@ -7,6 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Umbraco.Cms.Core.Services;
 using AppBlocks.Blocks;
 using AppBlocks.Forms;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 
 namespace AppBlocks.Tests;
 
@@ -305,8 +307,10 @@ public sealed class AttachmentsHttpTests
     public async Task A_class_that_adopts_files_as_it_creates_the_record_only_confirms_the_submission_afterwards()
     {
         var ledger = new SubmissionLedger();
+        var queryObserver = new AdoptionQueryObserver();
         await using var site = await BlockSite.BootAsync(configure: builder => {
             builder.Services.AddSingleton(ledger);
+            builder.Services.AddSingleton<IStartupFilter>(queryObserver);
             builder.Services.AddScoped<IFormResource, SubmittedFiles>();
         });
         await site.PublishAsync();
@@ -333,13 +337,16 @@ public sealed class AttachmentsHttpTests
 
         // A file sent under the same key after the record was created stays where it was: the adoption moves nothing.
         Assert.Equal(HttpStatusCode.Created, (await pending.UploadAsync("late.pdf", "after the fact")).Status);
-        var (status, adopted) = await pending.AdoptAsync("1", "?region=north");
+        var (status, adopted) = await pending.AdoptAsync("1", "?region=north&id=browser-value");
         Assert.Equal(HttpStatusCode.OK, status);
         Assert.False(adopted.GetProperty("canWrite").GetBoolean());
         Assert.Equal(file.GetProperty("id").GetInt64(), Assert.Single(adopted.GetProperty("items").EnumerateArray()).GetProperty("id").GetInt64());
         Assert.Equal("late.pdf", Assert.Single((await pending.ListAsync()).Body.GetProperty("items").EnumerateArray()).GetProperty("fileName").GetString());
         // The class is asked with the page's parameters, as its other rules are.
         Assert.Equal("north", ledger.Parameters?["region"]);
+        Assert.Equal("1", ledger.Parameters?["id"]);
+        Assert.True(queryObserver.SameQuery);
+        Assert.Equal("browser-value", queryObserver.OwnerKey);
 
         // Another submission is not this record's, which the class says, and nothing is listed.
         var other = new PendingFiles(anonymous, $"{site.PathBase}/api/attachments/{page}/{block}/new/{Guid.NewGuid()}");
@@ -347,6 +354,22 @@ public sealed class AttachmentsHttpTests
         var (refused, problem) = await other.AdoptAsync("1");
         Assert.Equal(HttpStatusCode.Forbidden, refused);
         Assert.Contains("does not belong", problem.GetProperty("detail").GetString());
+    }
+
+    private sealed class AdoptionQueryObserver : IStartupFilter
+    {
+        public bool SameQuery { get; private set; }
+        public string? OwnerKey { get; private set; }
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app => {
+            app.Use(async (context, run) => {
+                if (!context.Request.Path.Value!.EndsWith("/adopt", StringComparison.Ordinal)) { await run(); return; }
+                var original = context.Request.Query;
+                await run();
+                SameQuery = ReferenceEquals(original, context.Request.Query);
+                OwnerKey = context.Request.Query["id"];
+            });
+            next(app);
+        };
     }
 
     /// <summary>A page with an Attachments block and a Tabular form block whose records are <paramref name="resource"/>'s: inside a form over it with a title field, or on the page naming it as their owner with the key from the address.</summary>

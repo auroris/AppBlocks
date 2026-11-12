@@ -21,7 +21,7 @@ public sealed record ApiEndpointResult(int Status, object Body);
 public sealed class ApiEndpointRunner(DataSourceQueries queries, ILogger<ApiEndpointRunner> logger)
 {
     /// <param name="route">The route parameter values, which win over query parameters of the same name.</param>
-    /// <param name="query">The query string's parameters, bounded as <see cref="FormEndpoints.Parameters"/> bounds them.</param>
+    /// <param name="query">The query string's parameters, bounded as <see cref="FormRequestValues.Parameters"/> bounds them.</param>
     public async Task<ApiEndpointResult> RunAsync(ApiEndpointDefinition endpoint, ClaimsPrincipal principal, IReadOnlyDictionary<string, string> route,
         IReadOnlyDictionary<string, string> query, CancellationToken ct)
     {
@@ -110,7 +110,7 @@ public static class ApiEndpointRoutes
             return Json(ApiEndpointRunner.Problem(404));
         var principal = await PrincipalAsync(http);
         return Json(await services.GetRequiredService<ApiEndpointRunner>().RunAsync(found.Endpoint, principal, found.Values,
-            FormEndpoints.Parameters(http.Request.Query), http.RequestAborted));
+            FormRequestValues.Parameters(http.Request.Query), http.RequestAborted));
     }
 
     private static IResult Json(ApiEndpointResult result) => Results.Json(result.Body, statusCode: result.Status);

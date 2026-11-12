@@ -62,7 +62,7 @@ public sealed record PaperReportDefinition(Guid DataSourceKey, IReadOnlyDictiona
     /// The request's parameters, bound as forms bind them: bounded, single-valued, and without the culture or the
     /// delivery's own <c>format</c> switch.
     /// </summary>
-    public static IQueryCollection Query(IQueryCollection query) => new QueryCollection(FormEndpoints.Parameters(query, "format")
+    public static IQueryCollection Query(IQueryCollection query) => new QueryCollection(FormRequestValues.Parameters(query, "format")
         .ToDictionary(p => p.Key, p => new StringValues(p.Value), StringComparer.OrdinalIgnoreCase));
 
     public IReadOnlyDictionary<string, string> BindParameters(AppBindVariables variables)

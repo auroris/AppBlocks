@@ -1,3 +1,4 @@
+using AppBlocks.InteractiveReports.Blocks;
 using System.Security.Claims;
 using InteractiveReport.AspNetCore;
 using InteractiveReport.Core.Identity;
@@ -20,7 +21,7 @@ namespace AppBlocks.InteractiveReports.Reports;
 public static class AnonymousReportAccess
 {
     public static bool Allows(InteractiveReportAuthorizationRequest request)
-        => AppBlockContent.ParseReportName(request.Resource.SourceReportName ?? request.Resource.ReportName, out _, out _)
+        => ReportBlocks.ParseName(request.Resource.SourceReportName ?? request.Resource.ReportName, out _, out _)
             && request.Action is InteractiveReportAction.ViewReport or InteractiveReportAction.Query or InteractiveReportAction.Export or InteractiveReportAction.ListSavedReports;
 }
 
@@ -54,7 +55,7 @@ public sealed class DefaultReportAccessPolicy(ApplicationAccessPolicy access, IO
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (request.User.Identity?.IsAuthenticated != true) return AnonymousReportAccess.Allows(request);
-        if (AppBlockContent.ParseReportName(request.Resource.ReportName, out _, out _)
+        if (ReportBlocks.ParseName(request.Resource.ReportName, out _, out _)
             && request.Action == InteractiveReportAction.SelectDefaultReport) return false;
         var admin = await IsAdministratorAsync(request.User);
         var saved = request.Resource.SavedReport;

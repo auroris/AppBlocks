@@ -1,3 +1,4 @@
+using AppBlocks.InteractiveReports.Blocks;
 using System.Security.Claims;
 using AppBlocks.InteractiveReports.Reports;
 using InteractiveReport.AspNetCore;
@@ -35,26 +36,22 @@ public sealed class DataSourceReportBindings(DataSourceRuntime runtime, IDataSou
     /// <param name="page">The page a block report renders on, and <paramref name="block"/> its block, for the providers of <c>:APP.</c> values; a configured or previewed report has neither, and its providers see empty keys.</param>
     public async Task<ReportDefinition> BindAsync(ReportDefinition report, DataSourceDefinition source, CancellationToken ct, Guid page = default, Guid block = default)
     {
-        var plan = runtime.Plan(source).Plan ?? throw new DataSourceException("The report's data source is not available.");
+        var prepared = runtime.PrepareQuery(source, "{{RowRestriction}}") ?? throw new DataSourceException("The report's data source is not available.");
         var principal = http.HttpContext?.User ?? new ClaimsPrincipal();
         var user = await users.ResolveAsync(principal, ct) ?? DataSourceUser.Anonymous;
         var query = DataSourceReportParameters.From(http.HttpContext);
-        var parameters = plan.Parameters();
-        var now = runtime.Now(source);
         var app = providers is null ? null : await providers.ResolveAsync(new FormExecutionContext(principal, page, block, source.ComputeFingerprint(), Parameters: query), ct);
-        object? Value(BindVariable variable) => DataSourceQueries.Bind(variable, user, query, now, plan.Dialect, app);
-        var from = plan.From(parameters, Value);
-        var predicate = "{{RowRestriction}}" + (plan.Restriction is null ? "" : " AND (" + plan.Restriction.Render(parameters, Value) + ")");
-        report.Sql = plan.Dialect.Select(from, plan.Columns.Select(c => c.Column), [], predicate);
+        var command = prepared.Bind(user, query, app);
+        report.Sql = command.Sql;
         report.Connection = source.Connection;
         report.ContextParams = new(StringComparer.OrdinalIgnoreCase);
         var sourceToken = Prefix + source.ComputeFingerprint() + ":";
-        foreach (var parameter in parameters.Bindings)
+        foreach (var parameter in command.Parameters)
         {
             // Stable specifications preserve the adapter's schema cache; the values themselves live only in this request.
-            var token = sourceToken + parameter.Name;
-            values[token] = parameter.Value is TypedValue typed ? typed.Value : parameter.Value;
-            report.ContextParams[parameter.Name] = new ContextParamSpec { Claim = token };
+            var token = sourceToken + parameter.Key;
+            values[token] = parameter.Value;
+            report.ContextParams[parameter.Key] = new ContextParamSpec { Claim = token };
         }
         return report;
     }
@@ -86,16 +83,16 @@ public sealed class DataSourceReportAccess(PublishedReportCatalog catalog, DataS
             source = previews?.Find(alias, request.User)?.DataSource;
             if (source is null) return RowRestriction.Deny;
         }
-        else if (AppBlockContent.ParseReportName(alias, out _, out _))
+        else if (ReportBlocks.ParseName(alias, out _, out _))
         {
-            if (content is null || await content.ReportAsync(alias) is not { } instance) return RowRestriction.Deny;
+            if (content is null || await ReportBlocks.ResolveAsync(content, alias) is not { } instance) return RowRestriction.Deny;
             var selection = instance.Block.Content.Value<string>("dataSource", culture: instance.Culture) ?? "";
             source = catalog.ResolveBlockSource(instance.Block.Content.Key, selection, new List<string>());
             if (source is null) return RowRestriction.Deny;
         }
         else { await catalog.LoadAsync(); source = catalog.SourceForReport(alias); }
         if (source is null) return RowRestriction.NotApplicable;
-        AppBlockContent.ParseReportName(request.ReportName, out var page, out var block);
+        ReportBlocks.ParseName(request.ReportName, out var page, out var block);
         var parameters = DataSourceReportParameters.From(http.HttpContext);
         var context = new FormExecutionContext(request.User, page, block, source.ComputeFingerprint(), Parameters: parameters);
         try

@@ -60,6 +60,10 @@ public enum DataSourceDateTimes { ServerLocal, Utc }
 /// </summary>
 public sealed record DataSourceDefinition
 {
+    /// <summary>Checks a SELECT row source using the same parser as the data engine, without opening a database.</summary>
+    public static void ValidateQuery(string sql, string label, ICollection<string> errors)
+        => SqlTemplate.Parse(sql, SqlUse.RowSource, label, errors);
+
     public required Guid Key { get; init; }
     public required string Name { get; init; }
     public required string Alias { get; init; }

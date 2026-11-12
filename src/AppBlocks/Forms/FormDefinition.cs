@@ -109,4 +109,14 @@ public sealed record FormDefinition(IPublishedContent Page, BlockGridItem Block,
         return value.ValueKind == JsonValueKind.Number ? value.TryGetDecimal(out number)
             : value.ValueKind == JsonValueKind.String && decimal.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number);
     }
+    /// <summary>The record with only this form's displayed fields and capabilities.</summary>
+    public FormRecord Project(FormRecord record)
+    {
+        var fields = Fields.Select(f => f.Content.Value<string>("field")!).ToHashSet(StringComparer.Ordinal);
+        return record with {
+            Values = record.Values.Where(p => fields.Contains(p.Key)).ToDictionary(p => p.Key, p => p.Value),
+            Capabilities = ViewOnly ? new() : record.Capabilities,
+        };
+    }
+
 }

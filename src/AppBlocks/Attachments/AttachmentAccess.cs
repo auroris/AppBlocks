@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Primitives;
 using Umbraco.Cms.Core.Models.Blocks;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using AppBlocks.Authentication;
@@ -43,9 +42,12 @@ public sealed class AttachmentAccess(BlockOwnerAccess owners, IOptions<Attachmen
 
     private static readonly BlockOwnerWords Words = new("Attachments", "these files", "files");
 
-    public async Task<AttachmentScope> ResolveAsync(Guid pageKey, Guid blockKey, CancellationToken ct)
+    public Task<AttachmentScope> ResolveAsync(Guid pageKey, Guid blockKey, CancellationToken ct)
+        => ResolveOwnerAsync(pageKey, blockKey, null, ct);
+
+    private async Task<AttachmentScope> ResolveOwnerAsync(Guid pageKey, Guid blockKey, string? savedOwnerKey, CancellationToken ct)
     {
-        var scope = await owners.ResolveAsync(pageKey, blockKey, AppBlockSchema.AttachmentsAlias, Words, Owner, Definition, ct, allowAnonymous: true);
+        var scope = await owners.ResolveAsync(pageKey, blockKey, AppBlockSchema.AttachmentsAlias, Words, Owner, Definition, ct, allowAnonymous: true, savedOwnerKey: savedOwnerKey);
         if (scope.Status != 200) return AttachmentScope.Refused(scope.Status, scope.Problem!);
         var block = AttachmentBlock.Read(scope.Item!.Content, settings.Value);
         var context = new FormExecutionContext(scope.User!, pageKey, blockKey, Definition, Parameters: scope.Parameters);
@@ -77,16 +79,14 @@ public sealed class AttachmentAccess(BlockOwnerAccess owners, IOptions<Attachmen
 
     /// <summary>
     /// The record a form has just saved, named by <paramref name="key"/> instead of the page's address, as an adoption names it.
-    /// Everything else is <see cref="ResolveAsync"/>: the record's own load for this caller decides.
+    /// The explicit key enters the owner-resolution contract without changing the request. The record's own load for this caller decides.
     /// </summary>
-    public async Task<AttachmentScope> ResolveSavedAsync(HttpContext http, Guid pageKey, Guid blockKey, string key, CancellationToken ct)
-    {
-        var form = await owners.ResolveAsync(pageKey, blockKey, AppBlockSchema.AttachmentsAlias, Words, Owner, Definition, ct, allowAnonymous: true, newRecord: true);
-        if (form.Status != 200) return AttachmentScope.Refused(form.Status, form.Problem!);
-        // The owner resolution reads the record's key from the page's address, so the key from the body takes that place.
-        http.Request.Query = new QueryCollection(new Dictionary<string, StringValues>(http.Request.Query, StringComparer.OrdinalIgnoreCase) { [form.Form!.KeyParameter] = key });
-        return await ResolveAsync(pageKey, blockKey, ct);
-    }
+    public Task<AttachmentScope> ResolveSavedAsync(Guid pageKey, Guid blockKey, string key, CancellationToken ct)
+        => ResolveOwnerAsync(pageKey, blockKey, key, ct);
+
+    /// <summary>Compatibility overload; the request is not modified.</summary>
+    public Task<AttachmentScope> ResolveSavedAsync(HttpContext http, Guid pageKey, Guid blockKey, string key, CancellationToken ct)
+        => ResolveSavedAsync(pageKey, blockKey, key, ct);
 
     /// <summary>
     /// Whether <paramref name="user"/> may add files to the record <paramref name="form"/> would create, before it is saved.

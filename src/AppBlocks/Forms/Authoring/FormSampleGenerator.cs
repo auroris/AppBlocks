@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using AppBlocks.Forms;
 
+// Public namespace retained for source compatibility; the file lives with its owning feature.
 namespace AppBlocks.Samples;
 
 /// <summary>Produces a downloadable example; AppBlocks never compiles or executes it.</summary>

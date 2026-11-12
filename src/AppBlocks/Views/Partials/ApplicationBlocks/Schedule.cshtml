@@ -26,7 +26,7 @@
     var limits = Limits.Value;
     var id = "schedule-" + item.ContentKey.ToString("N");
     var culture = CultureInfo.CurrentUICulture;
-    var parameters = FormEndpoints.Parameters(Context.Request.Query);
+    var parameters = FormRequestValues.Parameters(Context.Request.Query);
     var window = ScheduleWindow.Resolve(settings, parameters, DateTime.Now, limits);
     var days = window.Scale == ScheduleScale.Days;
     var level = Math.Clamp(Model.HeadingLevel, 2, 6);

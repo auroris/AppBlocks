@@ -28,7 +28,7 @@ public sealed class RenameReportStateEditor(IMigrationContext context, IDataType
                 .Single(d => d.Attribute("Alias")!.Value == "Application: Report starting view");
             if (await dataTypes.GetAsync(Guid.Parse(definition.Attribute("Key")!.Value)) is { EditorUiAlias: EarlierAlias } type)
             {
-                type.EditorUiAlias = SchemaProperties.Value(definition.Element("Info")!, "EditorUIAlias");
+                type.EditorUiAlias = definition.Element("Info")?.Element("EditorUIAlias")?.Value.Trim() ?? "";
                 var result = await dataTypes.UpdateAsync(type, Constants.Security.SuperUserKey);
                 if (!result.Success) throw new InvalidOperationException($"AppBlocks could not rename the report starting view editor: {result.Status}.");
             }

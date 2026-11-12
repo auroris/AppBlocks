@@ -9,7 +9,7 @@ namespace AppBlocks.InteractiveReports;
 internal sealed class ReportConnectionBridge(IApplicationConnectionFactory application, AppBlocksBuilder builder,
     ConnectionCatalog catalog, IReportConnectionFactory reports, ReportDefinitionCompiler compiler) : IApplicationConnectionFactory
 {
-    private bool IsApplication(string name) => catalog.Find(name) is not null || builder.Connections.ContainsKey(name);
+    private bool IsApplication(string name) => catalog.Contains(name) || builder.ConnectionNames.Contains(name, StringComparer.OrdinalIgnoreCase);
     public DbConnection CreateConnection(string name) => IsApplication(name) ? application.CreateConnection(name) : reports.CreateConnection(name);
     public DatabaseDialect Dialect(string name) => IsApplication(name) ? application.Dialect(name)
         : FromReportDialect(compiler.Compile(name, new ReportDefinition { Connection = name, Sql = "SELECT 1" }).Dialect

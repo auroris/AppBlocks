@@ -52,7 +52,7 @@ else
         try
         {
             newUploads = await AttachmentAccess.AllowsNewUploadsAsync(block, Model.Form!, Context.User, Model.Page.Key, item.ContentKey,
-                FormEndpoints.Parameters(Context.Request.Query), Context.RequestAborted);
+                FormRequestValues.Parameters(Context.Request.Query), Context.RequestAborted);
         }
         // A class that fails here fails the form's own load too, which reports it; the block keeps asking for a saved record.
         catch (Exception error) when (error is not OperationCanceledException) { }

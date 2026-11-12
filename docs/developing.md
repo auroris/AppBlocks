@@ -49,6 +49,16 @@ The [clean-install acceptance test](../tests/clean-install/README.md) builds act
 
 The attachment uploader's pinned dependencies and bundler are in `tools/uppy`. After updating them, run `npm ci` and `npm run build` in that directory. Commit its lockfile and the generated `uppy.js`, `uppy.css` and `uppy-LICENSE.txt` under `src/AppBlocks/wwwroot/App_Plugins/ApplicationBlocks`. The bundle contains Core, Dashboard and XHR Upload; it loads when someone opens **Upload**. Normal .NET builds and consuming sites use the checked-in assets and need neither Node.js nor a CDN connection. The bundle includes its dependencies' license notices alongside the assets.
 
+## Code organization
+
+The core package and each companion own their implementation and assets. The standalone Interactive Reports engine is a dependency; its AppBlocks integration lives in `src/AppBlocks.InteractiveReports`.
+
+- C# code is grouped by feature, including its controllers. `Management` holds the settings controller that spans features. Form inventory and sample generation live under `Forms/Authoring`; backing-class generation lives under `Code/Generation`. Some public namespaces retain their earlier names for source compatibility.
+- `FormEndpoints` handles HTTP admission, antiforgery and serialization. `FormSubmissionService` validates and saves records and their detail rows, using `TabularOperations` for shared row validation and presentation. `FormRequestValues` owns bounded request-value parsing.
+- Companions use public core operations. `DataSourceReadQuery` supplies read SQL and bindings without exposing the execution plan; callers still authorize through `DataSourceQueries.AuthorizeAsync`. Connection registration and schema migrations have their own public operations. Production companions have no friend-assembly access to core internals.
+- `runtime.js` mounts the browser features. Forms, attachments, tabular rows, anti-spam and field controls have separate modules; `form-coordination.js` owns their registration and submission-key exchange. Keep the existing runtime entry URL and form events when changing these modules.
+- Razor views, static assets and Umbraco schema files retain their framework-specific locations. Public compatibility helpers forward to their owning implementations; new code should use the feature contracts directly.
+
 ## Who owns the definitions
 
 The `Schema/` folders of AppBlocks and its companions are the only source of their element and data types, the data source types and the report definition type. Change them there. Fresh sites install the complete current definitions through Umbraco’s package importer, invoked by a tracked package migration. Installation imports only missing definitions, so a change reaches existing sites in one of two ways:

@@ -5,6 +5,7 @@ using Umbraco.Cms.Core.Services;
 using AppBlocks.Blocks;
 using AppBlocks.Forms;
 
+// Public namespace retained for source compatibility; the file lives with its owning feature.
 namespace AppBlocks.Samples;
 
 public sealed record DiscoveredForm(Guid PageKey, Guid FormKey, string? Culture, string PageName, string Name,

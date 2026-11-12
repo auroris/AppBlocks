@@ -49,8 +49,9 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
     /// The enclosing form's record is one not saved yet: nothing is loaded, and the scope has no record and no key. The caller decides
     /// what that allows. A block that names an owner of its own is refused.
     /// </param>
+    /// <param name="savedOwnerKey">An explicit key for the enclosing form's just-saved record. It overrides only the execution parameters, never the HTTP request.</param>
     public async Task<BlockOwnerScope> ResolveAsync(Guid pageKey, Guid blockKey, string blockAlias, BlockOwnerWords words,
-        Func<IPublishedElement, (string? Resource, string? Key)> owner, string definition, CancellationToken ct, bool allowAnonymous = false, bool newRecord = false)
+        Func<IPublishedElement, (string? Resource, string? Key)> owner, string definition, CancellationToken ct, bool allowAnonymous = false, bool newRecord = false, string? savedOwnerKey = null)
     {
         if (http.HttpContext is not { } request) return BlockOwnerScope.Refused(403, "This request has no context.");
         if (await content.PageAsync(pageKey) is not { } page) return BlockOwnerScope.Refused(403, $"You do not have access to {words.These}.");
@@ -64,7 +65,7 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
         if (flat.FirstOrDefault(b => b.ContentKey == blockKey && b.Content.ContentType.Alias == blockAlias) is not { } item)
             return BlockOwnerScope.Refused(404, $"This page has no such {words.BlockName} block.");
         var (ownerResource, ownerKey) = owner(item.Content);
-        var parameters = FormEndpoints.Parameters(request.Request.Query);
+        var parameters = FormRequestValues.Parameters(request.Request.Query);
         // The form the block sits in, if any: its record is the owner by default and supplies :FIELD values.
         var formBlock = flat.FirstOrDefault(b => b.Content.ContentType.Alias == "appForm" && AppBlockContent.Flatten(b.Areas.SelectMany(a => a)).Any(c => c.ContentKey == blockKey));
         var form = formBlock is null ? null : await FormDefinition.ResolveAsync(page, formBlock.ContentKey, resources, catalog, culture, request.RequestServices.GetServices<IAppBlockPlugin>());
@@ -76,11 +77,15 @@ public sealed class BlockOwnerAccess(AppBlockContent content, AppPageAccess acce
             resource = form.Resource;
             if (FormResourceAccess.Refusal(resource, user) is { } refused) return BlockOwnerScope.Refused(refused, $"Sign in as a member to use {words.These}.");
             if (newRecord) return new(200, null, user, item, form, resource, null, null, parameters);
-            key = Single(request.Request.Query[form.KeyParameter]);
+            key = savedOwnerKey ?? Single(request.Request.Query[form.KeyParameter]);
+            if (savedOwnerKey is not null)
+                parameters = FormRequestValues.Parameters(new QueryCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>(
+                    request.Request.Query, StringComparer.OrdinalIgnoreCase) { [form.KeyParameter] = savedOwnerKey }));
             if (key is null) return BlockOwnerScope.Refused(404, $"Save the record before adding {words.Things}.");
         }
         else
         {
+            if (savedOwnerKey is not null) return BlockOwnerScope.Refused(422, $"This {words.BlockName} block names its own owner.");
             if (newRecord) return BlockOwnerScope.Refused(422, $"This {words.BlockName} block names its own owner, so it has no {words.Things} before that record exists.");
             if (await resources.FindAsync(ownerResource.Trim()) is not { } named) return BlockOwnerScope.Refused(422, $"The owner resource {ownerResource} is not registered.");
             resource = named;

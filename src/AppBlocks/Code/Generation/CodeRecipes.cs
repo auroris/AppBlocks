@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using AppBlocks.Connections;
 using AppBlocks.DataSources;
 
+// Public namespace retained for source compatibility; the file lives with its owning feature.
 namespace AppBlocks.Samples;
 
 public enum CodeRecipeKind { FormClass, BackingClass }

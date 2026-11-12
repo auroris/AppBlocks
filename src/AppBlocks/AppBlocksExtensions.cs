@@ -63,6 +63,7 @@ public static class AppBlocksExtensions
         services.AddScoped<AppBlocksText>();
         services.AddScoped<AppPageAccess>();
         services.AddScoped<FormResourceRegistry>();
+        services.AddScoped<FormSubmissionService>();
         // The C# folder: compiled at run time only when the site brings a compiler, and read by the registries beside registered classes.
         services.AddOptions<Code.CodeOptions>().Bind(builder.Config.GetSection(Code.CodeOptions.Section));
         services.AddSingleton<Code.CodeCompilation>();

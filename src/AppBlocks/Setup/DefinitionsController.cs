@@ -7,6 +7,7 @@ using Umbraco.Cms.Api.Management.Routing;
 using AppBlocks.Authentication;
 using Umbraco.Cms.Web.Common.Authorization;
 
+// Public namespace retained for source compatibility; the file lives with its owning feature.
 namespace AppBlocks.Management;
 
 /// <summary>The definitions each package installs in Umbraco: where they stand, and the reset and removal an administrator can ask for.</summary>

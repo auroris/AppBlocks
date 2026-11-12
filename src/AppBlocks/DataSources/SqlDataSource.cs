@@ -40,7 +40,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
     public string? Problem => HandlerProblem ?? Entry.Problem;
 
     /// <summary>Each field with the column behind it and its kind, as a backing class sees them; empty while the plan is unavailable.</summary>
-    internal IReadOnlyList<Samples.CodeRecipeField> FieldColumns => Entry.Plan?.Columns.Select(c => new Samples.CodeRecipeField(c.Field, c.Column, c.Kind)).ToArray() ?? [];
+    internal IReadOnlyList<DataSourceFieldColumn> FieldColumns => Entry.Plan?.Columns.Select(c => new DataSourceFieldColumn(c.Field, c.Column, c.Kind)).ToArray() ?? [];
 
     /// <summary>What the back-office catalogue shows: the columns behind the fields and what the data source allows.</summary>
     public object Describe() => new {

@@ -1,17 +1,9 @@
-using System.Security.Claims;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Antiforgery;
 using AppBlocks.DataSources;
 using AppBlocks.Forms;
 
 namespace AppBlocks.Tabular;
-
-/// <summary>One change the runtime sends: <c>create</c>, <c>update</c> or <c>delete</c>, the row's key and checksum for the latter two, and the values.</summary>
-public sealed record TabularChange(string Operation, string? Key, string? Checksum, JsonElement? Values);
-
-/// <summary>A batch of changes to one record's rows, under one submission key so a retry is harmless.</summary>
-public sealed record TabularSubmission(string? SubmissionKey, IReadOnlyList<TabularChange>? Changes);
 
 /// <summary>
 /// <c>/api/tabular/{page}/{block}</c>, or the same under the configured <see cref="AppBlocksRoutes.Root"/>: the rows of
@@ -35,7 +27,7 @@ public static class TabularEndpoints
     }
 
     /// <summary>The revision a block's rows are listed under, which a save with its form sends back, so a changed data source is noticed.</summary>
-    public static string Revision(SqlDataSource source) => $"{TabularAccess.Definition}:{source.ContractVersion}";
+    public static string Revision(SqlDataSource source) => TabularOperations.Revision(source);
 
     private static async Task<IResult> List(Guid pageKey, Guid blockKey, HttpContext http, TabularAccess access, CancellationToken ct)
     {
@@ -74,7 +66,7 @@ public static class TabularEndpoints
         if (submission?.Changes is null) return Results.BadRequest();
         http.Response.Headers.CacheControl = "no-store";
         var block = scope.Block;
-        if (Changes(block, scope.Source!, submission.Changes, out var changes) is { } refused)
+        if (TabularOperations.Changes(block, scope.Source!, submission.Changes, out var changes) is { } refused)
             return refused.Status == 403 ? Audited(http, "save", scope, Problem(refused), 403) : Problem(refused);
         var context = Context(scope, pageKey, blockKey, submission.SubmissionKey);
         var result = await scope.Source!.SaveRowsAsync(scope.Scope!, changes!, context, block.MaxRows, ct);
@@ -82,77 +74,9 @@ public static class TabularEndpoints
         return Audited(http, "save", scope, Results.Json(await Answer(scope, result, http, ct)), 200);
     }
 
-    /// <summary>A change the block refuses before the engine sees it: its status, its position in the batch and the message, against a field or "".</summary>
-    internal sealed record TabularRefusal(int Status, int Index, string Message, string Field = "");
-
-    /// <summary>
-    /// The runtime's changes as the engine takes them: only the block's own columns, as a form sends only its bound fields, without
-    /// the link field, which is the server's; no new rows, changed rows or deletions where the block offers none. A refusal names the change.
-    /// </summary>
-    internal static TabularRefusal? Changes(TabularBlock block, SqlDataSource source, IReadOnlyList<TabularChange> sent, out List<DataSourceChange>? changes)
-    {
-        changes = null;
-        var columns = block.Columns(source.Fields);
-        var converted = new List<DataSourceChange>(sent.Count);
-        for (var i = 0; i < sent.Count; i++)
-        {
-            var change = sent[i];
-            if (Operation(change.Operation) is not { } operation) return new(422, i, "Each change is a create, an update or a delete.");
-            if (operation == RowOperation.Create && block.HideAdd) return new(403, i, "This tabular form does not add rows.");
-            if (operation == RowOperation.Update && block.HideEdit) return new(403, i, "This tabular form does not change saved rows.");
-            if (operation == RowOperation.Delete && block.HideDelete) return new(403, i, "This tabular form does not delete rows.");
-            var values = new JsonObject();
-            if (change.Values is { ValueKind: JsonValueKind.Object } submitted)
-                foreach (var property in submitted.EnumerateObject())
-                {
-                    if (property.Name.Equals(block.LinkField, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (!columns.Any(c => c.Key == property.Name)) return new(422, i, $"'{property.Name}' is not a column of this tabular form.", property.Name);
-                    values[property.Name] = JsonNode.Parse(property.Value.GetRawText());
-                }
-            else if (change.Values is { } other && other.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined)) return new(422, i, "Row values must be an object.");
-            converted.Add(new DataSourceChange(operation, change.Key, change.Checksum, JsonSerializer.SerializeToElement(values)));
-        }
-        changes = converted;
-        return null;
-    }
-
-    /// <summary>The operation a change names, in any letter case; null for anything else, so an unknown name never runs.</summary>
-    private static RowOperation? Operation(string? sent) => sent?.Trim().ToLowerInvariant() switch {
-        "create" => RowOperation.Create,
-        "update" => RowOperation.Update,
-        "delete" => RowOperation.Delete,
-        _ => null,
-    };
-
     /// <summary>The list, the capabilities and the columns, with a fresh antiforgery token.</summary>
     private static Task<object> Answer(TabularScope scope, DataSourceRowsResult rows, HttpContext http, CancellationToken ct)
-        => Answer(scope.Block!, scope.Source!, scope.User!, scope.OwnerAlias, scope.Scope?.Value, rows, http, ct);
-
-    /// <summary>A block's rows as the runtime takes them, also for a form that saved them with its record; <paramref name="ownerKey"/> is null for a record not saved yet.</summary>
-    internal static async Task<object> Answer(TabularBlock block, SqlDataSource source, ClaimsPrincipal user, string? ownerAlias, string? ownerKey,
-        DataSourceRowsResult rows, HttpContext http, CancellationToken ct)
-    {
-        var write = !block.ReadOnly && await source.MayWriteAsync(user, ct);
-        var columns = block.Columns(source.Fields);
-        var shown = columns.Select(c => c.Key).ToHashSet(StringComparer.Ordinal);
-        return new {
-            owner = new { alias = ownerAlias, key = ownerKey },
-            dataSource = source.Alias,
-            revision = Revision(source),
-            canAdd = write && !block.HideAdd && source.Definition.AllowInsert,
-            canUpdate = write && !block.HideEdit && source.Definition.AllowUpdate,
-            canDelete = write && !block.HideDelete && source.Definition.AllowDelete,
-            maxRows = block.MaxRows,
-            fields = columns,
-            rows = rows.Rows!.Select(row => Project(row, shown)),
-            newRow = rows.NewRow is { } fresh ? Project(fresh, shown) : null,
-            antiforgeryToken = http.RequestServices.GetRequiredService<IAntiforgery>().GetAndStoreTokens(http).RequestToken,
-        };
-    }
-
-    /// <summary>A row with the block's columns only, as a form answers with its bound fields only.</summary>
-    private static FormRecord Project(FormRecord record, HashSet<string> shown)
-        => record with { Values = record.Values.Where(p => shown.Contains(p.Key)).ToDictionary(p => p.Key, p => p.Value) };
+        => TabularOperations.Answer(scope.Block!, scope.Source!, scope.User!, scope.OwnerAlias, scope.Scope?.Value, rows, () => http.RequestServices.GetRequiredService<IAntiforgery>().GetAndStoreTokens(http).RequestToken, ct);
 
     private static FormExecutionContext Context(TabularScope scope, Guid pageKey, Guid blockKey, string? submissionKey)
         => new(scope.User!, pageKey, blockKey, Revision(scope.Source!), submissionKey, scope.Parameters);
@@ -160,20 +84,15 @@ public static class TabularEndpoints
     private static IResult Failure(DataSourceRowsResult result)
         => Results.Json(new { status = result.Status, index = result.Index, errors = result.Errors ?? new Dictionary<string, string[]>() }, statusCode: result.Status);
 
-    private static IResult Problem(TabularRefusal refusal)
+    private static IResult Problem(TabularOperations.TabularRefusal refusal)
         => Results.Json(new { status = refusal.Status, index = refusal.Index, errors = new Dictionary<string, string[]> { [refusal.Field] = [refusal.Message] } }, statusCode: refusal.Status);
 
     private static IResult Refusal(TabularScope scope) => Results.Problem(scope.Problem, statusCode: scope.Status);
 
     private static IResult Audited(HttpContext http, string operation, TabularScope scope, IResult result, int status)
     {
-        Audit(http, operation, scope.Source?.Alias, scope.OwnerAlias, scope.Scope?.Value, scope.User, status);
+        TabularOperations.Audit(http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("ApplicationTabular"), operation, scope.Source?.Alias, scope.OwnerAlias, scope.Scope?.Value, scope.User, status);
         return result;
     }
 
-    /// <summary>Logs a tabular operation, also one a form saved with its record.</summary>
-    internal static void Audit(HttpContext http, string operation, string? dataSource, string? ownerAlias, string? ownerKey, ClaimsPrincipal? user, int status)
-        => http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("ApplicationTabular").LogInformation(
-            "Tabular {Operation} on {DataSource} for {Owner}/{Key} by {Member} returned {Status}", operation, dataSource, ownerAlias,
-            ownerKey, user?.FindFirstValue(ClaimTypes.NameIdentifier), status);
 }

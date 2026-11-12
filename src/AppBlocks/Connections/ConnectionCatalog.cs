@@ -112,6 +112,20 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
         catch (Exception error) when (error is ArgumentException or FormatException or KeyNotFoundException) { return null; }
     }
 
+    /// <summary>Whether the catalog supplies this name, including a configured connection it cannot currently open.</summary>
+    public bool Contains(string name) => Find(name) is not null;
+
+    /// <summary>
+    /// A closed connection whose provider and connection string an external engine can compile. Null for an unknown name
+    /// or a package-owned local default, which the engine must open through its registered factory instead.
+    /// Dispose the connection after compilation and never return its connection string to a client.
+    /// </summary>
+    public DbConnection? ForCompilation(string name)
+        => Find(name) is { LocalDefault: false } material ? Create(material) : null;
+
+    /// <summary>The configured SQL dialect, including Oracle's legacy mode; null for a name supplied only by a factory.</summary>
+    public DatabaseDialect? ConfiguredDialect(string name) => Find(name) is { } material ? DatabaseKinds.FromProvider(material.Provider) : null;
+
     internal ConnectionMaterial? Find(string name)
     {
         if (name.Equals(UmbracoConnection, StringComparison.OrdinalIgnoreCase))
@@ -147,7 +161,8 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
         catch (ArgumentException error) { throw new ArgumentException($"ConnectionStrings:{name}_ProviderName is {value}. {error.Message}", error); }
     }
 
-    internal string Revision(string name) => Find(name) is { } material ? Revision(material) : "";
+    /// <summary>An opaque revision for invalidating consumers of a managed connection.</summary>
+    public string Revision(string name) => Find(name) is { } material ? Revision(material) : "";
     internal static string Revision(ConnectionMaterial material) => material.Provider + ":" + material.Revision;
     /// <summary>
     /// A connection for use, so opening an application database ensures its schema. <see cref="TestAsync"/> alone leaves that out.
@@ -164,10 +179,11 @@ public sealed class ConnectionCatalog(IConfiguration configuration, IWebHostEnvi
     /// A connection for looking only: it ensures no schema and prepares no file when it opens, as <see cref="TestAsync"/>'s does not.
     /// <see cref="Databases.DatabaseInspector"/> also keeps a SQLite file from being created by opening this.
     /// </summary>
-    internal DbConnection Inspectable(string name) => Find(name) is { } material ? Create(material with { LocalDefault = false })
+    public DbConnection Inspectable(string name) => Find(name) is { } material ? Create(material with { LocalDefault = false })
         : Registered(name) ?? throw new ArgumentException("Choose an available connection.", nameof(name));
 
-    internal bool IsApplicationDatabase(string name) => registered?.Schemas.ContainsKey(name) == true;
+    /// <summary>Whether opening this connection must initialize a registered application schema.</summary>
+    public bool IsApplicationDatabase(string name) => registered?.Schemas.ContainsKey(name) == true;
 
     /// <summary>What a registration's own factory makes, without the schema of an application database.</summary>
     private DbConnection? Registered(string name) => registered?.LookOnlyConnections.TryGetValue(name, out var look) == true ? look(services!)

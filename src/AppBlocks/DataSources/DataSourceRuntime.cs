@@ -28,7 +28,7 @@ public sealed class DataSourceRuntime(IApplicationConnectionFactory connections,
     /// a renamed member group reaches the definition without a republish; <paramref name="read"/> reports and
     /// logs its own problems.
     /// </summary>
-    internal T? Definition<T>(Guid key, DateTime updated, Func<T?> read, string dependencies = "") where T : class
+    public T? Definition<T>(Guid key, DateTime updated, Func<T?> read, string dependencies = "") where T : class
     {
         var now = clock.GetUtcNow();
         if (definitions.TryGetValue((typeof(T), key, updated, dependencies), out var cached) && cached.Expires > now) return (T?)cached.Definition;
@@ -37,6 +37,10 @@ public sealed class DataSourceRuntime(IApplicationConnectionFactory connections,
         definitions[(typeof(T), key, updated, dependencies)] = (definition, now + DefinitionLifetime);
         return definition;
     }
+
+    /// <summary>Prepares a read projection for a companion query engine; null when the source's schema is unavailable.</summary>
+    public DataSourceReadQuery? PrepareQuery(DataSourceDefinition definition, string? additionalPredicate = null)
+        => Plan(definition).Plan is { } plan ? new(plan, () => Now(definition), additionalPredicate) : null;
 
     internal ILogger Logger => logger;
     internal DataSourceOptions Options { get; } = options?.Value ?? new();

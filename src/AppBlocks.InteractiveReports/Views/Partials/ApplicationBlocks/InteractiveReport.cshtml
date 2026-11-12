@@ -1,3 +1,4 @@
+@using AppBlocks.InteractiveReports.Blocks
 @using AppBlocks.Blocks
 @model AppBlockView
 @inject IVariationContextAccessor VariationContext
@@ -20,7 +21,7 @@
         && (catalog.ResolveBlockSource(block.Key, block.Value<string>("dataSource", culture: apiQuery.Length > 0 ? culture : null) ?? "", new List<string>()) is not { } source || catalog.RequiresSignedInReader(source)
             || !await Context.RequestServices.GetRequiredService<AppBlocks.InteractiveReports.Reports.IReportAccessPolicy>().AuthorizeAsync(new InteractiveReport.AspNetCore.InteractiveReportAuthorizationRequest {
                 User = Context.User, Action = InteractiveReport.AspNetCore.InteractiveReportAction.ViewReport, RequestServices = Context.RequestServices,
-                Resource = new() { ReportName = AppBlockContent.ReportName(Model.Page.Key, item.ContentKey) },
+                Resource = new() { ReportName = ReportBlocks.Name(Model.Page.Key, item.ContentKey) },
             }, Context.RequestAborted));
     var savedViewsOff = Model.MemberId is not null && Context.RequestServices.GetService<AppBlocks.InteractiveReports.Reports.SavedViewStore>() is { } savedViews && !await savedViews.ReadyAsync(Context.RequestAborted);
 }
@@ -31,7 +32,7 @@
 }
 else
 {
-    var name = AppBlockContent.ReportName(Model.Page.Key, item.ContentKey);
+    var name = ReportBlocks.Name(Model.Page.Key, item.ContentKey);
     var controls = block.Value<string>("controls");
     <section class="app-block-report">
         @if (printUrl is not null) { <p class="app-report-actions"><a href="@(printUrl + Context.Request.QueryString)" target="_blank" rel="noopener">Print</a></p> }

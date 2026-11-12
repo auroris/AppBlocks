@@ -171,15 +171,15 @@ public sealed class TabularBlockTests
         AppBlocks.Tabular.TabularChange[] sent = [new("create", null, null, values), new("update", "1", "checksum", values), new("delete", "2", "checksum", null)];
 
         var log = Read(("linkField", "orderId"), ("hideEdit", "1"));
-        var refused = TabularEndpoints.Changes(log, source, sent, out var none);
+        var refused = TabularOperations.Changes(log, source, sent, out var none);
         Assert.NotNull(refused);
         Assert.Equal((403, 1, "This tabular form does not change saved rows."), (refused.Status, refused.Index, refused.Message));
         Assert.Null(none);
         // New rows and deletions are still the block's to offer.
-        Assert.Null(TabularEndpoints.Changes(log, source, [sent[0], sent[2]], out var accepted));
+        Assert.Null(TabularOperations.Changes(log, source, [sent[0], sent[2]], out var accepted));
         Assert.Equal(2, accepted!.Count);
         // Without the setting the same batch goes to the engine, which judges it by the data source.
-        Assert.Null(TabularEndpoints.Changes(Read(("linkField", "orderId")), source, sent, out var all));
+        Assert.Null(TabularOperations.Changes(Read(("linkField", "orderId")), source, sent, out var all));
         Assert.Equal(3, all!.Count);
     }
 

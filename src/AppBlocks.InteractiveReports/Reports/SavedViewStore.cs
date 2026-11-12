@@ -1,3 +1,4 @@
+using AppBlocks.InteractiveReports.Blocks;
 using System.Collections.Concurrent;
 using System.Data.Common;
 using AppBlocks.Connections;
@@ -125,7 +126,7 @@ public sealed class SavedViewStore(ISavedReportStore inner, ConnectionCatalog ca
 
     /// <summary>Whether this request is someone with no account asking about a report block. Work outside a request, such as a synchronization at startup, is not.</summary>
     private bool HiddenFrom(string reportName) => http?.HttpContext is { } context && context.User.Identity?.IsAuthenticated != true
-        && AppBlocks.Blocks.AppBlockContent.ParseReportName(reportName, out _, out _);
+        && ReportBlocks.ParseName(reportName, out _, out _);
 
     public async Task<SavedReport?> Get(long id, CancellationToken ct = default)
     {

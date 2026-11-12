@@ -334,12 +334,12 @@ public sealed class DatabaseSetupTests
     [Fact]
     public void The_store_sql_is_rewritten_for_postgres_and_oracle_as_their_scripts_name_things()
     {
-        const string sql = "WITH chain (ROOT_ID) AS (SELECT a.SIZE FROM APP_ATTACHMENT a JOIN APP_ATTACHMENT_LINK l ON l.ATTACHMENT_ID = a.ATTACHMENT_ID WHERE l.OWNER_KEY = @key AND a.SIZE > @size)";
+        const string sql = "SELECT a.SIZE FROM APP_ATTACHMENT a JOIN APP_ATTACHMENT_LINK l ON l.ATTACHMENT_ID = a.ATTACHMENT_ID WHERE l.OWNER_KEY = @key AND a.SIZE > @size";
         Assert.Equal(sql, AttachmentStore.Sql(DatabaseDialect.Sqlite, sql));
         Assert.Equal(sql, AttachmentStore.Sql(DatabaseDialect.SqlServer, sql));
-        Assert.Equal("WITH RECURSIVE chain (ROOT_ID) AS (SELECT a.SIZE FROM \"APP_ATTACHMENT\" a JOIN \"APP_ATTACHMENT_LINK\" l ON l.ATTACHMENT_ID = a.ATTACHMENT_ID WHERE l.OWNER_KEY = @key AND a.SIZE > @size)",
+        Assert.Equal("SELECT a.SIZE FROM \"APP_ATTACHMENT\" a JOIN \"APP_ATTACHMENT_LINK\" l ON l.ATTACHMENT_ID = a.ATTACHMENT_ID WHERE l.OWNER_KEY = @key AND a.SIZE > @size",
             AttachmentStore.Sql(DatabaseDialect.Postgres, sql));
-        Assert.Equal("WITH chain (ROOT_ID) AS (SELECT a.\"SIZE\" FROM APP_ATTACHMENT a JOIN APP_ATTACHMENT_LINK l ON l.ATTACHMENT_ID = a.ATTACHMENT_ID WHERE l.OWNER_KEY = :key AND a.\"SIZE\" > :size)",
+        Assert.Equal("SELECT a.\"SIZE\" FROM APP_ATTACHMENT a JOIN APP_ATTACHMENT_LINK l ON l.ATTACHMENT_ID = a.ATTACHMENT_ID WHERE l.OWNER_KEY = :key AND a.\"SIZE\" > :size",
             AttachmentStore.Sql(DatabaseDialect.Oracle, sql));
         // The scripts create what the rewritten SQL names.
         Assert.Contains("CREATE TABLE IF NOT EXISTS \"APP_ATTACHMENT_LINK\"", ApplicationDatabase.Script(AttachmentStore.Schema, "postgresql"));

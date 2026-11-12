@@ -94,6 +94,8 @@ public sealed class CompanionTests
     [Fact]
     public void Companion_owns_report_schema_views_and_editors_and_references_AppBlocks()
     {
+        Assert.DoesNotContain(typeof(AppBlocksExtensions).Assembly.GetCustomAttributes(typeof(System.Runtime.CompilerServices.InternalsVisibleToAttribute), false)
+            .Cast<System.Runtime.CompilerServices.InternalsVisibleToAttribute>(), attribute => attribute.AssemblyName == "AppBlocks.InteractiveReports");
         var assembly = typeof(InteractiveReportsExtensions).Assembly;
         Assert.Contains(assembly.GetReferencedAssemblies(), a => a.Name == "AppBlocks");
         var files = new ManifestEmbeddedFileProvider(assembly);

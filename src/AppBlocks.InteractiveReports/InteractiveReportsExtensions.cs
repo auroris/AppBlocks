@@ -96,15 +96,10 @@ public static class InteractiveReportsExtensions
     /// <summary>Gives the report engine a builder's connections, now and as they are added.</summary>
     public static InteractiveReportBuilder AddConnectionsFrom(this InteractiveReportBuilder reports, AppBlocksBuilder connections)
     {
-        void Register(string name)
-        {
-            if (connections.Dialects.TryGetValue(name, out var dialect))
-                reports.AddConnection(name, provider => connections.CreateRegistered(name, provider), ReportConnectionBridge.ToReportDialect(dialect));
-            else reports.AddConnection(name, provider => connections.CreateRegistered(name, provider));
-        }
-        foreach (var name in connections.ConnectionNames) Register(name);
-        // Hosts can add connections after composers have run.
-        connections.ConnectionAdded += Register;
+        connections.RegisterConnections((name, factory, dialect) => {
+            if (dialect is { } declared) reports.AddConnection(name, factory, ReportConnectionBridge.ToReportDialect(declared));
+            else reports.AddConnection(name, factory);
+        });
         return reports;
     }
 

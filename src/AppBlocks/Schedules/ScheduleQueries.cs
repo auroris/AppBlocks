@@ -44,8 +44,8 @@ public sealed class ScheduleSources(PublishedDataCatalog catalog, DataSourceRunt
     public IReadOnlyList<string>? Columns(ScheduleSource source)
     {
         foreach (var provider in providers ?? []) if (provider.Columns(source) is { } columns) return columns;
-        var plan = runtime.Plan(source.Definition).Plan;
-        return plan?.Columns.SelectMany(column => new[] { column.Column, column.Field }).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var query = runtime.PrepareQuery(source.Definition);
+        return query?.FieldColumns.SelectMany(column => new[] { column.Column, column.Field }).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     /// <summary>What publishing asks about an alias: null for no such source, a schema without columns when it cannot be read.</summary>
