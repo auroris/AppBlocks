@@ -1,5 +1,6 @@
 // Requests to AppBlocks' endpoints from a public page: the API endpoints and the blocks' own forms, attachments and
-// tabular endpoints. The runtime sends every request through here, and a site's own script may import it to read an API
+// tabular endpoints. Uppy sends file uploads directly with the same antiforgery header; other runtime requests use this
+// module. A site's own script may import it to read an API
 // endpoint's rows or to send a signed-in Member's changes. Nothing here uses Umbraco's backoffice client, so it works for
 // an anonymous visitor as for anyone. The backoffice modules import pathBase from here too, so it is worked out once.
 

@@ -518,7 +518,7 @@ public sealed partial class SqlDataSource(DataSourceDefinition definition, DataS
 
     private static string FormatKey(DataSourcePlan plan, IReadOnlyDictionary<PlanColumn, object?> values)
     {
-        var parts = plan.Keys.Select(k => Convert.ToString(FieldValues.ToJson(values[k]), CultureInfo.InvariantCulture) ?? "").ToArray();
+        var parts = plan.Keys.Select(k => Convert.ToString(FieldValues.ToIdentity(values[k]), CultureInfo.InvariantCulture) ?? "").ToArray();
         return parts.Length == 1 ? parts[0] : string.Join('|', parts.Select(part => part.Replace("%", "%25").Replace("|", "%7C")));
     }
 

@@ -7,6 +7,18 @@ namespace AppBlocks.Tests;
 
 public sealed class OtherDialectTests
 {
+    [Theory]
+    [InlineData(DatabaseDialect.Sqlite, "TEXT")]
+    [InlineData(DatabaseDialect.SqlServer, "varchar")]
+    [InlineData(DatabaseDialect.Oracle, "VARCHAR2")]
+    [InlineData(DatabaseDialect.Oracle11g, "VARCHAR2")]
+    public void Time_values_bound_as_text_keep_submillisecond_precision(DatabaseDialect kind, string storeType)
+    {
+        var time = new TimeOnly(12, 0).Add(TimeSpan.FromTicks(1234567));
+        var column = new TableColumn("value", storeType, false, false, false, false, false);
+        Assert.Equal("12:00:00.1234567", SqlDialect.For(kind)!.ToDatabase(time, FieldKinds.Time, column));
+    }
+
     private static readonly TableName Orders = new("app", "orders");
     private static readonly TableColumn Id = new("id", "bigint", false, true, true, false, false);
 

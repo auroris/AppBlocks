@@ -1,0 +1,16 @@
+{
+  "name": "appblocks-uppy-assets",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@uppy/core": "6.3.1",
+    "@uppy/dashboard": "6.0.3",
+    "@uppy/xhr-upload": "6.0.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

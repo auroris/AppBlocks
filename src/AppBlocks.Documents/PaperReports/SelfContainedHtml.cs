@@ -261,7 +261,10 @@ public sealed partial class SelfContainedHtml(IWebHostEnvironment environment, I
             {
                 if (IPNetwork.TryParse(entry, out var range)) ranges.Add(range);
                 else if (IPAddress.TryParse(entry.Trim('[', ']'), out var address))
-                    ranges.Add(new(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address, address.AddressFamily == AddressFamily.InterNetwork ? 32 : 128));
+                {
+                    if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+                    ranges.Add(new(address, address.AddressFamily == AddressFamily.InterNetwork ? 32 : 128));
+                }
                 else names.Add(entry.TrimEnd('.'));
             }
         }

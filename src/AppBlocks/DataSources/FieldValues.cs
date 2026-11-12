@@ -50,6 +50,13 @@ internal static class FieldValues
         _ => System.Convert.ToString(value, Invariant),
     };
 
+    /// <summary>Keys and checksums retain the precision that browser controls cannot display.</summary>
+    public static object? ToIdentity(object? value) => value switch {
+        TimeOnly time => time.ToString("HH:mm:ss.FFFFFFF", Invariant),
+        DateTimeOffset moment => moment.ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz", Invariant),
+        _ => ToJson(value),
+    };
+
     /// <summary>
     /// Whether a submitted value is the stored value sent back as it was loaded. The form endpoints return every
     /// field on an update, shown or not, so such a value is no change: it is neither checked nor written, and a
@@ -228,7 +235,7 @@ internal static class FieldValues
     {
         var text = new StringBuilder();
         foreach (var (column, value) in values)
-            text.Append(column).Append('\u001f').Append(ToJson(value) switch { null => "\u0000", bool flag => flag ? "true" : "false", var other => other.ToString() }).Append('\u001e');
+            text.Append(column).Append('\u001f').Append(ToIdentity(value) switch { null => "\u0000", bool flag => flag ? "true" : "false", var other => other.ToString() }).Append('\u001e');
         return System.Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())))[..32];
     }
 }

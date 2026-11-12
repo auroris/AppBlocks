@@ -138,6 +138,18 @@ public sealed class PaperReportTests
         Assert.Contains("src='http://10.2.0.1/c.png'", html);
     }
 
+    [Theory]
+    [InlineData("::ffff:10.0.0.1")]
+    [InlineData("[::ffff:10.0.0.1]")]
+    public void A_mapped_IPv6_asset_host_allows_exactly_its_IPv4_address(string entry)
+    {
+        var hosts = SelfContainedHtml.AssetHosts.From(Configuration(($"{SelfContainedHtml.AllowedHostsSetting}:0", entry)));
+        Assert.False(SelfContainedHtml.IsRefusedAddress(IPAddress.Parse("10.0.0.1"), hosts));
+        Assert.False(SelfContainedHtml.IsRefusedAddress(IPAddress.Parse("::ffff:10.0.0.1"), hosts));
+        Assert.True(SelfContainedHtml.IsRefusedAddress(IPAddress.Parse("10.0.0.2"), hosts));
+        Assert.True(SelfContainedHtml.IsRefusedAddress(IPAddress.Parse("::ffff:10.0.0.2"), hosts));
+    }
+
     [Fact]
     public void A_paper_report_reads_a_bounded_row_limit_and_a_culture_that_exists()
     {

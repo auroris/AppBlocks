@@ -61,7 +61,7 @@ public sealed class OracleDialect : SqlDialect
             decimal number when type == "BINARY_FLOAT" => (float)number,
             decimal number when type == "BINARY_DOUBLE" => (double)number,
             DateOnly date => new TypedValue(date.ToDateTime(TimeOnly.MinValue), DbType.Date),
-            TimeOnly time => time.ToString("HH:mm:ss.FFF", Invariant),
+            TimeOnly time => FieldValues.ToIdentity(time),
             DateTimeOffset moment when type.Contains("WITH TIME ZONE", StringComparison.Ordinal) => new TypedValue(moment, DbType.DateTimeOffset),
             DateTimeOffset moment => new TypedValue(WallTime(moment, dateTimes), DbType.DateTime),
             _ => value,

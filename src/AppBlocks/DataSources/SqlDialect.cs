@@ -313,9 +313,9 @@ public sealed class SqliteDialect : SqlDialect
             decimal number when affinity == Affinity.Numeric => number,
             decimal number => (double)number,
             DateOnly date => date.ToString("yyyy-MM-dd", Invariant),
-            TimeOnly time => time.ToString("HH:mm:ss.FFF", Invariant),
+            TimeOnly time => FieldValues.ToIdentity(time),
             // SQLite's date functions read this form, zone-less in the data source's convention.
-            DateTimeOffset moment => WallTime(moment, dateTimes).ToString("yyyy-MM-dd HH:mm:ss.FFF", Invariant).TrimEnd('.'),
+            DateTimeOffset moment => WallTime(moment, dateTimes).ToString("yyyy-MM-dd HH:mm:ss.FFFFFFF", Invariant).TrimEnd('.'),
             _ => value,
         };
     }
@@ -456,7 +456,7 @@ public sealed class SqlServerDialect : SqlDialect
                 },
                 DateOnly date when IsTextType(type) => date.ToString("yyyy-MM-dd", Invariant),
                 DateOnly date => new TypedValue(Stored(date.ToDateTime(TimeOnly.MinValue), type), type is "datetime" or "smalldatetime" ? DbType.DateTime : type == "datetime2" ? DbType.DateTime2 : DbType.Date),
-                TimeOnly time when IsTextType(type) => time.ToString("HH:mm:ss.FFF", Invariant),
+                TimeOnly time when IsTextType(type) => FieldValues.ToIdentity(time),
                 TimeOnly time => new TypedValue(time.ToTimeSpan(), DbType.Time),
                 DateTimeOffset moment when IsTextType(type) => moment.ToString("O", Invariant),
                 DateTimeOffset moment => type switch {

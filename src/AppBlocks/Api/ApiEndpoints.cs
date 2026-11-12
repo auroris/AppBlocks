@@ -25,7 +25,9 @@ public sealed class ApiEndpointRunner(DataSourceQueries queries, ILogger<ApiEndp
     public async Task<ApiEndpointResult> RunAsync(ApiEndpointDefinition endpoint, ClaimsPrincipal principal, IReadOnlyDictionary<string, string> route,
         IReadOnlyDictionary<string, string> query, CancellationToken ct)
     {
-        var parameters = new Dictionary<string, string>(query, StringComparer.OrdinalIgnoreCase);
+        var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, value) in query)
+            if (endpoint.QueryParameters.Contains(name, StringComparer.OrdinalIgnoreCase)) parameters[name] = value;
         foreach (var (name, value) in route) parameters[name] = value;
         var context = new FormExecutionContext(principal, Guid.Empty, Guid.Empty, endpoint.Source.ComputeFingerprint(), Parameters: parameters);
         try

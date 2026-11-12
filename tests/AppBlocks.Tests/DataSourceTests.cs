@@ -1241,6 +1241,74 @@ public sealed class DataSourceTests : IDisposable
         Assert.Equal("Awkward", (await pairs.LoadAsync(awkward.Record.Key!, Context(Owner), default)).Record!.Values["label"]);
     }
 
+    [Theory]
+    [InlineData(FieldKinds.Time, false)]
+    [InlineData(FieldKinds.Time, true)]
+    [InlineData(FieldKinds.DateTime, false)]
+    [InlineData(FieldKinds.DateTime, true)]
+    public async Task Precise_time_keys_remain_distinct_and_round_trip_through_reads_and_writes(string kind, bool composite)
+    {
+        var prefix = kind == FieldKinds.DateTime ? "2026-11-12 " : "";
+        Execute($"""
+            CREATE TABLE PRECISE_KEYS (AT TEXT NOT NULL, GROUP_ID INTEGER NOT NULL, LABEL TEXT, PRIMARY KEY (AT, GROUP_ID));
+            INSERT INTO PRECISE_KEYS VALUES ('{prefix}12:00:00.1234567', 1, 'First'), ('{prefix}12:00:00.1234568', 1, 'Second');
+            """);
+        var source = Working(new() {
+            ["alias"] = "precise", ["access"] = "Public", ["connection"] = "TasksDb", ["source"] = "PRECISE_KEYS",
+            ["keyColumns"] = composite ? "AT, GROUP_ID" : "AT", ["dateTimeMode"] = "Utc",
+            ["allowInsert"] = "1", ["allowUpdate"] = "1", ["allowDelete"] = "1",
+            ["mapping"] = JsonSerializer.Serialize(new { at = new { kind } }),
+        });
+        var context = Context(Owner);
+        var listed = await source.ListRowsAsync(new("groupId", "1"), context, 10, default);
+        Assert.Equal(200, listed.Status);
+        Assert.NotNull(listed.Rows);
+        Assert.Equal(2, listed.Rows.Select(row => row.Key).Distinct().Count());
+        Assert.Single(listed.Rows.Select(row => row.Values["at"]).Distinct()); // The browser still displays milliseconds.
+        foreach (var row in listed.Rows) Assert.Equal(200, (await source.LoadAsync(row.Key!, context, default)).Status);
+
+        var first = listed.Rows.Single(row => Equals(row.Values["label"], "First"));
+        Assert.Contains(".1234567", first.Key);
+        var changed = await source.UpdateAsync(first.Key!, Json(new { at = first.Values["at"], label = "Changed" }), null, context, default);
+        Assert.Equal(200, changed.Status);
+        Assert.Equal($"{prefix}12:00:00.1234567", Scalar("SELECT AT FROM PRECISE_KEYS WHERE LABEL = 'Changed'"));
+        Assert.Equal(204, (await source.DeleteAsync(first.Key!, null, context, default)).Status);
+        Assert.Equal("Second", Scalar("SELECT LABEL FROM PRECISE_KEYS"));
+
+        var exact = kind == FieldKinds.DateTime ? "2026-11-12T12:00:00.1234569+00:00" : "12:00:00.1234569";
+        var created = await source.CreateAsync(Json(new { at = exact, groupId = "1", label = "New" }), context, default);
+        Assert.Equal(200, created.Status);
+        Assert.Contains(".1234569", created.Record!.Key);
+        Assert.Equal(200, (await source.LoadAsync(created.Record.Key!, context, default)).Status);
+        Assert.Equal($"{prefix}12:00:00.1234569", Scalar("SELECT AT FROM PRECISE_KEYS WHERE LABEL = 'New'"));
+    }
+
+    [Theory]
+    [InlineData(FieldKinds.Time)]
+    [InlineData(FieldKinds.DateTime)]
+    public async Task Checksums_detect_changes_below_the_displayed_time_precision(string kind)
+    {
+        var prefix = kind == FieldKinds.DateTime ? "2026-11-12 " : "";
+        Execute($"""
+            CREATE TABLE PRECISE_VALUES (ID INTEGER PRIMARY KEY, AT TEXT NOT NULL, LABEL TEXT);
+            INSERT INTO PRECISE_VALUES VALUES (1, '{prefix}12:00:00.1234567', 'Original');
+            """);
+        var source = Working(new() {
+            ["alias"] = "precise", ["access"] = "Public", ["connection"] = "TasksDb", ["source"] = "PRECISE_VALUES", ["keyColumns"] = "ID",
+            ["dateTimeMode"] = "Utc", ["concurrencyMode"] = DataSourceConcurrency.Checksum, ["allowUpdate"] = "1", ["allowDelete"] = "1",
+            ["mapping"] = JsonSerializer.Serialize(new { at = new { kind } }),
+        });
+        var context = Context(Owner);
+        var original = (await source.LoadAsync("1", context, default)).Record!;
+        Execute($"UPDATE PRECISE_VALUES SET AT = '{prefix}12:00:00.1234568' WHERE ID = 1");
+        var current = (await source.LoadAsync("1", context, default)).Record!;
+        Assert.Equal(original.Values["at"], current.Values["at"]);
+        Assert.NotEqual(original.Checksum, current.Checksum);
+        Assert.Equal(409, (await source.UpdateAsync("1", Json(new { label = "Stale" }), original.Checksum, context, default)).Status);
+        Assert.Equal(409, (await source.DeleteAsync("1", original.Checksum, context, default)).Status);
+        Assert.Equal(200, (await source.UpdateAsync("1", Json(new { label = "Fresh" }), current.Checksum, context, default)).Status);
+    }
+
     [Fact]
     public void Publishing_reports_every_definition_mistake()
     {

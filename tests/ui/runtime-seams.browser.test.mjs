@@ -29,9 +29,9 @@ const form = (inner, { anonymous = false } = {}) => `<form class="app-form" data
 const attachments = (owner, extra = '') => `<section class="app-attachments" data-app-attachments data-api="/api/attachments/page/block" data-owner="${owner}"
     data-key-parameter="id" data-read-only="false" ${extra}><div class="app-attachments-message" role="status"></div>
     <div class="app-attachments-errors" role="alert" tabindex="-1" hidden></div><ul class="app-attachments-list"></ul>
-    <div class="app-attachments-upload" hidden><label><span>File</span> <input type="file" form="" data-attachment-file></label>
+    <div class="app-attachments-upload" hidden><div class="app-attachments-dashboard" data-attachment-dashboard></div>
     <label><span>Label</span> <input type="text" form="" data-attachment-label></label><label><span>Notes</span> <input type="text" form="" data-attachment-notes></label>
-    <button type="button" data-attachment-upload>Upload</button></div></section>`;
+    <button type="button" form="" data-attachment-upload disabled>Upload</button></div></section>`;
 const tabular = `<section class="app-tabular" data-app-tabular data-api="/api/tabular/page/rows" data-block="rows" data-owner="page" data-key-parameter="id"
     data-read-only="false" data-max-rows="10"><div class="app-tabular-message" role="status"></div><div class="app-tabular-errors" role="alert" tabindex="-1" hidden></div>
     <table class="app-tabular-table"><thead><tr><th scope="col" class="app-tabular-actions-head">Actions</th></tr></thead><tbody></tbody></table>
@@ -49,7 +49,7 @@ async function mount(body, answer, { head = '', lang = 'en', base = '', timezone
         if (path === `${base}/` || path === `${base}/done`) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><html lang="${lang}"><head>
             <meta charset="utf-8"><title>Page</title>${head}<link rel="stylesheet" href="${base}/App_Plugins/ApplicationBlocks/runtime.css"></head>
             <body><main class="application-blocks">${path.endsWith('/done') ? '<p>Done</p>' : body}</main></body></html>` });
-        const entry = { method: request.method(), path, search: url.search, headers: request.headers(), body: request.headers()['content-type']?.includes('json') ? request.postDataJSON() : null };
+        const entry = { method: request.method(), path, search: url.search, headers: request.headers(), raw: request.postData(), body: request.headers()['content-type']?.includes('json') ? request.postDataJSON() : null };
         requests.push(entry);
         return route.fulfill(await answer(entry));
     });
@@ -184,6 +184,44 @@ test('a tabular save refused for the whole batch shows the messages among its er
     } finally { await page.close(); }
 });
 
+test('tabular saves disable editing and row actions until success or failure, preserving deleted rows on failure', async () => {
+    for (const succeeds of [true, false]) {
+        let finishSave;
+        const held = new Promise(resolve => { finishSave = resolve; });
+        const row = (key, item) => ({ key, checksum: null, values: { item }, capabilities: { update: true, delete: true } });
+        const list = { owner: { alias: 'orders', key: 'page' }, revision: 'r1', canAdd: true, canUpdate: true, canDelete: true, maxRows: 10,
+            antiforgeryToken: 'rows-token', fields: [{ key: 'item', label: 'Item', kind: 'text', required: false, readOnly: false }],
+            rows: [row('1', 'Original'), row('2', 'Remove me')], newRow: { key: null, values: { item: '' }, capabilities: { create: true } } };
+        const { page, requests, errors } = await mount(tabular + runtime(''), async ({ method }) => {
+            if (method === 'GET') return json(list);
+            await held;
+            return succeeds ? json({ ...list, rows: [row('1', 'Submitted')] }) : json({ index: 0, errors: { item: ['Try again.'] } }, 422);
+        });
+        try {
+            await page.locator('tbody input').first().fill('Submitted');
+            await page.getByRole('button', { name: 'Delete', exact: true }).nth(1).click();
+            const sent = page.waitForRequest(request => request.method() === 'POST');
+            await page.getByRole('button', { name: 'Save rows', exact: true }).click();
+            await sent;
+            for (const control of await page.locator('tbody input, tbody button, [data-tabular-add], [data-tabular-save]').all())
+                assert.equal(await control.isDisabled(), true, 'nothing in the submitted table can change while saving');
+            assert.equal(await page.locator('tbody input').first().inputValue(), 'Submitted');
+            assert.equal(requests.at(-1).body.changes[0].values.item, 'Submitted');
+            finishSave();
+            await page.getByText(succeeds ? 'Saved.' : 'Row 1, Item: Try again.', { exact: true }).waitFor();
+            assert.equal(await page.locator('tbody input').first().isEnabled(), true);
+            assert.equal(await page.locator('[data-tabular-save]').isEnabled(), true);
+            assert.equal(await page.locator('[data-tabular-add]').isEnabled(), true);
+            if (!succeeds) {
+                assert.equal(await page.locator('tbody input').nth(1).isDisabled(), true, 'a deleted row stays disabled');
+                await page.getByRole('button', { name: 'Undo', exact: true }).click();
+                assert.equal(await page.locator('tbody input').nth(1).isEnabled(), true);
+            }
+            assert.deepEqual(errors, []);
+        } finally { finishSave(); await page.close(); }
+    }
+});
+
 test('a new record\'s files go up under the form\'s submission key and join the record when the form saves it', async () => {
     let pending = [];
     const { page, requests, errors } = await mount(form(attachments('form', 'data-new-uploads="allowed"')) + runtime(''), ({ method, path, search }) => {
@@ -198,8 +236,7 @@ test('a new record\'s files go up under the form\'s submission key and join the 
         return json({}, 404);
     });
     try {
-        await page.locator('[data-attachment-file]').waitFor({ state: 'visible' });
-        await page.locator('[data-attachment-file]').setInputFiles({ name: 'ahead.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') });
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'ahead.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') });
         await page.getByRole('button', { name: 'Upload' }).click();
         await page.locator('.app-attachment').waitFor();
         assert.equal(await page.locator('a.app-attachment-name').count(), 0, 'a file sent ahead is not served yet');
@@ -227,6 +264,209 @@ test('without the server\'s leave a new record\'s files wait for its save, as be
             assert.equal(requests.filter(r => r.path.startsWith('/api/attachments')).length, 0);
         } finally { await page.close(); }
     }
+});
+
+test('Uppy cancels Save and Enter with a dialog while files are queued or uploading, then permits a fresh save', async () => {
+    let finishUpload;
+    const held = new Promise(resolve => { finishUpload = resolve; });
+    let pending = [];
+    const { page, requests, errors } = await mount(form(attachments('form', 'data-new-uploads="allowed"')) + runtime(''), async ({ method, path }) => {
+        if (path === '/api/forms/page/form') return formAnswer(record(method === 'GET' ? null : '7'));
+        if (path.endsWith('/adopt')) return json(files(pending));
+        if (method === 'POST') { await held; pending = [file('ahead', 8)]; return json(pending[0]); }
+        return json(files(pending));
+    });
+    try {
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'ahead.pdf', mimeType: 'application/pdf', buffer: Buffer.from('document') });
+        const saveRequests = () => requests.filter(r => r.path === '/api/forms/page/form' && r.method !== 'GET');
+        const queuedDialog = page.waitForEvent('dialog');
+        await page.getByRole('button', { name: 'Save', exact: true }).click();
+        assert.match((await queuedDialog).message(), /Finish uploading or remove them, then save again/);
+        assert.equal(saveRequests().length, 0);
+
+        const sent = page.waitForRequest(r => r.method() === 'POST' && r.url().includes('/attachments/'));
+        await page.getByRole('button', { name: 'Upload', exact: true }).click();
+        await sent;
+        const uploadingDialog = page.waitForEvent('dialog');
+        await page.locator('#title').press('Enter');
+        assert.match((await uploadingDialog).message(), /Files are still/);
+        assert.equal(saveRequests().length, 0);
+        finishUpload();
+        await page.locator('.app-attachment').waitFor();
+        await page.waitForFunction(() => !document.querySelector('[data-attachment-upload]').disabled);
+        assert.equal(saveRequests().length, 0, 'finishing an upload does not resubmit the cancelled save');
+        await page.getByRole('button', { name: 'Save', exact: true }).click();
+        await page.locator('a.app-attachment-name').waitFor();
+        assert.equal(saveRequests().length, 1);
+        assert.equal(requests.filter(r => r.path.endsWith('/adopt')).length, 1);
+        assert.deepEqual(errors, []);
+    } finally { finishUpload(); await page.close(); }
+});
+
+test('Uppy sends metadata and antiforgery, retains failed files, and only retries them on request', async () => {
+    let reject = true, stored = [];
+    const { page, requests, errors } = await mount(form(attachments('form')) + runtime(''), ({ method, path, raw }) => {
+        if (path.startsWith('/api/forms/')) return formAnswer(record('7'));
+        if (method === 'POST') {
+            if (raw.includes('second.pdf') && reject) return json({ detail: 'The document was refused.' }, 503);
+            const item = file(raw.includes('second.pdf') ? 'second' : 'first', 8);
+            stored.push(item); return json(item);
+        }
+        return json(files(stored));
+    });
+    try {
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles(['first', 'second'].map(name => ({ name: `${name}.pdf`, mimeType: 'application/pdf', buffer: Buffer.from(name) })));
+        await page.locator('[data-attachment-label]').fill('Evidence');
+        await page.locator('[data-attachment-notes]').fill('For review');
+        await page.getByRole('button', { name: 'Upload', exact: true }).click();
+        await page.locator('.app-attachments-errors').getByText('The document was refused.').waitFor();
+        await page.waitForFunction(() => !document.querySelector('[data-attachment-upload]').disabled);
+        const uploads = () => requests.filter(r => r.method === 'POST' && r.path.includes('/attachments/'));
+        assert.equal(uploads().length, 2, 'a 503 is not automatically retried');
+        for (const request of uploads()) {
+            assert.equal(request.headers.requestverificationtoken, 'files-token');
+            assert.match(request.headers['content-type'], /^multipart\/form-data/);
+            assert.match(request.raw, /name="file"; filename="/);
+            assert.match(request.raw, /name="label"\r\n\r\nEvidence/);
+            assert.match(request.raw, /name="notes"\r\n\r\nFor review/);
+            assert.ok(request.search.includes('id=7'));
+        }
+        assert.equal(await page.locator('.uppy-Dashboard-Item').count(), 1, 'only the failed file remains in the queue');
+        const dialog = page.waitForEvent('dialog');
+        await page.getByRole('button', { name: 'Save', exact: true }).click();
+        await dialog;
+        assert.equal(requests.filter(r => r.method === 'PUT' && r.path.includes('/forms/')).length, 0);
+        reject = false;
+        await page.getByRole('button', { name: 'Upload', exact: true }).click();
+        await page.locator('.app-attachment').nth(1).waitFor();
+        await page.waitForFunction(() => !document.querySelector('[data-attachment-upload]').disabled);
+        assert.equal(uploads().length, 3);
+        assert.match(uploads()[2].raw, /second.pdf/);
+        await page.getByRole('button', { name: 'Save', exact: true }).click();
+        await page.getByText('Saved.', { exact: true }).waitFor();
+        assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+});
+
+test('removing a queued file from either attachment block clears its save guard', async () => {
+    const blocks = attachments('form', 'data-new-uploads="allowed"') + attachments('form', 'data-new-uploads="allowed"').replace('/page/block', '/page/other');
+    const { page, requests, errors } = await mount(form(blocks) + runtime(''), ({ path, method }) => path.includes('/forms/')
+        ? formAnswer(record(method === 'GET' ? null : '7')) : json(files([])));
+    try {
+        await page.locator('[data-app-attachments]').nth(1).locator('.uppy-Dashboard-input').first()
+            .setInputFiles({ name: 'queued.pdf', mimeType: 'application/pdf', buffer: Buffer.from('file') });
+        const dialog = page.waitForEvent('dialog');
+        await page.getByRole('button', { name: 'Save', exact: true }).click();
+        await dialog;
+        assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+        await page.locator('.uppy-Dashboard-Item-action--remove').click();
+        await page.getByRole('button', { name: 'Save', exact: true }).click();
+        await page.getByText('Saved.', { exact: true }).waitFor();
+        assert.equal(requests.filter(r => r.method === 'POST').length, 1);
+        assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+});
+
+test('replacement uses Uppy and the existing PUT endpoint without overwriting attachment metadata', async () => {
+    let current = { ...file('old', 8), label: 'Keep this label' };
+    const { page, requests, errors } = await mount(attachments('page') + runtime(''), ({ method }) => {
+        if (method === 'PUT') { current = { ...file('new', 12), label: current.label, revisions: [current] }; return json(current); }
+        return json(files([current]));
+    });
+    try {
+        await page.locator('.uppy-Dashboard').waitFor();
+        await page.evaluate(() => { window.fileChanges = []; document.addEventListener('app-attachments:changed', event => window.fileChanges.push(event.detail)); });
+        const chooser = page.waitForEvent('filechooser');
+        await page.getByRole('button', { name: 'Replace', exact: true }).click();
+        await (await chooser).setFiles({ name: 'replacement.pdf', mimeType: 'application/pdf', buffer: Buffer.from('replacement') });
+        await page.getByRole('button', { name: 'Upload', exact: true }).click();
+        await page.locator('.app-attachment-revisions').waitFor();
+        const replaced = requests.find(r => r.method === 'PUT');
+        assert.equal(replaced.path, '/api/attachments/page/block/old');
+        assert.match(replaced.raw, /name="file"; filename="replacement.pdf"/);
+        assert.doesNotMatch(replaced.raw, /name="(?:purpose|label|notes)"/);
+        assert.equal(replaced.headers.requestverificationtoken, 'files-token');
+        assert.match(await page.locator('.app-attachment-meta').textContent(), /Keep this label/);
+        assert.deepEqual(await page.evaluate(() => window.fileChanges), [{ id: 'old', operation: 'replace' }]);
+        assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+});
+
+test('attachments cannot queue a new upload while the form save is in progress', async () => {
+    let finishSave;
+    const held = new Promise(resolve => { finishSave = resolve; });
+    const { page, requests, errors } = await mount(form(attachments('form', 'data-new-uploads="allowed"')) + runtime(''), async ({ path, method }) => {
+        if (path.includes('/forms/')) {
+            if (method !== 'GET') await held;
+            return formAnswer(record(method === 'GET' ? null : '7'));
+        }
+        return json(files([]));
+    });
+    try {
+        await page.locator('.uppy-Dashboard-input').first().waitFor({ state: 'attached' });
+        const sent = page.waitForRequest(r => r.method() === 'POST' && r.url().includes('/forms/'));
+        await page.getByRole('button', { name: 'Save', exact: true }).click();
+        await sent;
+        assert.equal(await page.locator('[data-app-attachments]').evaluate(root => root.inert), true);
+        const document = { name: 'later.pdf', mimeType: 'application/pdf', buffer: Buffer.from('file') };
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles(document);
+        assert.equal(await page.locator('.uppy-Dashboard-Item').count(), 0);
+        assert.equal(requests.filter(r => r.path.includes('/attachments/') && r.method !== 'GET').length, 0);
+        finishSave();
+        await page.waitForFunction(() => !document.querySelector('[data-attachment-upload]').disabled);
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles(document);
+        await page.locator('.uppy-Dashboard-Item').waitFor();
+        assert.deepEqual(errors, []);
+    } finally { finishSave(); await page.close(); }
+});
+
+test('cancelling an active Uppy upload releases the Save guard', async () => {
+    let finishUpload;
+    const held = new Promise(resolve => { finishUpload = resolve; });
+    const { page, requests, errors } = await mount(form(attachments('form', 'data-new-uploads="allowed"')) + runtime(''), async ({ path, method }) => {
+        if (path.includes('/forms/')) return formAnswer(record(method === 'GET' ? null : '7'));
+        if (method === 'POST') { await held; return json(file('cancelled', 8)); }
+        return json(files([]));
+    });
+    try {
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'cancelled.pdf', mimeType: 'application/pdf', buffer: Buffer.from('file') });
+        const sent = page.waitForRequest(r => r.method() === 'POST' && r.url().includes('/attachments/'));
+        await page.getByRole('button', { name: 'Upload', exact: true }).click();
+        await sent;
+        await page.getByRole('button', { name: 'Cancel', exact: true }).first().click();
+        finishUpload();
+        await page.waitForFunction(() => !document.querySelector('[data-attachment-upload]').disabled);
+        await page.getByRole('button', { name: 'Save', exact: true }).click();
+        await page.getByText('Saved.', { exact: true }).waitFor();
+        assert.equal(requests.filter(r => r.method === 'POST' && r.path.includes('/forms/')).length, 1);
+        assert.deepEqual(errors, []);
+    } finally { finishUpload(); await page.close(); }
+});
+
+test('Uppy honours upload limits and add-only permissions and fits mobile and desktop widths', async () => {
+    const { page, requests, errors } = await mount(attachments('page') + runtime(''), () => json({ ...files([file('existing', 8)], false), canAdd: true, maxFileSize: 10, accept: '.pdf' }));
+    try {
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'large.pdf', mimeType: 'application/pdf', buffer: Buffer.alloc(11) });
+        assert.equal(await page.locator('.uppy-Dashboard-Item').count(), 0);
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'wrong.txt', mimeType: 'text/plain', buffer: Buffer.from('file') });
+        assert.equal(await page.locator('.uppy-Dashboard-Item').count(), 0);
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'fine.pdf', mimeType: 'application/pdf', buffer: Buffer.from('file') });
+        await page.locator('.uppy-Dashboard-Item').waitFor();
+        assert.equal(await page.locator('.app-attachment-actions').count(), 0);
+        assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+        for (const width of [1100, 390]) {
+            await page.setViewportSize({ width, height: 800 });
+            assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `fits ${width}px viewport`);
+        }
+        assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+    const readOnly = await mount(attachments('page').replace('data-read-only="false"', 'data-read-only="true"') + runtime(''), () => json(files([file('existing', 8)])));
+    try {
+        await readOnly.page.locator('.app-attachment').waitFor();
+        assert.equal(await readOnly.page.locator('.uppy-Dashboard').count(), 0);
+        assert.equal(await readOnly.page.locator('.app-attachment-actions').count(), 0);
+        assert.deepEqual(readOnly.errors, []);
+    } finally { await readOnly.page.close(); }
 });
 
 test('the API root comes from the page, and a Member\'s changes carry the antiforgery token fetched once', async () => {

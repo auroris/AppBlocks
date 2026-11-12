@@ -54,7 +54,7 @@
 
 /* Text controls, everywhere a block draws one. */
 .app-form-field input:not([type=checkbox]), .app-form-field select, .app-form-field textarea,
-.app-attachments-upload input[type=text], .app-attachments-upload select,
+.app-attachments-upload > label input[type=text], .app-attachments-upload > label select,
 .app-tabular-table td input:not([type=checkbox]), .app-tabular-table td select {
     font: inherit; color: var(--app-text); background: var(--app-surface);
     padding: var(--app-control-padding); border: 1px solid var(--app-border-strong); border-radius: var(--app-radius-sm);
@@ -62,10 +62,10 @@
     transition: border-color var(--app-transition), box-shadow var(--app-transition);
 }
 .app-form-field input:not([type=checkbox]):hover, .app-form-field select:hover, .app-form-field textarea:hover,
-.app-attachments-upload input[type=text]:hover, .app-attachments-upload select:hover,
+.app-attachments-upload > label input[type=text]:hover, .app-attachments-upload > label select:hover,
 .app-tabular-table td input:not([type=checkbox]):hover, .app-tabular-table td select:hover { border-color: var(--app-muted); }
 .app-form-field input:focus-visible, .app-form-field select:focus-visible, .app-form-field textarea:focus-visible,
-.app-attachments-upload input:focus-visible, .app-attachments-upload select:focus-visible,
+.app-attachments-upload input:focus-visible, .app-attachments-upload > label select:focus-visible,
 .app-tabular-table td input:focus-visible, .app-tabular-table td select:focus-visible {
     outline: none; border-color: var(--app-accent); box-shadow: var(--app-focus);
 }
@@ -73,7 +73,7 @@
 .app-tabular-table td input::placeholder { color: var(--app-muted); opacity: .8; }
 .app-form-field input:read-only:not([type=checkbox]), .app-form-field textarea:read-only, .app-form-field select:disabled,
 .app-tabular-table td input:disabled, .app-tabular-table td select:disabled { background: var(--app-surface-2); color: var(--app-muted); }
-.app-form-field select, .app-attachments-upload select, .app-tabular-table td select {
+.app-form-field select, .app-attachments-upload > label select, .app-tabular-table td select {
     appearance: none; padding-right: 2.25rem;
     background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%235b6573' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: right .8rem center;
@@ -86,7 +86,7 @@
 .app-form-field [aria-invalid=true]:focus-visible, .app-tabular-table [aria-invalid=true]:focus-visible { border-color: var(--app-danger); box-shadow: var(--app-focus-danger); }
 
 /* Buttons: a filled primary action, outlined secondary actions, and a quiet danger action that only fills on hover. */
-.app-form-actions button, .app-form-actions a, .app-attachment-actions button, .app-attachments-upload button,
+.app-form-actions button, .app-form-actions a, .app-attachment-actions button, .app-attachments-upload > button,
 .app-tabular-actions button, .app-tabular-toolbar button, .app-schedule-nav a, .app-report-actions a {
     display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
     font: inherit; font-weight: 600; line-height: 1.2; text-decoration: none; white-space: nowrap;
@@ -94,13 +94,13 @@
     background: var(--app-surface); color: var(--app-accent); cursor: pointer;
     transition: background var(--app-transition), color var(--app-transition), border-color var(--app-transition), box-shadow var(--app-transition);
 }
-.app-form-actions button:hover, .app-form-actions a:hover, .app-attachment-actions button:hover, .app-attachments-upload button:hover,
+.app-form-actions button:hover, .app-form-actions a:hover, .app-attachment-actions button:hover, .app-attachments-upload > button:hover,
 .app-tabular-actions button:hover, .app-tabular-toolbar button:hover, .app-schedule-nav a:hover, .app-report-actions a:hover { background: var(--app-accent-soft); }
-.app-form-actions button:focus-visible, .app-form-actions a:focus-visible, .app-attachment-actions button:focus-visible, .app-attachments-upload button:focus-visible,
+.app-form-actions button:focus-visible, .app-form-actions a:focus-visible, .app-attachment-actions button:focus-visible, .app-attachments-upload > button:focus-visible,
 .app-tabular-actions button:focus-visible, .app-tabular-toolbar button:focus-visible, .app-schedule-nav a:focus-visible, .app-report-actions a:focus-visible {
     outline: none; box-shadow: var(--app-focus);
 }
-.app-form-actions button:disabled, .app-attachment-actions button:disabled, .app-attachments-upload button:disabled,
+.app-form-actions button:disabled, .app-attachment-actions button:disabled, .app-attachments-upload > button:disabled,
 .app-tabular-actions button:disabled, .app-tabular-toolbar button:disabled { opacity: .55; cursor: default; background: var(--app-surface); }
 .app-form-actions [data-save], .app-tabular-toolbar [data-tabular-save], .app-attachments-upload [data-attachment-upload] {
     background: var(--app-accent); color: var(--app-on-accent); border-color: var(--app-accent);
@@ -250,16 +250,11 @@
     display: flex; flex-wrap: wrap; align-items: end; gap: .75rem 1rem; margin-top: .85rem; padding: .9rem 1rem;
     border: 1px dashed var(--app-border-strong); border-radius: var(--app-radius-sm); background: var(--app-surface-2);
 }
-.app-attachments-upload label { display: flex; flex-direction: column; gap: .35rem; min-width: 0; font-weight: 600; font-size: .9375rem; }
-.app-attachments-upload input[type=text], .app-attachments-upload select { min-width: 11rem; font-weight: 400; }
-.app-attachments-upload input[type=file] { font: inherit; font-weight: 400; max-width: 100%; color: var(--app-muted); }
-.app-attachments-upload input[type=file]::file-selector-button {
-    font: inherit; font-weight: 600; margin-right: .75rem; padding: .45rem .9rem; border: 1px solid var(--app-border-strong); border-radius: var(--app-radius-sm);
-    background: var(--app-surface); color: var(--app-text); cursor: pointer; transition: background var(--app-transition);
-}
-.app-attachments-upload input[type=file]::file-selector-button:hover { background: var(--app-surface-3); }
-.app-attachments-upload input[type=file]:focus-visible { outline: none; box-shadow: var(--app-focus); border-radius: var(--app-radius-sm); }
-.app-attachments-upload button { margin-left: auto; }
+.app-attachments-upload > label { display: flex; flex-direction: column; gap: .35rem; min-width: 0; font-weight: 600; font-size: .9375rem; }
+.app-attachments-upload > label input[type=text], .app-attachments-upload > label select { min-width: 11rem; font-weight: 400; }
+.app-attachments-dashboard { flex: 1 0 100%; min-width: 0; width: 100%; }
+.app-attachments-dashboard .uppy-Root { font-family: inherit; }
+.app-attachments-upload > button { margin-left: auto; }
 .app-attachments [hidden] { display: none !important; }
 
 /* ---------- Tabular forms ---------- */
@@ -464,9 +459,9 @@
     .app-form-actions [data-delete] { margin-left: 0; }
     /* One column, unwrapped: a wrapped column line takes the file input's natural width and overflows the box. */
     .app-attachments-upload { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
-    .app-attachments-upload input[type=text], .app-attachments-upload select { min-width: 0; }
-    .app-attachments-upload input[type=file] { width: 100%; min-width: 0; }
-    .app-attachments-upload button { margin-left: 0; }
+    .app-attachments-upload > label input[type=text], .app-attachments-upload > label select { min-width: 0; }
+    .app-attachments-dashboard { flex: none; }
+    .app-attachments-upload > button { margin-left: 0; }
     .app-attachment-actions { margin-left: 0; flex-basis: 100%; }
     .app-schedule-toolbar { flex-direction: column; align-items: stretch; }
     .app-schedule-nav a { flex: 1; }

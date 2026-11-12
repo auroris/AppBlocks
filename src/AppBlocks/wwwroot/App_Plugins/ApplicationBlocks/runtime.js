@@ -52,6 +52,8 @@ const strings = {
     fileTooLarge: "The file is larger than the {size} MB this block accepts.",
     fileOperationFailed: "The operation failed.",
     chooseFile: "Choose a file to upload.",
+    filesBeforeSave: "Files are still waiting to upload, uploading, or could not be uploaded. Finish uploading or remove them, then save again.",
+    uploaderLoadFailed: "The file uploader could not load. Reload the page to try again.",
     sizeBytes: "{size} B",
     sizeKilobytes: "{size} KB",
     sizeMegabytes: "{size} MB",
@@ -364,6 +366,8 @@ function mountColor(root) {
 const formDetails = new WeakMap();
 // Each form's current submission key, which an Attachments block inside it sends a new record's files under: see mountAttachments.
 const formSubmissions = new WeakMap();
+// Attachment operations must finish before saving. The caller retries Save after the dialog; it is never queued.
+const formAttachments = new WeakMap();
 
 function mountForm(form) {
     const fields = [...form.querySelectorAll("[data-field]")];
@@ -458,6 +462,8 @@ function mountForm(form) {
     }
     async function submit(remove = false) {
         if (!state || busy) return;
+        const attachments = formAttachments.get(form) ?? [];
+        if (attachments.some(block => block.pending())) { window.alert(t("filesBeforeSave")); return; }
         if (!remove && !form.reportValidity()) return;
         if (remove && !window.confirm(t("confirmDelete"))) return;
         const values = {};
@@ -483,10 +489,11 @@ function mountForm(form) {
             if (pending) details.push(pending);
         }
         busy = true;
+        for (const block of attachments) block.saving(true);
         // Deleting needs no check. A service that shows no widget hands over its token only now.
         if (!remove) for (const widget of antiSpam) {
             const problem = await widget.prepare();
-            if (problem) { showErrors({ "": [problem] }); busy = false; return; }
+            if (problem) { showErrors({ "": [problem] }); busy = false; for (const block of attachments) block.saving(false); return; }
         }
         // Read before the form is disabled below, which would take every control with it.
         const formData = otherControls(form);
@@ -514,6 +521,7 @@ function mountForm(form) {
         } catch { showErrors({ "": [t("requestFailedRetained")] }); message.textContent = ""; }
         finally {
             busy = false; body.disabled = false;
+            for (const block of attachments) block.saving(false);
             // Whatever the answer was, the server has seen this token and it will not work again.
             if (!remove) for (const widget of antiSpam) widget.reset();
         }
@@ -549,6 +557,18 @@ function mountForm(form) {
     form.querySelectorAll("[data-delete]").forEach(button => button.addEventListener("click", () => submit(true)));
     load();
 }
+// Only pages with a writable Attachments block fetch the locally packaged Uppy modules and stylesheet.
+let uppyAssets;
+function loadUppy() {
+    return uppyAssets ??= Promise.all([
+        import("./uppy.js"),
+        new Promise((resolve, reject) => {
+            const link = document.createElement("link");
+            link.rel = "stylesheet"; link.href = new URL("./uppy.css", import.meta.url).href;
+            link.onload = resolve; link.onerror = reject; document.head.append(link);
+        }),
+    ]).then(([module]) => module);
+}
 // A record's files, served by the block's attachments endpoint. Inside a form the block follows the form's record through
 // the app-form:loaded and app-form:saved events and asks with its key; on its own it asks at once with the page's
 // address. Writes are multipart requests carrying the antiforgery token the list handed out. A form's new record has no
@@ -566,12 +586,25 @@ function mountAttachments(root) {
     const message = root.querySelector(".app-attachments-message");
     const errors = root.querySelector(".app-attachments-errors");
     const upload = root.querySelector(".app-attachments-upload");
+    const uploadButton = upload?.querySelector("[data-attachment-upload]");
     let recordKey = null;
     // The submission key a new record's files went up under, and whether any did, until they join the saved record.
     let pendingKey = null;
     let pendingFiles = false;
     let state = null;
     let busy = false;
+    let saving = false;
+    let uploader = null;
+    let uploaderReady = null;
+    let uploadProblem = null;
+    const unfinished = () => uploader?.getFiles().some(file => !file.progress.uploadComplete) ?? false;
+    const transferring = () => Object.keys(uploader?.getState().currentUploads ?? {}).length > 0;
+    function syncBusy() {
+        root.inert = saving || busy;
+        uploader?.getPlugin("Dashboard").setOptions({ disabled: saving || busy });
+        if (uploadButton) uploadButton.disabled = !uploader || saving || busy || transferring();
+        for (const button of list.querySelectorAll("button")) button.disabled = saving || busy || transferring();
+    }
     // Whether the files shown are a new record's, sent ahead of its save.
     const pending = () => !!form && !recordKey && newUploads;
     const requestUrl = (id = null) => {
@@ -581,12 +614,72 @@ function mountAttachments(root) {
     };
     function fail(text) { errors.textContent = text; errors.hidden = false; }
     function clear() { errors.textContent = ""; errors.hidden = true; }
-    function pick(onFile) {
+    function pick(id) {
         const input = document.createElement("input");
         input.type = "file";
         if (root.dataset.accept) input.accept = root.dataset.accept;
-        input.addEventListener("change", () => { if (input.files[0]) onFile(input.files[0]); });
+        input.addEventListener("change", async () => {
+            if (!input.files[0]) return;
+            try {
+                await prepareUploader();
+                const file = input.files[0];
+                uploader.addFile({ name: file.name, type: file.type, data: file, meta: { replaces: id } });
+            } catch (error) { fail(error.message || t("fileOperationFailed")); }
+        });
         input.click();
+    }
+    function prepareUploader() {
+        if (!upload) return Promise.resolve();
+        return uploaderReady ??= loadUppy().then(({ Uppy, Dashboard, XHRUpload }) => {
+            uploader = new Uppy({
+                id: root.id || api, autoProceed: false,
+                restrictions: { maxFileSize: state.maxFileSize || maxSize || null, allowedFileTypes: (state.accept || root.dataset.accept)?.split(",").filter(Boolean) || null },
+                onBeforeFileAdded(file, files) {
+                    const allowed = file.meta.replaces != null ? state?.canWrite : (state?.canAdd ?? state?.canWrite);
+                    return !readOnly && allowed && !saving && !busy && !Object.hasOwn(files, file.id);
+                },
+            }).use(Dashboard, {
+                target: upload.querySelector("[data-attachment-dashboard]"), inline: true, height: 280, width: "100%",
+                // The block's Upload button starts and retries a batch, with its current metadata.
+                hideUploadButton: true, hideRetryButton: true, proudlyDisplayPoweredByUppy: false, showProgressDetails: true,
+            }).use(XHRUpload, {
+                endpoint(file) {
+                    const allowed = file.meta.replaces != null ? state?.canWrite : (state?.canAdd ?? state?.canWrite);
+                    if (saving || busy || readOnly || !allowed) throw new Error(t("operationForbidden"));
+                    return requestUrl(file.meta.replaces ?? null).toString();
+                },
+                fieldName: "file", formData: true, bundle: false, limit: 1,
+                allowedMetaFields: ["purpose", "label", "notes"],
+                headers: () => ({ RequestVerificationToken: state?.antiforgeryToken, Accept: "application/json" }),
+                // A lost response may follow a committed insert: never silently repeat that POST.
+                shouldRetry: () => false,
+            });
+            uploader.on("file-added", file => {
+                if (file.meta.replaces != null) uploader.setFileState(file.id, { xhrUpload: { method: "PUT", allowedMetaFields: [] } });
+            });
+            uploader.on("upload", () => { uploadProblem = null; clear(); queueMicrotask(syncBusy); });
+            uploader.on("upload-success", () => { if (pending()) pendingFiles = true; });
+            uploader.on("upload-error", (_file, error, response) => {
+                let problem = {};
+                try { problem = JSON.parse(response?.responseText || "{}"); } catch { /* A proxy can answer without JSON. */ }
+                if (problem === null || typeof problem !== "object") problem = {};
+                const refusal = new ApiError(response?.status || 0, problem);
+                uploadProblem = signInNeeded(refusal, anonymous) ? t("signInThenRetry") : errorText(refusal, error.message || t("fileOperationFailed"));
+                fail(uploadProblem);
+            });
+            uploader.on("complete", async result => {
+                busy = true; syncBusy();
+                try {
+                    await load();
+                    for (const file of result?.successful ?? []) if (uploader.getFile(file.id)) uploader.removeFile(file.id);
+                    if (uploadProblem) fail(uploadProblem);
+                    for (const file of result?.successful ?? []) root.dispatchEvent(new CustomEvent("app-attachments:changed", {
+                        bubbles: true, detail: { id: file.meta.replaces ?? null, operation: file.meta.replaces != null ? "replace" : "upload" },
+                    }));
+                } finally { busy = false; syncBusy(); }
+            });
+            syncBusy();
+        }).catch(() => { fail(t("uploaderLoadFailed")); });
     }
     function render() {
         list.replaceChildren(); list.setAttribute("aria-busy", "false");
@@ -608,7 +701,8 @@ function mountAttachments(root) {
         const canAdd = (state.canAdd ?? state.canWrite) && !readOnly;
         // A file sent ahead of its record's save can only be removed: the endpoint for new files neither serves nor replaces one.
         const ahead = pending();
-        if (upload) upload.hidden = !canAdd;
+        if (upload) upload.hidden = !canAdd && !unfinished();
+        if (canAdd) prepareUploader();
         message.textContent = state.items.length ? "" : t("noFiles");
         for (const item of state.items) {
             const row = document.createElement("li");
@@ -639,12 +733,13 @@ function mountAttachments(root) {
             if (canWrite) {
                 const actions = document.createElement("span");
                 actions.className = "app-attachment-actions";
-                if (!ahead) actions.append(actionButton(t("replaceFile"), () => pick(file => send(item.id, { file }))));
-                actions.append(actionButton(t("removeFile"), () => { if (window.confirm(t("confirmRemoveFile", { name: item.fileName }))) send(item.id, null, "DELETE"); }));
+                if (!ahead) actions.append(actionButton(t("replaceFile"), () => pick(item.id)));
+                actions.append(actionButton(t("removeFile"), () => { if (window.confirm(t("confirmRemoveFile", { name: item.fileName }))) remove(item.id); }));
                 row.append(actions);
             }
             list.append(row);
         }
+        syncBusy();
     }
     async function load() {
         clear();
@@ -672,48 +767,46 @@ function mountAttachments(root) {
             return null;
         } catch (error) { return errorText(error, t("filesNotAttached")); }
     }
-    // An upload (no id), a replacement or new details for a file (an id), or a removal (DELETE).
-    async function send(id, parts, method = null) {
-        if (busy || !state) return;
+    async function remove(id) {
+        if (busy || saving || !state || transferring()) return;
         clear();
-        const body = new FormData();
-        if (parts?.file) {
-            if (maxSize && parts.file.size > maxSize) { fail(t("fileTooLarge", { size: numberText(Math.round(maxSize / 1048576)) })); return; }
-            body.append("file", parts.file, parts.file.name);
-        }
-        for (const field of ["purpose", "label", "notes"]) if (parts && parts[field] !== undefined) body.append(field, parts[field]);
-        busy = true; message.textContent = t(method === "DELETE" ? "removing" : "uploading");
+        busy = true; syncBusy(); message.textContent = t("removing");
         try {
             try {
                 await request(requestUrl(id), {
-                    method: method ?? (id === null ? "POST" : "PUT"),
-                    headers: { RequestVerificationToken: state.antiforgeryToken }, body: method === "DELETE" ? undefined : body,
+                    method: "DELETE", headers: { RequestVerificationToken: state.antiforgeryToken },
                 });
             } catch (error) {
                 if (!(error instanceof ApiError)) throw error;
                 fail(signInNeeded(error, anonymous) ? t("signInThenRetry") : errorText(error, t("fileOperationFailed"))); message.textContent = ""; return;
             }
-            if (upload) for (const field of upload.querySelectorAll("input, select")) field.value = "";
             await load();
-            root.dispatchEvent(new CustomEvent("app-attachments:changed", { bubbles: true, detail: { id, operation: method === "DELETE" ? "remove" : id === null ? "upload" : "replace" } }));
+            root.dispatchEvent(new CustomEvent("app-attachments:changed", { bubbles: true, detail: { id, operation: "remove" } }));
         } catch { fail(t("requestFailed")); message.textContent = ""; }
-        finally { busy = false; }
+        finally { busy = false; syncBusy(); }
     }
-    upload?.querySelector("[data-attachment-upload]")?.addEventListener("click", () => {
-        const file = upload.querySelector("[data-attachment-file]").files[0];
-        if (!file) { fail(t("chooseFile")); return; }
-        send(null, { file, purpose: upload.querySelector("[data-attachment-purpose]")?.value ?? "",
-            label: upload.querySelector("[data-attachment-label]").value, notes: upload.querySelector("[data-attachment-notes]").value });
+    uploadButton?.addEventListener("click", async () => {
+        if (!uploader || busy || saving || transferring()) return;
+        if (!unfinished()) { fail(t("chooseFile")); return; }
+        for (const file of uploader.getFiles()) if (file.meta.replaces == null && !file.progress.uploadComplete) {
+            uploader.setFileMeta(file.id, Object.fromEntries(["purpose", "label", "notes"].map(name => [name, upload.querySelector(`[data-attachment-${name}]`)?.value ?? ""])));
+        }
+        try { await uploader.upload(); } catch (error) { fail(error.message || t("fileOperationFailed")); }
     });
     if (form) {
+        if (!formAttachments.has(form)) formAttachments.set(form, []);
+        formAttachments.get(form).push({ pending: () => root.isConnected && (busy || transferring() || unfinished()), saving(value) { saving = value; syncBusy(); } });
         const follow = async event => {
-            const key = event.detail?.record?.key ?? null;
-            // A new record's files join it once it has a key, before the block lists the record's own.
-            const problem = key && pendingKey && pendingFiles ? await adopt(key) : null;
-            if (key && !pendingFiles) pendingKey = null;
-            recordKey = key;
-            await load();
-            if (problem) fail(problem);
+            busy = true; syncBusy();
+            try {
+                const key = event.detail?.record?.key ?? null;
+                // A new record's files join it once it has a key, before the block lists the record's own.
+                const problem = key && pendingKey && pendingFiles ? await adopt(key) : null;
+                if (key && !pendingFiles) pendingKey = null;
+                recordKey = key;
+                await load();
+                if (problem) fail(problem);
+            } finally { busy = false; syncBusy(); }
         };
         form.addEventListener("app-form:loaded", follow);
         form.addEventListener("app-form:saved", follow);
@@ -894,6 +987,10 @@ function mountTabular(root) {
     function setBusy(value) {
         busy = value;
         tbody.setAttribute("aria-busy", String(value));
+        for (const row of rows) {
+            for (const control of row.inputs.values()) control.disabled = value || row.deleted;
+            for (const button of row.element.querySelectorAll("button")) button.disabled = value;
+        }
         if (saveButton) saveButton.disabled = value;
         limit();
     }

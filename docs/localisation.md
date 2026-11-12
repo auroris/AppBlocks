@@ -106,6 +106,8 @@ The browser runtime formats dates, times and file sizes for the page's language,
 | `fileTooLarge` | The file is larger than the {size} MB this block accepts. |
 | `fileOperationFailed` | The operation failed. |
 | `chooseFile` | Choose a file to upload. |
+| `filesBeforeSave` | Files are still waiting to upload, uploading, or could not be uploaded. Finish uploading or remove them, then save again. |
+| `uploaderLoadFailed` | The file uploader could not load. Reload the page to try again. |
 | `sizeBytes` | {size} B |
 | `sizeKilobytes` | {size} KB |
 | `sizeMegabytes` | {size} MB |

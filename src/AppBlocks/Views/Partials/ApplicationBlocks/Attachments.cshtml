@@ -68,7 +68,7 @@ else
         @if (!block.ReadOnly)
         {
             <div class="app-attachments-upload ah-attachments__upload" hidden>
-                <label><span>@Text["attachmentsFile", "File"]</span> <input type="file" form="" data-attachment-file accept="@block.Limits.Accept"></label>
+                <div class="app-attachments-dashboard" data-attachment-dashboard></div>
                 @if (block.Purposes.Count > 0)
                 {
                     <label><span>@Text["attachmentsPurpose", "Purpose"]</span>
@@ -80,7 +80,7 @@ else
                 }
                 <label><span>@Text["attachmentsLabel", "Label"]</span> <input type="text" form="" data-attachment-label maxlength="200" autocomplete="off"></label>
                 <label><span>@Text["attachmentsNotes", "Notes"]</span> <input type="text" form="" data-attachment-notes maxlength="1000" autocomplete="off"></label>
-                <button type="button" data-attachment-upload>@Text["attachmentsUpload", "Upload"]</button>
+                <button type="button" form="" data-attachment-upload disabled>@Text["attachmentsUpload", "Upload"]</button>
             </div>
         }
     </section>

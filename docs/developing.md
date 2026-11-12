@@ -45,6 +45,10 @@ The demo also references `Umbraco.Cms.DevelopmentMode.Backoffice`, so **Settings
 
 The [clean-install acceptance test](../tests/clean-install/README.md) builds actual NuGet packages, installs them into fresh official Umbraco sites without uSync or other CMS plugins, and verifies installation, browser editing, data operations and restart behavior. Each run uses empty databases and its own package cache.
 
+## Uppy assets
+
+The attachment uploader's pinned dependencies and bundler are in `tools/uppy`. After updating them, run `npm ci` and `npm run build` in that directory. Commit its lockfile and the generated `uppy.js`, `uppy.css` and `uppy-LICENSE.txt` under `src/AppBlocks/wwwroot/App_Plugins/ApplicationBlocks`. The bundle contains Core, Dashboard and XHR Upload; only writable attachment blocks load it. Normal .NET builds and consuming sites use the checked-in assets and need neither Node.js nor a CDN connection. The bundle includes its dependencies' license notices alongside the assets.
+
 ## Who owns the definitions
 
 The `Schema/` folders of AppBlocks and its companions are the only source of their element and data types, the data source types and the report definition type. Change them there. Fresh sites install the complete current definitions through Umbraco’s package importer, invoked by a tracked package migration. Installation imports only missing definitions, so a change reaches existing sites in one of two ways:
