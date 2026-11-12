@@ -3,7 +3,7 @@ using AppBlocks.Forms;
 namespace AppBlocks.Attachments;
 
 /// <summary>
-/// A form resource that decides who may add, rename, replace and remove the files of its records. Whoever may read a
+/// A form resource that decides who may add, rename and remove the files of its records. Whoever may read a
 /// record (its <see cref="IFormResource.LoadAsync"/> succeeds) may read its files; without this interface someone
 /// signed in may write them too, and an anonymous visitor may not. A resource whose rule is different implements it:
 /// the data source engine, for one, lets only the write groups write, and a public class can let anonymous visitors in.
@@ -15,7 +15,7 @@ public interface IAttachmentOwner
 }
 
 /// <summary>
-/// A resource that lets some callers add files they may not then rename, replace or remove: the record's filed documents stay as
+/// A resource that lets some callers add files they may not then rename or remove: the record's filed documents stay as
 /// filed, and someone asked for a missing one can still send it. It is asked only for a saved record, and only about a
 /// caller its write rule refuses; whoever may write may add. Adopting the files a caller sent ahead of the record's first save
 /// takes this leave too, since it adds files and changes none. A block set to read only takes no files from anyone.

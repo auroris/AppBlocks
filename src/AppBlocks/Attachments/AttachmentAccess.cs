@@ -17,7 +17,7 @@ namespace AppBlocks.Attachments;
 /// caller may do with them. <see cref="Status"/> is 200 when everything resolved; otherwise the HTTP status to answer
 /// with and <see cref="Problem"/> says why, in words meant for the person.
 /// </summary>
-/// <param name="CanWrite">The caller may add files, and replace and remove the ones there.</param>
+/// <param name="CanWrite">The caller may add files, and rename and remove the ones there.</param>
 /// <param name="SubmissionKey">The form submission whose pending files the scope holds, for a record not saved yet; null for a record's own files.</param>
 /// <param name="CanAdd">The caller may add files: everyone who may write, and whoever an <see cref="IAddOnlyAttachmentOwner"/> lets add.</param>
 /// <param name="Resource">The form resource whose record owns the files, as the owner resolution found it.</param>

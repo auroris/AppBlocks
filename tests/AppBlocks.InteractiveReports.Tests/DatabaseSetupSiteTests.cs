@@ -139,13 +139,11 @@ public sealed class DatabaseSetupSiteTests
             var fileId = uploaded.GetProperty("id").GetInt64();
             using (var download = await editor.GetAsync($"/api/attachments/{SetupSite.PageKey}/{SetupSite.FilesKey}/{fileId}?taskId=1"))
                 Assert.Equal("first file", await download.Content.ReadAsStringAsync());
-            using (var form = Multipart())
-            using (var replace = new HttpRequestMessage(HttpMethod.Put, $"/api/attachments/{SetupSite.PageKey}/{SetupSite.FilesKey}/{fileId}?taskId=1") { Content = form })
+            using (var rename = new HttpRequestMessage(HttpMethod.Patch, $"/api/attachments/{SetupSite.PageKey}/{SetupSite.FilesKey}/{fileId}?taskId=1") { Content = JsonContent.Create(new { fileName = "renamed.txt" }) })
             {
-                replace.Headers.Add("RequestVerificationToken", fileToken);
-                using var replaced = await editor.SendAsync(replace);
-                Assert.Equal(HttpStatusCode.OK, replaced.StatusCode);
-                fileId = (await replaced.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+                rename.Headers.Add("RequestVerificationToken", fileToken);
+                using var renamed = await editor.SendAsync(rename);
+                Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
             }
             using (var remove = new HttpRequestMessage(HttpMethod.Delete, $"/api/attachments/{SetupSite.PageKey}/{SetupSite.FilesKey}/{fileId}?taskId=1"))
             {

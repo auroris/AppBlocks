@@ -414,7 +414,7 @@ internal static class Http
     }
 }
 
-/// <summary>The file an upload or a replacement sends: its name, its content type and its bytes.</summary>
+/// <summary>The file an upload sends: its name, its content type and its bytes.</summary>
 internal sealed record AttachmentFile(string FileName, string ContentType, byte[] Content);
 
 /// <summary>Drives <c>/api/attachments</c> as the Attachments block's runtime does: the list's antiforgery token goes on every write, and the page's parameters travel as a query string.</summary>
@@ -432,9 +432,6 @@ internal sealed class AttachmentsClient(HttpClient client, string pathBase, Guid
 
     public Task<AttachmentsResponse> UploadAsync(AttachmentFile file, string? purpose = null, string? label = null, string? notes = null, string? query = null)
         => WriteAsync(HttpMethod.Post, api, query, file, purpose, label, notes);
-
-    public Task<AttachmentsResponse> ReplaceAsync(long id, AttachmentFile? file = null, string? purpose = null, string? label = null, string? notes = null, string? query = null)
-        => WriteAsync(HttpMethod.Put, Item(id), query, file, purpose, label, notes);
 
     public Task<AttachmentsResponse> RenameAsync(long id, string? fileName, string? query = null)
     {

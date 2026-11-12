@@ -18,14 +18,14 @@ public sealed class AttachmentStoreTests
     private static readonly AttachmentOwner Other = new("sample.orders", "5");
 
     [Fact]
-    public async Task Files_are_filed_replaced_removed_and_purged_per_owner_on_sqlite()
+    public async Task Files_are_filed_renamed_removed_and_purged_per_owner_on_sqlite()
     {
         var file = Path.Combine(Directory.CreateTempSubdirectory("attachments-").FullName, "attachments.db");
         await Exercise(new SqliteConnection($"Data Source={file};Pooling=False").ConnectionString, text => new SqliteConnection(text));
     }
 
     [LocalDbFact]
-    public async Task Files_are_filed_replaced_removed_and_purged_per_owner_on_sql_server()
+    public async Task Files_are_filed_renamed_removed_and_purged_per_owner_on_sql_server()
     {
         const string master = @"Server=(localdb)\MSSQLLocalDB;Integrated Security=true;Connect Timeout=90;TrustServerCertificate=true";
         var database = "att_test_" + Guid.NewGuid().ToString("N")[..12];
@@ -52,7 +52,6 @@ public sealed class AttachmentStoreTests
         Assert.Equal(("Invoice", "October", "Paid by card"), (invoice.Purpose, invoice.Label, invoice.Notes));
         var listed = await store.ListAsync(Order, default);
         Assert.Equal([note.Id, invoice.Id], listed.Select(i => i.Id));  // newest first
-        Assert.All(listed, item => Assert.Empty(item.Revisions));
 
         // The bytes come back for the owner, and never for another owner's key or another owner's file.
         var read = await store.ReadAsync(Order, invoice.Id, default);
@@ -61,7 +60,6 @@ public sealed class AttachmentStoreTests
         Assert.Null(await store.ReadAsync(Other, invoice.Id, default));
         var foreign = (await store.ListAsync(Other, default)).Single();
         Assert.Null(await store.ReadAsync(Order, foreign.Id, default));
-        Assert.Null(await store.ReplaceAsync(Order, foreign.Id, Upload("x.pdf", "application/pdf", "x"), null, null, null, "member:1", default));
         Assert.False(await store.RemoveAsync(Order, foreign.Id, "member:1", default));
 
         // A rename changes only the filename and link's update details, under the same owner check.
@@ -73,50 +71,32 @@ public sealed class AttachmentStoreTests
         Assert.Equal((invoice.Size, invoice.Sha256, invoice.Purpose, invoice.Label, invoice.Notes, invoice.UploadedBy, invoice.UploadedAt),
             (renamed.Size, renamed.Sha256, renamed.Purpose, renamed.Label, renamed.Notes, renamed.UploadedBy, renamed.UploadedAt));
         Assert.Equal("member:3", renamed.UpdatedBy);
-        Assert.Empty(renamed.Revisions);
         var renamedContent = await store.ReadAsync(Order, invoice.Id, default);
         Assert.Equal("invoice-renamed.pdf", renamedContent!.FileName);
         Assert.Equal("first invoice", Encoding.UTF8.GetString(renamedContent.Bytes));
 
-        // A replacement is a new revision; the earlier one stays readable, and the item keeps its link's details.
-        var replaced = await store.ReplaceAsync(Order, invoice.Id, Upload("invoice-v2.pdf", "application/pdf", "second invoice"), null, "October (corrected)", null, "member:3", default);
-        Assert.NotNull(replaced);
-        Assert.NotEqual(invoice.Id, replaced.Id);
-        Assert.Equal("invoice-v2.pdf", replaced.FileName);
-        Assert.Equal(("Invoice", "October (corrected)", "Paid by card"), (replaced.Purpose, replaced.Label, replaced.Notes));
-        Assert.Equal("member:3", replaced.UpdatedBy);
-        Assert.Equal([invoice.Id], replaced.Revisions.Select(r => r.Id));
-        Assert.Equal("second invoice", Encoding.UTF8.GetString((await store.ReadAsync(Order, replaced.Id, default))!.Bytes));
+        // A new version of a document is simply another file; nothing ties it to the first.
+        var second = await store.AddAsync(Order, Upload("invoice-v2.pdf", "application/pdf", "second invoice"), "Invoice", "October (corrected)", null, "member:3", default);
+        Assert.Equal([second.Id, note.Id, invoice.Id], (await store.ListAsync(Order, default)).Select(i => i.Id));
         Assert.Equal("first invoice", Encoding.UTF8.GetString((await store.ReadAsync(Order, invoice.Id, default))!.Bytes));
-        // The replaced id is no longer a current file, so it cannot be replaced or removed, only read.
-        Assert.Null(await store.ReplaceAsync(Order, invoice.Id, null, "Receipt", null, null, "member:1", default));
-        Assert.Null(await store.RenameAsync(Order, invoice.Id, "old.pdf", "member:1", default));
-        // Details alone: an empty string clears a value, null keeps it.
-        var detailed = await store.ReplaceAsync(Order, replaced.Id, null, "Receipt", "", null, "member:1", default);
-        Assert.Equal(replaced.Id, detailed!.Id);
-        Assert.Equal(("Receipt", null, "Paid by card"), (detailed.Purpose, detailed.Label, detailed.Notes));
-        var again = await store.ReplaceAsync(Order, replaced.Id, Upload("invoice-v3.pdf", "application/pdf", "third"), null, null, null, "member:1", default);
-        Assert.Equal([replaced.Id, invoice.Id], again!.Revisions.Select(r => r.Id));
 
-        // Removal hides the link and its revisions; the rows stay until a purge past the retention.
-        Assert.True(await store.RemoveAsync(Order, again.Id, "member:1", default));
-        Assert.Equal([note.Id], (await store.ListAsync(Order, default)).Select(i => i.Id));
-        Assert.Null(await store.ReadAsync(Order, again.Id, default));
+        // Removal hides the link; the rows stay until a purge past the retention, which deletes the link and its file.
+        Assert.True(await store.RemoveAsync(Order, invoice.Id, "member:1", default));
+        Assert.Equal([second.Id, note.Id], (await store.ListAsync(Order, default)).Select(i => i.Id));
         Assert.Null(await store.ReadAsync(Order, invoice.Id, default));
-        Assert.Null(await store.RenameAsync(Order, again.Id, "removed.pdf", "member:1", default));
-        Assert.Equal(4L, await Count(connectionString, open, "SELECT COUNT(*) FROM APP_ATTACHMENT WHERE FILE_NAME LIKE 'invoice%' OR FILE_NAME = 'other.pdf'"));
+        Assert.Null(await store.RenameAsync(Order, invoice.Id, "removed.pdf", "member:1", default));
+        Assert.False(await store.RemoveAsync(Order, invoice.Id, "member:1", default));
+        Assert.Equal(4L, await Count(connectionString, open, "SELECT COUNT(*) FROM APP_ATTACHMENT"));
         var kept = await store.PurgeAsync(DateTime.UtcNow.AddDays(-1), default);
         Assert.Equal(new AttachmentPurge(0, 0, 0), kept);
         var purged = await store.PurgeAsync(DateTime.UtcNow.AddMinutes(1), default);
-        Assert.Equal(1, purged.Links);
-        Assert.Equal(3, purged.Files);
-        Assert.Equal("first invoicesecond invoicethird".Length, purged.Bytes);
-        Assert.Equal(2L, await Count(connectionString, open, "SELECT COUNT(*) FROM APP_ATTACHMENT"));
-        Assert.Equal([note.Id], (await store.ListAsync(Order, default)).Select(i => i.Id));
+        Assert.Equal(new AttachmentPurge(1, 1, "first invoice".Length), purged);
+        Assert.Equal(3L, await Count(connectionString, open, "SELECT COUNT(*) FROM APP_ATTACHMENT"));
+        Assert.Equal([second.Id, note.Id], (await store.ListAsync(Order, default)).Select(i => i.Id));
         Assert.Equal(foreign.Id, (await store.ListAsync(Other, default)).Single().Id);
 
         // The schema scripts are idempotent: a second store over the same database finds everything in place.
-        Assert.Single(await Store(connectionString, open).ListAsync(Order, default));
+        Assert.Equal(2, (await Store(connectionString, open).ListAsync(Order, default)).Count);
     }
 
     [Fact]

@@ -644,6 +644,12 @@ function mountAttachments(root) {
     let uploader = null;
     let uploaderReady = null;
     let uploading = 0;
+    // The list read again after uploads, and whether uploads that finished meanwhile need it read once more.
+    let refreshing = false;
+    let refreshAgain = false;
+    // The file the upload notice is about, if any, and whether the block's notice is showing it.
+    let problemFileId = null;
+    let uploadNotice = false;
     // The current batch's successes, announced once its files are listed.
     const uploaded = [];
     // The purpose, label and notes copied onto each file when it is added.
@@ -668,13 +674,15 @@ function mountAttachments(root) {
         }
     }
     function syncBusy() {
-        root.inert = saving || busy;
-        // A modal dialog escapes its ancestors' inert state.
-        if (dialog) dialog.inert = saving || busy;
-        if (addButton) addButton.disabled = saving || busy;
-        uploader?.getPlugin("Dashboard").setOptions({ disabled: saving || busy });
+        const locked = saving || busy;
+        root.inert = locked;
+        // A modal dialog escapes its ancestors' inert state. Reading the list after uploads does not lock it: someone may be
+        // typing the details for their next files, and those files may go up meanwhile.
+        if (dialog) dialog.inert = locked;
+        if (addButton) addButton.disabled = locked;
+        uploader?.getPlugin("Dashboard").setOptions({ disabled: locked });
         syncUploadButton();
-        for (const button of list.querySelectorAll("button")) button.disabled = saving || busy || transferring();
+        for (const button of list.querySelectorAll("button")) button.disabled = locked || refreshing || transferring();
     }
     // Whether the files shown are a new record's, sent ahead of its save.
     const pending = () => !!form && !recordKey && newUploads;
@@ -683,11 +691,20 @@ function mountAttachments(root) {
         if (pending()) return endpointUrl(api, ["new", pendingKey, ...below]);
         return endpointUrl(api, below, form && recordKey ? { [keyParameter]: recordKey } : {});
     };
-    function fail(text) {
-        for (const notice of [errors, uploadErrors]) if (notice) { notice.textContent = text; notice.hidden = false; }
+    // The block's notice, beside the list, says what last went wrong with anything the block did. The upload dialog's notice
+    // says only what went wrong uploading, and which file it was about when it was about one; the block's notice repeats it
+    // for a closed dialog. A rename's refusal therefore never greets the next person to open Upload.
+    function fail(text) { uploadNotice = false; errors.textContent = text; errors.hidden = false; }
+    function clear() { uploadNotice = false; errors.textContent = ""; errors.hidden = true; }
+    function failUpload(text, fileId = null) {
+        problemFileId = fileId;
+        if (uploadErrors) { uploadErrors.textContent = text; uploadErrors.hidden = false; }
+        fail(text); uploadNotice = true;
     }
-    function clear() {
-        for (const notice of [errors, uploadErrors]) if (notice) { notice.textContent = ""; notice.hidden = true; }
+    function clearUpload() {
+        problemFileId = null;
+        if (uploadErrors) { uploadErrors.textContent = ""; uploadErrors.hidden = true; }
+        if (uploadNotice) clear();
     }
     addButton?.addEventListener("click", async () => {
         if (saving || busy) return;
@@ -780,8 +797,13 @@ function mountAttachments(root) {
             });
             uploader.on("files-added", files => sendFiles(files.map(file => file.id)));
             uploader.on("progress", () => queueMicrotask(syncUploadButton));
-            uploader.on("file-removed", () => {
-                if (!failedFile()) clear();
+            uploader.on("file-removed", file => {
+                // Completed-file cleanup must not dismiss a failed list refresh or another operation's error.
+                if (file.id === problemFileId) {
+                    const failed = failedFile();
+                    if (failed) failUpload(failed.error, failed.id);
+                    else clearUpload();
+                }
                 syncBusy(); resetDetails();
             });
             uploader.on("upload-success", () => {
@@ -792,10 +814,10 @@ function mountAttachments(root) {
                 const problem = uploadFailure(response);
                 // A request that never got an answer carries Uppy's own English on the file; it takes the block's words too.
                 if (file && uploader.getFile(file.id)) uploader.setFileState(file.id, { error: problem });
-                fail(problem); syncUploadButton();
+                failUpload(problem, file?.id); syncUploadButton();
             });
             syncBusy();
-        }).catch(() => { fail(t("uploaderLoadFailed")); });
+        }).catch(() => { failUpload(t("uploaderLoadFailed")); });
     }
     async function sendFiles(ids) {
         if (!ids.length) return;
@@ -807,19 +829,29 @@ function mountAttachments(root) {
             catch (error) {
                 const problem = error.message || t("fileOperationFailed");
                 if (uploader.getFile(id)) uploader.setFileState(id, { error: problem });
-                fail(problem);
+                failUpload(problem, id);
             }
         }));
         uploading--;
         if (transferring()) { syncBusy(); return; }
-        busy = true; syncBusy();
+        // One reading of the list at a time: uploads that finish while it is read have it read once more, so a slower
+        // answer never replaces a newer one.
+        if (refreshing) { refreshAgain = true; syncBusy(); return; }
+        refreshing = true; syncBusy();
         try {
-            await load();
-            for (const file of uploader.getFiles()) if (file.progress.uploadComplete && !file.error) uploader.removeFile(file.id);
-            if (failedFile()) fail(failedFile().error);
-            resetDetails();
-            for (const detail of uploaded.splice(0)) root.dispatchEvent(new CustomEvent("app-attachments:changed", { bubbles: true, detail }));
-        } finally { busy = false; syncBusy(); }
+            do {
+                refreshAgain = false;
+                // What finished before the list was asked for is what it shows; anything finishing meanwhile waits a round.
+                const listed = uploader.getFiles().filter(file => file.progress.uploadComplete && !file.error).map(file => file.id);
+                const announced = uploaded.splice(0);
+                await load(true);
+                for (const id of listed) if (uploader.getFile(id)) uploader.removeFile(id);
+                // A list that could not be read keeps saying so; otherwise the notice is the first failed file's, or nothing.
+                if (state) { const failed = failedFile(); if (failed) failUpload(failed.error, failed.id); else clearUpload(); }
+                resetDetails();
+                for (const detail of announced) root.dispatchEvent(new CustomEvent("app-attachments:changed", { bubbles: true, detail }));
+            } while (refreshAgain && root.isConnected);
+        } finally { refreshing = false; syncBusy(); }
     }
     function render() {
         list.replaceChildren(); list.setAttribute("aria-busy", "false");
@@ -863,7 +895,8 @@ function mountAttachments(root) {
         }
         syncBusy();
     }
-    async function load() {
+    // The block's files, read again. A list read after uploads that cannot be read says so in the upload dialog too.
+    async function load(afterUpload = false) {
         clear();
         if (form && !recordKey && !newUploads) { state = null; render(); return; }
         // The form's key when the first of a new record's files is listed; the form takes a new one after each save, and
@@ -875,7 +908,9 @@ function mountAttachments(root) {
             if (pending()) pendingFiles = state.items?.length > 0;
         } catch (error) {
             if (signInNeeded(error, anonymous)) { root.replaceWith(signInNotice(t("signInFiles"))); return; }
-            state = null; render(); fail(errorText(error, t("filesLoadFailed")));
+            state = null; render();
+            const problem = errorText(error, t("filesLoadFailed"));
+            if (afterUpload) failUpload(problem); else fail(problem);
         }
     }
     // The files sent ahead join the record the form has just saved, under the token their list handed out. Returns what to
@@ -890,7 +925,7 @@ function mountAttachments(root) {
         } catch (error) { return errorText(error, t("filesNotAttached")); }
     }
     async function rename(item) {
-        if (busy || saving || !state || transferring()) return;
+        if (busy || saving || refreshing || !state || transferring()) return;
         const fileName = window.prompt(t("newFileName", { name: item.fileName }), item.fileName)?.trim();
         if (fileName == null || fileName === item.fileName) return;
         clear(); busy = true; syncBusy(); message.textContent = t("renaming");
@@ -906,7 +941,7 @@ function mountAttachments(root) {
         } finally { busy = false; syncBusy(); }
     }
     async function remove(id) {
-        if (busy || saving || !state || transferring()) return;
+        if (busy || saving || refreshing || !state || transferring()) return;
         clear();
         busy = true; syncBusy(); message.textContent = t("removing");
         try {
@@ -925,14 +960,14 @@ function mountAttachments(root) {
     }
     retryButton?.addEventListener("click", () => {
         if (!uploader || busy || saving || transferring()) return;
-        clear();
+        clearUpload();
         sendFiles(uploader.getFiles().filter(file => file.error).map(file => file.id));
     });
     if (form) {
         if (!formAttachments.has(form)) formAttachments.set(form, []);
         formAttachments.get(form).push({
             // "working" while a request is under way, "queued" while files wait to upload or failed to; nothing once the block is gone.
-            standing: () => !root.isConnected ? null : busy || transferring() ? "working" : unfinished() ? "queued" : null,
+            standing: () => !root.isConnected ? null : busy || refreshing || transferring() ? "working" : unfinished() ? "queued" : null,
             saving(value) { saving = value; syncBusy(); },
         });
         const follow = async event => {

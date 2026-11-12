@@ -1,7 +1,6 @@
 -- Files that belong to records, as blobs, and the links that say which record each file belongs to.
--- Idempotent: every start runs it. A replaced file is a new row whose REPLACES names the one it took over
--- from, so a link's current file heads a chain of earlier revisions; a removed link keeps its rows until
--- an administrator purges them. The names are unqualified, as the store's queries are: an account that creates these
+-- Idempotent: every start runs it. A file is stored once and never replaced; a removed link keeps its rows
+-- until an administrator purges them. The names are unqualified, as the store's queries are: an account that creates these
 -- gets them in its default schema, and SQL Server looks in dbo next, which is where an owner running this by hand puts them.
 IF OBJECT_ID(N'APP_ATTACHMENT', N'U') IS NULL
 CREATE TABLE APP_ATTACHMENT (
@@ -12,8 +11,7 @@ CREATE TABLE APP_ATTACHMENT (
     SHA256        char(64)       NOT NULL,
     CONTENT       varbinary(max) NOT NULL,
     UPLOADED_BY   nvarchar(200)  NOT NULL,
-    UPLOADED_AT   datetime2      NOT NULL,
-    REPLACES      bigint         NULL CONSTRAINT FK_APP_ATTACHMENT_REPLACES REFERENCES APP_ATTACHMENT (ATTACHMENT_ID)
+    UPLOADED_AT   datetime2      NOT NULL
 );
 GO
 IF OBJECT_ID(N'APP_ATTACHMENT_LINK', N'U') IS NULL
@@ -35,7 +33,4 @@ CREATE TABLE APP_ATTACHMENT_LINK (
 GO
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_APP_ATTACHMENT_LINK_OWNER' AND object_id = OBJECT_ID(N'APP_ATTACHMENT_LINK'))
 CREATE INDEX IX_APP_ATTACHMENT_LINK_OWNER ON APP_ATTACHMENT_LINK (OWNER_ALIAS, OWNER_KEY, REMOVED_AT);
-GO
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_APP_ATTACHMENT_REPLACES' AND object_id = OBJECT_ID(N'APP_ATTACHMENT'))
-CREATE INDEX IX_APP_ATTACHMENT_REPLACES ON APP_ATTACHMENT (REPLACES);
 GO

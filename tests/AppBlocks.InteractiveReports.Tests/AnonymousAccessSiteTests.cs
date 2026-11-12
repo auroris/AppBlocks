@@ -422,10 +422,10 @@ public sealed class AnonymousAccessSiteTests
         Assert.Equal("from-admin", await visitor.GetStringAsync($"{closed}/{fileId}"));
         var token = list.GetProperty("antiforgeryToken").GetString();
         using (var upload = await Upload(visitor, closed, token, "from-visitor")) Assert.Equal(HttpStatusCode.Forbidden, upload.StatusCode);
-        using (var replace = await Upload(visitor, $"{closed}/{fileId}", token, "from-visitor", HttpMethod.Put)) Assert.Equal(HttpStatusCode.Forbidden, replace.StatusCode);
+        using (var rename = await Send(visitor, HttpMethod.Patch, $"{closed}/{fileId}", token, new { fileName = "mine.txt" })) Assert.Equal(HttpStatusCode.Forbidden, rename.StatusCode);
         using (var remove = await Send(visitor, HttpMethod.Delete, $"{closed}/{fileId}", token)) Assert.Equal(HttpStatusCode.Forbidden, remove.StatusCode);
 
-        // With it: the class let them, so they add, replace and remove, on the antiforgery token as anyone would.
+        // With it: the class let them, so they add, rename and remove, on the antiforgery token as anyone would.
         var openList = await visitor.GetFromJsonAsync<JsonElement>(open);
         Assert.True(openList.GetProperty("canWrite").GetBoolean());
         var openToken = openList.GetProperty("antiforgeryToken").GetString();
@@ -435,25 +435,25 @@ public sealed class AnonymousAccessSiteTests
         var item = await added.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("anonymous", item.GetProperty("uploadedBy").GetString());
         var id = item.GetProperty("id").GetInt64();
-        using var replaced = await Upload(visitor, $"{open}/{id}", openToken, "replaced", HttpMethod.Put);
-        Assert.Equal(HttpStatusCode.OK, replaced.StatusCode);
-        // A replacement is a new revision with its own id.
-        id = (await replaced.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
-        Assert.Equal("replaced",await visitor.GetStringAsync($"{open}/{id}"));
+        using var renamed = await Send(visitor, HttpMethod.Patch, $"{open}/{id}", openToken, new { fileName = "renamed.txt" });
+        Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
+        // A rename keeps the file's id and contents.
+        Assert.Equal(id, (await renamed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64());
+        Assert.Equal("from-visitor", await visitor.GetStringAsync($"{open}/{id}"));
         using (var removed = await Send(visitor, HttpMethod.Delete, $"{open}/{id}", openToken)) Assert.Equal(HttpStatusCode.NoContent, removed.StatusCode);
 
-        // A visitor replacing an account's file is told about its earlier revision, without the name, in the answer to the write as in the list.
+        // A visitor renaming an account's file is told who filed it as someone signed in, without the name, in the answer to the write as in the list.
         var openForAdmin = await admin.GetFromJsonAsync<JsonElement>(open);
         using var filedByAdmin = await Upload(admin, open, openForAdmin.GetProperty("antiforgeryToken").GetString(), "from-admin");
         Assert.Equal(HttpStatusCode.Created, filedByAdmin.StatusCode);
         var filedId = (await filedByAdmin.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
-        using var replacedAccounts = await Upload(visitor, $"{open}/{filedId}", openToken, "from-visitor", HttpMethod.Put);
-        Assert.Equal(HttpStatusCode.OK, replacedAccounts.StatusCode);
-        var afterReplace = await replacedAccounts.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("anonymous", afterReplace.GetProperty("updatedBy").GetString());
-        Assert.Equal("a signed-in user", afterReplace.GetProperty("revisions")[0].GetProperty("uploadedBy").GetString());
-        Assert.DoesNotContain(accountName, afterReplace.GetRawText());
-        using (var cleared = await Send(visitor, HttpMethod.Delete, $"{open}/{afterReplace.GetProperty("id").GetInt64()}", openToken)) Assert.Equal(HttpStatusCode.NoContent, cleared.StatusCode);
+        using var renamedAccounts = await Send(visitor, HttpMethod.Patch, $"{open}/{filedId}", openToken, new { fileName = "filed.txt" });
+        Assert.Equal(HttpStatusCode.OK, renamedAccounts.StatusCode);
+        var afterRename = await renamedAccounts.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("anonymous", afterRename.GetProperty("updatedBy").GetString());
+        Assert.Equal("a signed-in user", afterRename.GetProperty("uploadedBy").GetString());
+        Assert.DoesNotContain(accountName, afterRename.GetRawText());
+        using (var cleared = await Send(visitor, HttpMethod.Delete, $"{open}/{filedId}", openToken)) Assert.Equal(HttpStatusCode.NoContent, cleared.StatusCode);
 
         // A record that does not load for them has no files for them, whatever its write rule says.
         Assert.Equal(HttpStatusCode.Forbidden, (await visitor.GetAsync(hidden)).StatusCode);
@@ -705,11 +705,11 @@ public sealed class AnonymousAccessSiteTests
         return client.SendAsync(request);
     }
 
-    private static Task<HttpResponseMessage> Upload(HttpClient client, string url, string? token, string text, HttpMethod? method = null)
+    private static Task<HttpResponseMessage> Upload(HttpClient client, string url, string? token, string text)
     {
         var file = new ByteArrayContent(Encoding.UTF8.GetBytes(text));
         file.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
-        var request = new HttpRequestMessage(method ?? HttpMethod.Post, url) { Content = new MultipartFormDataContent { { file, "file", "note.txt" } } };
+        var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = new MultipartFormDataContent { { file, "file", "note.txt" } } };
         if (token is not null) request.Headers.Add("RequestVerificationToken", token);
         return client.SendAsync(request);
     }

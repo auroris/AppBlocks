@@ -20,7 +20,7 @@ const json = (body, status = 200) => ({ status, contentType: 'application/json',
 const record = (key, values = { title: 'Report' }) => ({ key, checksum: key ? '1' : null, values, capabilities: { create: true, update: true, delete: true } });
 const formAnswer = rec => json({ record: rec, definitionVersion: 'v1', antiforgeryToken: 'form-token' });
 const files = (items, canWrite = true) => ({ items, canWrite, antiforgeryToken: 'files-token' });
-const file = (id, size) => ({ id, fileName: `${id}.pdf`, size, purpose: '', label: '', notes: '', uploadedBy: 'ada', uploadedAt: '2026-11-08T14:30:00Z', revisions: [] });
+const file = (id, size) => ({ id, fileName: `${id}.pdf`, size, purpose: '', label: '', notes: '', uploadedBy: 'ada', uploadedAt: '2026-11-08T14:30:00Z' });
 
 const form = (inner, { anonymous = false } = {}) => `<form class="app-form" data-app-form data-api="/api/forms/page/form" data-key-parameter="id" data-return="/done"
     ${anonymous ? 'data-anonymous="true"' : ''} novalidate><div class="app-form-message" role="status"></div><div class="app-form-errors" role="alert" tabindex="-1" hidden></div>
@@ -255,7 +255,6 @@ test('a new record\'s files go up under the form\'s submission key and join the 
         await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'ahead.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') });
         await page.locator('.app-attachment').waitFor();
         assert.match(await page.locator('a.app-attachment-name').getAttribute('href'), /\/new\/[^/]+\/ahead$/);
-        assert.equal(await page.getByRole('button', { name: 'Replace' }).count(), 0);
         await closeUploader(page);
         await page.locator('#title').fill('Report');
         await page.getByRole('button', { name: 'Save' }).click();
@@ -396,6 +395,89 @@ test('immediate uploads snapshot metadata and antiforgery, new files do not retr
     } finally { await page.close(); }
 });
 
+test('a failed list refresh survives completed-upload cleanup and removal of a failed file with the same error', async () => {
+    for (const uploadFails of [false, true]) {
+        let uploaded = false;
+        const problem = 'The service is temporarily unavailable.';
+        const { page, requests, errors } = await mount(attachments('page') + runtime(''), ({ method }) => {
+            if (method === 'POST') {
+                uploaded = true;
+                return uploadFails ? json({ detail: problem }, 503) : json(file('sent', 4), 201);
+            }
+            return uploaded ? json({ detail: problem }, 503) : json(files([]));
+        });
+        try {
+            await openUploader(page);
+            const refresh = page.waitForResponse(response => response.request().method() === 'GET'
+                && response.url().includes('/api/attachments/') && response.status() === 503);
+            await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'sent.pdf', mimeType: 'application/pdf', buffer: Buffer.from('file') });
+            await refresh;
+            await page.waitForFunction(() => !document.querySelector('[data-attachment-add]').disabled
+                && !document.querySelector('[data-attachment-add-label]').textContent.startsWith('Uploading'));
+            assert.equal(requests.filter(request => request.method === 'GET').length, 2);
+            if (uploadFails) await page.locator('.uppy-Dashboard-Item-action--remove').click();
+            assert.equal(await page.locator('.uppy-Dashboard-Item').count(), 0);
+            assert.equal(await page.locator('.app-attachments-upload-errors').isVisible(), true);
+            assert.equal(await page.locator('.app-attachments-upload-errors').textContent(), problem);
+            await closeUploader(page);
+            assert.equal(await page.locator('.app-attachments-errors').isVisible(), true);
+            assert.equal(await page.locator('.app-attachments-errors').textContent(), problem);
+            await openUploader(page);
+            assert.equal(await page.locator('.app-attachments-upload-errors').isVisible(), true);
+            assert.equal(requests.filter(request => request.method === 'POST').length, 1, 'refresh failure never retries the upload');
+            assert.deepEqual(errors, []);
+        } finally { await page.close(); }
+    }
+});
+
+test('the upload dialog stays usable while finished uploads are listed, and files added meanwhile are listed once more', async () => {
+    let releaseList = null, lists = 0;
+    const stored = [];
+    const { page, requests, errors } = await mount(attachments('page') + runtime(''), async ({ method, raw }) => {
+        if (method === 'POST') { const item = file(raw.includes('second.pdf') ? 'second' : 'first', 4); stored.push(item); return json(item, 201); }
+        // Each list answers with what was stored when it was asked; the one read after the first upload waits for the test.
+        const answer = json(files([...stored]));
+        if (++lists === 2) await new Promise(resolve => { releaseList = resolve; });
+        return answer;
+    });
+    try {
+        await page.evaluate(() => { window.changed = []; document.addEventListener('app-attachments:changed', event => window.changed.push(event.detail)); });
+        await openUploader(page);
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'first.pdf', mimeType: 'application/pdf', buffer: Buffer.from('first') });
+        while (!releaseList) await page.waitForTimeout(20);
+        // The details for the next files are typed while the list is read: nothing is lost and focus stays put.
+        await page.locator('[data-attachment-label]').click();
+        await page.keyboard.type('For March');
+        assert.equal(await page.locator('[data-attachment-label]').inputValue(), 'For March');
+        assert.ok(await page.evaluate(() => document.activeElement?.matches('[data-attachment-label]')));
+        await page.locator('.uppy-DashboardContent-addMore').click();
+        await page.locator('.uppy-Dashboard-input').first().setInputFiles({ name: 'second.pdf', mimeType: 'application/pdf', buffer: Buffer.from('second') });
+        await page.waitForFunction(() => document.querySelector('[data-attachment-add-label]').textContent === 'Upload');
+        assert.equal(requests.filter(r => r.method === 'POST').length, 2, 'a file added while the list is read goes up at once');
+        releaseList();
+        await page.locator('.app-attachment', { hasText: 'second.pdf' }).waitFor();
+        await page.waitForFunction(() => !document.querySelector('.uppy-Dashboard-Item'));
+        assert.equal(requests.filter(r => r.method === 'GET').length, 3, 'the list is read once more for the file that finished meanwhile');
+        assert.deepEqual(await page.evaluate(() => window.changed), [{ id: null, operation: 'upload' }, { id: null, operation: 'upload' }]);
+        assert.equal(await page.locator('[data-attachment-label]').inputValue(), 'For March', 'an open dialog keeps its details');
+        assert.deepEqual(errors, []);
+    } finally { releaseList?.(); await page.close(); }
+});
+
+test('a refused rename is told beside the list and never in the upload dialog', async () => {
+    const refusal = 'The filename must use a file type this block accepts.';
+    const { page, errors } = await mount(attachments('page') + runtime(''), ({ method }) => method === 'PATCH' ? json({ detail: refusal }, 415) : json(files([file('report', 4)])));
+    try {
+        await page.locator('.app-attachment').waitFor();
+        await page.evaluate(() => { window.prompt = () => 'report.exe'; });
+        await page.getByRole('button', { name: 'Rename' }).click();
+        await page.locator('.app-attachments-errors').getByText(refusal).waitFor();
+        await openUploader(page);
+        assert.equal(await page.locator('.app-attachments-upload-errors').isVisible(), false);
+        assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+});
+
 test('removing a failed file from either attachment block clears its save guard', async () => {
     const blocks = attachments('form', 'data-new-uploads="allowed"') + attachments('form', 'data-new-uploads="allowed"').replace('/page/block', '/page/other');
     const { page, requests, errors } = await mount(form(blocks) + runtime(''), ({ path, method }) => path.includes('/forms/')
@@ -412,6 +494,7 @@ test('removing a failed file from either attachment block clears its save guard'
         assert.equal(requests.filter(r => r.method === 'POST').length, 1);
         await openUploader(page, 1);
         await page.locator('.uppy-Dashboard-Item-action--remove').click();
+        assert.equal(await page.locator('[data-app-attachments]').nth(1).locator('.app-attachments-upload-errors').isVisible(), false, 'removing the failed file clears its own error');
         await closeUploader(page);
         await page.getByRole('button', { name: 'Save', exact: true }).click();
         await page.getByText('Saved.', { exact: true }).waitFor();
@@ -420,8 +503,8 @@ test('removing a failed file from either attachment block clears its save guard'
     } finally { await page.close(); }
 });
 
-test('the attachment list renames and removes files without loading Uppy or showing revisions', async () => {
-    let current = { ...file('old', 8), label: 'Keep this label', revisions: [file('older', 4)] };
+test('the attachment list renames and removes files without loading Uppy', async () => {
+    let current = { ...file('old', 8), label: 'Keep this label' };
     const { page, requests, errors } = await mount(attachments('page') + runtime(''), ({ method, body }) => {
         if (method === 'PATCH') { current = { ...current, fileName: body.fileName }; return json(current); }
         if (method === 'DELETE') { current = null; return { status: 204 }; }
@@ -431,8 +514,6 @@ test('the attachment list renames and removes files without loading Uppy or show
         await page.locator('.app-attachment').waitFor();
         assert.equal(await page.locator('.uppy-Dashboard').count(), 0);
         assert.equal(await page.locator('dialog').isVisible(), false);
-        assert.equal(await page.getByRole('button', { name: 'Replace' }).count(), 0);
-        assert.equal(await page.locator('.app-attachment-revisions').count(), 0);
         assert.match(await page.locator('a.app-attachment-name').getAttribute('href'), /\/old$/);
         await page.evaluate(() => { window.fileChanges = []; document.addEventListener('app-attachments:changed', event => window.fileChanges.push(event.detail)); });
         page.removeAllListeners('dialog');

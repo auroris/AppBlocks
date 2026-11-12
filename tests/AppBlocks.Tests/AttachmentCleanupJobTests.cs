@@ -33,8 +33,7 @@ public sealed class AttachmentCleanupJobTests
             var owner = new AttachmentOwner("orders", "7");
             async Task<AttachmentItem> Add(AttachmentOwner target) => await store.AddAsync(target,
                 new("file.txt", "text/plain", [1, 2, 3]), null, null, null, "anonymous", ct);
-            var original = await Add(expired);
-            await store.ReplaceAsync(expired, original.Id, new("replacement.txt", "text/plain", [4, 5]), null, null, null, "anonymous", ct);
+            await Add(expired); await Add(expired);
             var kept = await Add(recent);
             var associated = await Add(adopted);
             var deleted = await Add(removed);

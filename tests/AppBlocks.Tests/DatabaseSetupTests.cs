@@ -475,11 +475,10 @@ public sealed class DatabaseSetupTests
         var added = await store.AddAsync(Order, Upload("first.txt"), "Invoice", "Label", "Notes", "member:1", default);
         Assert.Equal("first.txt", Assert.Single(await store.ListAsync(Order, default)).FileName);
         Assert.Equal("first.txt", Encoding.UTF8.GetString((await store.ReadAsync(Order, added.Id, default))!.Bytes));
-        var replaced = await store.ReplaceAsync(Order, added.Id, Upload("second.txt"), null, null, null, "member:1", default);
-        Assert.Equal([added.Id], replaced!.Revisions.Select(revision => revision.Id));
-        Assert.True(await store.RemoveAsync(Order, replaced.Id, "member:1", default));
+        Assert.Equal("second.txt", (await store.RenameAsync(Order, added.Id, "second.txt", "member:1", default))!.FileName);
+        Assert.True(await store.RemoveAsync(Order, added.Id, "member:1", default));
         Assert.Empty(await store.ListAsync(Order, default));
-        Assert.Equal(new AttachmentPurge(1, 2, Encoding.UTF8.GetByteCount("first.txt") + Encoding.UTF8.GetByteCount("second.txt")), await store.PurgeAsync(DateTime.UtcNow.AddDays(1), default));
+        Assert.Equal(new AttachmentPurge(1, 1, Encoding.UTF8.GetByteCount("first.txt")), await store.PurgeAsync(DateTime.UtcNow.AddDays(1), default));
     }
 
     private static AttachmentUpload Upload(string name) => new(name, "text/plain", Encoding.UTF8.GetBytes(name));

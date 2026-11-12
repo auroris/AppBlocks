@@ -1,8 +1,7 @@
 -- Files that belong to records, as blobs, and the links that say which record each file belongs to.
 -- Idempotent: every start runs it, and each block passes over an object that is already there (ORA-00955,
--- and ORA-01408 for an index whose columns are already indexed). A replaced file is a new row whose REPLACES
--- names the one it took over from, so a link's current file heads a chain of earlier revisions; a removed link
--- keeps its rows until an administrator purges them. SIZE is a reserved word in Oracle, so that column is quoted
+-- and ORA-01408 for an index whose columns are already indexed). A file is stored once and never replaced;
+-- a removed link keeps its rows until an administrator purges them. SIZE is a reserved word in Oracle, so that column is quoted
 -- here and in the store's queries. Needs Oracle 12c or later for identity columns. Written from Oracle's
 -- documentation and not yet run against a live server.
 BEGIN
@@ -14,8 +13,7 @@ BEGIN
         SHA256        CHAR(64)            NOT NULL,
         CONTENT       BLOB                NOT NULL,
         UPLOADED_BY   VARCHAR2(200 CHAR)  NOT NULL,
-        UPLOADED_AT   TIMESTAMP           NOT NULL,
-        REPLACES      NUMBER(19)          NULL CONSTRAINT FK_APP_ATTACHMENT_REPLACES REFERENCES APP_ATTACHMENT (ATTACHMENT_ID)
+        UPLOADED_AT   TIMESTAMP           NOT NULL
     )';
 EXCEPTION WHEN OTHERS THEN IF SQLCODE != -955 THEN RAISE; END IF;
 END;
@@ -41,11 +39,6 @@ END;
 /
 BEGIN
     EXECUTE IMMEDIATE 'CREATE INDEX IX_APP_ATTACHMENT_LINK_OWNER ON APP_ATTACHMENT_LINK (OWNER_ALIAS, OWNER_KEY, REMOVED_AT)';
-EXCEPTION WHEN OTHERS THEN IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
-END;
-/
-BEGIN
-    EXECUTE IMMEDIATE 'CREATE INDEX IX_APP_ATTACHMENT_REPLACES ON APP_ATTACHMENT (REPLACES)';
 EXCEPTION WHEN OTHERS THEN IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF;
 END;
 /

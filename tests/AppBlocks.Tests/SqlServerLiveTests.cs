@@ -19,7 +19,7 @@ public sealed class SqlServerLiveTests(ITestOutputHelper output)
             ("VIEW", "ITEM_NAMES"), ("TABLE", "ITEMS"), ("TABLE", "APP_SCHEMA"));
 
     [Fact(Explicit = true)]
-    public Task Attachments_support_uploads_revisions_owner_isolation_removal_and_purge()
+    public Task Attachments_support_uploads_renames_owner_isolation_removal_and_purge()
         => Run(connection => AttachmentStoreTests.Exercise(connection, text => new SqlConnection(text)),
             ("TABLE", "APP_ATTACHMENT_LINK"), ("TABLE", "APP_ATTACHMENT"), ("TABLE", "APP_SCHEMA"));
 

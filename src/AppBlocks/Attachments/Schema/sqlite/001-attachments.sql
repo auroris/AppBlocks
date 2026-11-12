@@ -1,7 +1,6 @@
 -- Files that belong to records, as blobs, and the links that say which record each file belongs to.
--- Idempotent: every start runs it. A replaced file is a new row whose REPLACES names the one it took over
--- from, so a link's current file heads a chain of earlier revisions; a removed link keeps its rows until
--- an administrator purges them.
+-- Idempotent: every start runs it. A file is stored once and never replaced; a removed link keeps its rows
+-- until an administrator purges them.
 CREATE TABLE IF NOT EXISTS APP_ATTACHMENT (
     ATTACHMENT_ID INTEGER PRIMARY KEY,
     FILE_NAME     TEXT    NOT NULL,
@@ -10,8 +9,7 @@ CREATE TABLE IF NOT EXISTS APP_ATTACHMENT (
     SHA256        TEXT    NOT NULL,
     CONTENT       BLOB    NOT NULL,
     UPLOADED_BY   TEXT    NOT NULL,
-    UPLOADED_AT   TEXT    NOT NULL,
-    REPLACES      INTEGER NULL REFERENCES APP_ATTACHMENT (ATTACHMENT_ID)
+    UPLOADED_AT   TEXT    NOT NULL
 );
 CREATE TABLE IF NOT EXISTS APP_ATTACHMENT_LINK (
     LINK_ID       INTEGER PRIMARY KEY,
@@ -29,4 +27,3 @@ CREATE TABLE IF NOT EXISTS APP_ATTACHMENT_LINK (
     REMOVED_AT    TEXT    NULL
 );
 CREATE INDEX IF NOT EXISTS IX_APP_ATTACHMENT_LINK_OWNER ON APP_ATTACHMENT_LINK (OWNER_ALIAS, OWNER_KEY, REMOVED_AT);
-CREATE INDEX IF NOT EXISTS IX_APP_ATTACHMENT_REPLACES ON APP_ATTACHMENT (REPLACES);

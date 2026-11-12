@@ -62,7 +62,6 @@ public sealed class AttachmentsHttpTests
         Assert.Equal("first", await download.Content.ReadAsStringAsync());
         // Another record's block never sees this file, whatever its id.
         Assert.Equal(HttpStatusCode.NotFound, (await files.DownloadAsync(id, "id=5")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await files.ReplaceAsync(id, Pdf("x.pdf", "x"), query: "id=5")).Response.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await files.RemoveAsync(id, "id=5")).StatusCode);
 
         // Renaming needs write access and antiforgery, and keeps the same bytes and file identity.
@@ -76,35 +75,28 @@ public sealed class AttachmentsHttpTests
         Assert.Equal(id, renamed.Id);
         Assert.Equal("résumé.pdf", renamed.Body.GetProperty("fileName").GetString());
         Assert.Equal(uploaded.Body.GetProperty("sha256").GetString(), renamed.Body.GetProperty("sha256").GetString());
-        Assert.Empty(renamed.Body.GetProperty("revisions").EnumerateArray());
+        Assert.False(renamed.Body.TryGetProperty("revisions", out _));
         using (var renamedDownload = await files.DownloadAsync(id, "id=4"))
         {
             Assert.Equal("résumé.pdf", renamedDownload.Content.Headers.ContentDisposition?.FileNameStar);
             Assert.Equal("first", await renamedDownload.Content.ReadAsStringAsync());
         }
 
-        // A replacement is a new revision; the earlier one stays readable under its own id.
-        var replaced = await files.ReplaceAsync(id, Pdf("invoice-v2.pdf", "second"), label: "", query: "id=4");
-        Assert.True(replaced.IsSuccess, replaced.Problem);
-        var current = replaced.Id!.Value;
-        Assert.NotEqual(id, current);
-        Assert.Equal(JsonValueKind.Null, replaced.Body.GetProperty("label").ValueKind);
-        Assert.Equal("Paid", replaced.Body.GetProperty("notes").GetString());
-        Assert.Equal(id, replaced.Body.GetProperty("revisions").EnumerateArray().Single().GetProperty("id").GetInt64());
+        // A stored file is never replaced: nothing answers a write of new contents to it, and it keeps its own.
+        using (var put = new HttpRequestMessage(HttpMethod.Put, $"{site.PathBase}/api/attachments/{BlockSite.FormPageKey}/{OrdersAttachments}/{id}?id=4") {
+            Content = new MultipartFormDataContent { { new ByteArrayContent(Encoding.UTF8.GetBytes("second")), "file", "invoice-v2.pdf" } } })
+            Assert.False((await client.SendAsync(put)).IsSuccessStatusCode);
         Assert.Equal("first", await (await files.DownloadAsync(id, "id=4")).Content.ReadAsStringAsync());
-        Assert.Equal("second", await (await files.DownloadAsync(current, "id=4")).Content.ReadAsStringAsync());
-        Assert.Equal(current, (await files.ListAsync("id=4")).Items.Single().GetProperty("id").GetInt64());
-        Assert.Equal(HttpStatusCode.NotFound, (await files.RenameAsync(id, "old.pdf", "id=4")).Response.StatusCode);
 
         // Removal takes the item out of the list; the administrator's purge deletes its rows for good.
-        Assert.Equal(HttpStatusCode.NoContent, (await files.RemoveAsync(current, "id=4")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await files.RemoveAsync(id, "id=4")).StatusCode);
         Assert.Empty((await files.ListAsync("id=4")).Items);
-        Assert.Equal(HttpStatusCode.NotFound, (await files.DownloadAsync(current, "id=4")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await files.RenameAsync(current, "removed.pdf", "id=4")).Response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await files.DownloadAsync(id, "id=4")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await files.RenameAsync(id, "removed.pdf", "id=4")).Response.StatusCode);
         using var administrator = await site.SignInAsAdministratorAsync();
         var purged = await Json(await administrator.PostAsJsonAsync($"{site.PathBase}/umbraco/management/api/v1/attachments/purge", new { retentionDays = 0 }));
         Assert.Equal(1, purged.GetProperty("links").GetInt32());
-        Assert.Equal(2, purged.GetProperty("files").GetInt32());
+        Assert.Equal(1, purged.GetProperty("files").GetInt32());
         using var editor = await EditorAsync(site);
         Assert.Equal(HttpStatusCode.Forbidden, (await editor.PostAsJsonAsync($"{site.PathBase}/umbraco/management/api/v1/attachments/purge", new { retentionDays = 0 })).StatusCode);
         // The administrator policy guards the Settings screens' own data too; the pickers' lists stay open to every backoffice user.
@@ -255,7 +247,7 @@ public sealed class AttachmentsHttpTests
         using var client = site.CreateClient();
         var files = site.Attachments(client, page, block);
 
-        // The list says the caller may add and may not write, which is what the block shows: the upload row and no Replace or Remove.
+        // The list says the caller may add and may not write, which is what the block shows: Upload, and no Rename or Remove.
         var list = await files.ListAsync("id=1");
         Assert.True(list.IsSuccess, list.Problem);
         Assert.False(list.CanWrite);
@@ -264,11 +256,10 @@ public sealed class AttachmentsHttpTests
         var added = await files.UploadAsync(Pdf("asked-for.pdf", "sent later"), query: "id=1");
         Assert.Equal(HttpStatusCode.Created, added.Response.StatusCode);
         // What is there stays as it is, the caller's own file included.
-        var replaced = await files.ReplaceAsync(added.Id!.Value, Pdf("other.pdf", "changed"), query: "id=1");
-        Assert.Equal(HttpStatusCode.Forbidden, replaced.Response.StatusCode);
-        Assert.Contains("add files", replaced.Problem);
+        var renamed = await files.RenameAsync(added.Id!.Value, "renamed.pdf", "id=1");
+        Assert.Equal(HttpStatusCode.Forbidden, renamed.Response.StatusCode);
+        Assert.Contains("add files", renamed.Problem);
         Assert.Equal(HttpStatusCode.Forbidden, (await files.RemoveAsync(added.Id.Value, "id=1")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await files.RenameAsync(added.Id.Value, "renamed.pdf", "id=1")).Response.StatusCode);
         Assert.Equal("asked-for.pdf", Assert.Single((await files.ListAsync("id=1")).Items).GetProperty("fileName").GetString());
     }
 

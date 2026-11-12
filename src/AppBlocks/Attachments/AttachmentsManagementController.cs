@@ -13,7 +13,7 @@ public sealed record AttachmentPurgeRequest(int? RetentionDays);
 
 /// <summary>
 /// The administrator's purge, run by hand through the management API with a backoffice token: deletes the links
-/// removed longer ago than the retention and every revision behind them. Nothing deletes removed files on its own.
+/// removed longer ago than the retention and their files. Nothing deletes removed files on its own.
 /// </summary>
 [ApiVersion("1.0")]
 [VersionedApiBackOfficeRoute("attachments")]

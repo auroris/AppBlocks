@@ -42,11 +42,9 @@ public static class AttachmentEndpoints
         group.MapGet("", (Guid pageKey, Guid blockKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
             => List(access.ResolveAsync(pageKey, blockKey, ct), http, store, ct));
         group.MapPost("", (Guid pageKey, Guid blockKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
-            => Write(access.ResolveAsync(pageKey, blockKey, ct), null, http, store, ct));
+            => Upload(access.ResolveAsync(pageKey, blockKey, ct), http, store, ct));
         group.MapGet("/{id:long}", (Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
             => Download(access.ResolveAsync(pageKey, blockKey, ct), id, http, store, ct));
-        group.MapPut("/{id:long}", (Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
-            => Write(access.ResolveAsync(pageKey, blockKey, ct), id, http, store, ct));
         group.MapDelete("/{id:long}", (Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
             => Remove(access.ResolveAsync(pageKey, blockKey, ct), id, http, store, ct));
         group.MapPatch("/{id:long}", (Guid pageKey, Guid blockKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
@@ -56,7 +54,7 @@ public static class AttachmentEndpoints
         pending.MapGet("", (Guid pageKey, Guid blockKey, Guid submissionKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
             => List(Pending(access.ResolveNewAsync(pageKey, blockKey, submissionKey, ct), store, ct), http, store, ct));
         pending.MapPost("", (Guid pageKey, Guid blockKey, Guid submissionKey, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
-            => Write(Pending(access.ResolveNewAsync(pageKey, blockKey, submissionKey, ct), store, ct), null, http, store, ct));
+            => Upload(Pending(access.ResolveNewAsync(pageKey, blockKey, submissionKey, ct), store, ct), http, store, ct));
         pending.MapGet("/{id:long}", (Guid pageKey, Guid blockKey, Guid submissionKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
             => Download(Pending(access.ResolveNewAsync(pageKey, blockKey, submissionKey, ct), store, ct), id, http, store, ct));
         pending.MapDelete("/{id:long}", (Guid pageKey, Guid blockKey, Guid submissionKey, long id, HttpContext http, AttachmentAccess access, AttachmentStore store, CancellationToken ct)
@@ -113,16 +111,15 @@ public static class AttachmentEndpoints
     }
 
     /// <summary>
-    /// An upload (no id) or a replacement: a multipart body with a <c>file</c> part and the text parts <c>purpose</c>,
-    /// <c>label</c> and <c>notes</c>. The size limit is applied before the body is read: a declared length over it is
-    /// refused at once, and the request body is capped so an undeclared one is cut off at the limit.
+    /// An upload: a multipart body with a <c>file</c> part and the text parts <c>purpose</c>, <c>label</c> and <c>notes</c>.
+    /// The size limit is applied before the body is read: a declared length over it is refused at once, and the request body
+    /// is capped so an undeclared one is cut off at the limit. A file is never replaced; a new version is a new upload.
     /// </summary>
-    private static async Task<IResult> Write(Task<AttachmentScope> resolving, long? id, HttpContext http, AttachmentStore store, CancellationToken ct)
+    private static async Task<IResult> Upload(Task<AttachmentScope> resolving, HttpContext http, AttachmentStore store, CancellationToken ct)
     {
         var scope = await resolving;
         if (scope.Status != 200) return Refusal(scope);
-        // An upload needs leave to add; a replacement changes a file that is there, which takes leave to write.
-        if (id is null ? !scope.CanAdd : !scope.CanWrite) return Audited(http, id is null ? "upload" : "replace", scope, id, Results.Problem(NoChange(scope), statusCode: 403), 403);
+        if (!scope.CanAdd) return Audited(http, "upload", scope, null, Results.Problem(NoChange(scope), statusCode: 403), 403);
         try { await http.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(http); }
         catch (AntiforgeryValidationException) { return Results.BadRequest(); }
         var limits = scope.Block!.Limits;
@@ -133,24 +130,22 @@ public static class AttachmentEndpoints
         IFormCollection form;
         try { form = await http.Request.ReadFormAsync(new FormOptions { MultipartBodyLengthLimit = cap, ValueLengthLimit = 4000 }, ct); }
         catch (Exception error) when (error is InvalidDataException or BadHttpRequestException or IOException) { return Results.Problem(TooLarge(limits), statusCode: 413); }
-        var part = form.Files.GetFile("file");
-        AttachmentUpload? upload = null;
-        if (part is not null)
+        if (form.Files.GetFile("file") is not { } part) return Results.Problem("Choose a file to upload.", statusCode: 422);
+        if (part.Length > limits.MaxFileSize) return Results.Problem(TooLarge(limits), statusCode: 413);
+        var fileName = Path.GetFileName(part.FileName ?? "").Trim();
+        if (fileName.Length is 0 or > 260) return Results.Problem("The file needs a name of at most 260 characters.", statusCode: 422);
+        if (!limits.Accepts(fileName)) return Results.Problem(limits.Accept is { } accepted
+            ? $"Files of this type are not accepted here. Accepted: {accepted}."
+            : "The site's and this block's allowed file types do not overlap. No file types are accepted here.", statusCode: 415);
+        var contentType = string.IsNullOrWhiteSpace(part.ContentType) || part.ContentType.Length > 200 ? MediaTypeNames.Application.Octet : part.ContentType.Trim();
+        AttachmentUpload upload;
+        await using (var stream = part.OpenReadStream())
+        using (var buffer = new MemoryStream((int)Math.Min(part.Length, int.MaxValue)))
         {
-            if (part.Length > limits.MaxFileSize) return Results.Problem(TooLarge(limits), statusCode: 413);
-            var fileName = Path.GetFileName(part.FileName ?? "").Trim();
-            if (fileName.Length is 0 or > 260) return Results.Problem("The file needs a name of at most 260 characters.", statusCode: 422);
-            if (!limits.Accepts(fileName)) return Results.Problem(limits.Accept is { } accepted
-                ? $"Files of this type are not accepted here. Accepted: {accepted}."
-                : "The site's and this block's allowed file types do not overlap. No file types are accepted here.", statusCode: 415);
-            var contentType = string.IsNullOrWhiteSpace(part.ContentType) || part.ContentType.Length > 200 ? MediaTypeNames.Application.Octet : part.ContentType.Trim();
-            await using var stream = part.OpenReadStream();
-            using var buffer = new MemoryStream((int)Math.Min(part.Length, int.MaxValue));
             await stream.CopyToAsync(buffer, ct);
             if (buffer.Length > limits.MaxFileSize) return Results.Problem(TooLarge(limits), statusCode: 413);
             upload = new(fileName, contentType, buffer.ToArray());
         }
-        else if (id is null) return Results.Problem("Choose a file to upload.", statusCode: 422);
         string? Field(string name) => form.TryGetValue(name, out var values) && values.Count == 1 ? values[0] : null;
         var purpose = Field("purpose"); var label = Field("label"); var notes = Field("notes");
         if (purpose is { Length: > 0 } chosen && scope.Block.Purposes.Count > 0 && !scope.Block.Purposes.Contains(chosen, StringComparer.Ordinal))
@@ -159,12 +154,9 @@ public static class AttachmentEndpoints
         if (notes?.Length > 1000) return Results.Problem("Use at most 1000 characters for the notes.", statusCode: 422);
         var by = AttachmentAccess.Actor(scope.User!);
         http.Response.Headers.CacheControl = "no-store";
-        var result = await Run(async () => id is null
-            ? await store.AddAsync(scope.Owner!, upload!, purpose, label, notes, by, ct)
-            : await store.ReplaceAsync(scope.Owner!, id.Value, upload, purpose, label, notes, by, ct));
+        var result = await Run(() => store.AddAsync(scope.Owner!, upload, purpose, label, notes, by, ct));
         if (result.Problem is not null) return result.Problem;
-        if (result.Value is null) return Audited(http, "replace", scope, id, Results.Problem("This file does not belong to the record.", statusCode: 404), 404);
-        return Audited(http, id is null ? "upload" : "replace", scope, result.Value.Id, Results.Json(Item(result.Value, scope.User!), statusCode: id is null ? 201 : 200), id is null ? 201 : 200);
+        return Audited(http, "upload", scope, result.Value!.Id, Results.Json(Item(result.Value, scope.User!), statusCode: 201), 201);
     }
 
     private static async Task<IResult> Rename(Task<AttachmentScope> resolving, long id, HttpContext http, AttachmentStore store, CancellationToken ct)
@@ -268,7 +260,7 @@ public static class AttachmentEndpoints
     /// <summary>What someone with no account is told in place of an account name: that it was someone signed in, not who.</summary>
     internal const string HiddenAccount = "a signed-in user";
 
-    /// <summary>What the list and the writes return for a file: its current revision and the earlier ones, newest first. Account names are for people signed in themselves.</summary>
+    /// <summary>What the list and the writes return for a file. Account names are for people signed in themselves.</summary>
     private static object Item(AttachmentItem item, ClaimsPrincipal reader)
     {
         string By(string actor) => reader.Identity?.IsAuthenticated == true || actor == AppBlocks.Blocks.BlockOwnerAccess.AnonymousActor ? actor : HiddenAccount;
@@ -276,7 +268,6 @@ public static class AttachmentEndpoints
             id = item.Id, fileName = item.FileName, contentType = item.ContentType, size = item.Size, sha256 = item.Sha256,
             purpose = item.Purpose, label = item.Label, notes = item.Notes,
             uploadedBy = By(item.UploadedBy), uploadedAt = Utc(item.UploadedAt), updatedBy = By(item.UpdatedBy), updatedAt = Utc(item.UpdatedAt),
-            revisions = item.Revisions.Select(r => new { id = r.Id, fileName = r.FileName, contentType = r.ContentType, size = r.Size, sha256 = r.Sha256, uploadedBy = By(r.UploadedBy), uploadedAt = Utc(r.UploadedAt) }),
         };
     }
 
